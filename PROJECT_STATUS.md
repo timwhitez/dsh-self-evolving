@@ -1,10 +1,14 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_NOT_ACCEPTED`; `GATE_6_NOT_ACCEPTED`; `GATE_7_BLOCKED_NOT_STARTED`; `GATE_8_BLOCKED_NOT_STARTED`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_PRODUCTIZATION_IN_PROGRESS`; `GATE_6_STABLE_DEMO_NOT_RUN`; `GATE_7_RELEASE_NOT_STARTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 最终 gate/commit/identity/test/blocker 对账见
 [`docs/audits/2026-08-14-final-disposition.md`](docs/audits/2026-08-14-final-disposition.md)。
+
+> **Scope successor（2026-08-14）**：当前完成口径已由“一次性跑完 Terminal-Bench campaign”调整为
+> “证明真实 K=3 闭环可稳定迭代并形成可用开源 v0.1”。下文 Gate 5/6 历史 benchmark artifacts 继续
+> 保留，但 60×2、K=10/K=80、sealed/full-set 不再阻塞 Gate 7 开源 release。
 
 ## Gate 3 successor（已验收）
 
@@ -73,16 +77,16 @@ DSH session 保留 10 个 usage events；按用户指定的 DeepSeek-V4-Flash �
 `$0.0031026576`，现为 `priced=true` 的单题工程 smoke，但仍不能替代 Gate 5 的完整 matrix。详见
 [`docs/audits/2026-08-14-gate5-real-smoke-successor.md`](docs/audits/2026-08-14-gate5-real-smoke-successor.md)。
 
-## Gate 7 formal preflight
+## Optional formal preflight capability
 
 新增 detached-Ed25519、外部 trusted key 验证的 formal manifest/pre-start verifier，绑定 Git tag/commit、
 self-track route、TB 2.1 identity、TCB/protocol/split/search/budget/leaderboard identities，并独立要求
 Gate 4/5/6 receipts、real exact-identity baseline、provider smoke、budget reservation 与 operator procedure
 receipts。当前所有缺口 fail closed 为 `BLOCKED_NOT_STARTED`；未创建 formal run directory，未启动
-80-candidate search，sealed access 为 0。详见
+80-candidate search，sealed access 为 0。该 capability 属于发布后 optional benchmark profile。详见
 [`docs/audits/2026-08-14-gate7-preflight.md`](docs/audits/2026-08-14-gate7-preflight.md)。
 
-## Gate 8 evidence verifier
+## Optional sealed/full evidence verifier capability
 
 新增 sealed/full/release fail-closed verifier：重建完整 29×k paired matrix，固定至少 100,000 次
 task-cluster bootstrap 与 5pp/CI 门槛；candidate lock 绑定 baseline/model/protocol/plan/analysis/split；
@@ -375,20 +379,19 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 > 到达 terminal state；它不是 deterministic evidence，也不是 Gate 6。real proposer/builder/Harbor
 > successor 必须先完成 Gate 6，且结果与 formal Archive 隔离。
 
-## 尚未完成（真实运行与外部依赖）
+## 当前开发范围尚未完成
 
-- Gate 4：Zen/high/1m compatible successor 已验收；CPA 保持未修改。
-- Gate 5：正式独立 principal/volume split ceremony、60×≥2 real baseline、real 3-candidate
-  calibration 与 accepted budget。
-- Gate 6：新的 real K=10 pilot、真实 crash/reconcile、raw evidence 与成本误差审计。
-- Gate 7/8：只有上述 receipts 齐全后才可签名启动 formal 80-candidate run，再决定是否 single reveal、
-  29×k sealed、89×≥5 full set 与 release。
+- Gate 5：把 accepted proposer、builder、Loader、Harbor 和 durable controller 接成统一 CLI；默认
+  `K=3`，solver trial 上限 15，sealed access 为 0。
+- Gate 6：真实 failure-discovery sample 后完成 3 个 unique candidates、lineage depth ≥2，并实测一次
+  crash/resume exactly-once；不要求分数提升。
+- Gate 7：fresh-profile install、公开文档与治理文件、SBOM/provenance/checksums、全套测试、rollback。
+- Gate 8：K=10/K=80、sealed、full-set 全部为发布后 optional profiles，不阻塞当前交付。
 
-因此当前不能声称：formal 80-candidate search 已运行、sealed 揭盲已确认分数提升、可提交 leaderboard
-或达到 SOTA——这些需 Gate 7-8 的真实付费运行。
+因此当前可以声明 Gate 0–4 工程能力已验收，但不能声明稳定迭代闭环或开源 v0.1 已完成，也不能声明
+Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA。
 
 ## 下一个可执行验收门
 
-下一验收门是部署正式 sealed-service principal/volume 并 mint successor split；之后才可运行 Gate 5
-付费基线与 calibration。不得跳到 Gate 7 formal search 或 Gate 8 reveal。逐项清单见
-`docs/phase-todolist.md`。
+下一验收门是实现统一 stable-demo CLI，将真实 proposer → builder → Loader → Harbor → Archive 接通。
+逐项清单见 `docs/phase-todolist.md`。

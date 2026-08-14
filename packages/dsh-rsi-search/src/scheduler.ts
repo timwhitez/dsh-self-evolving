@@ -40,6 +40,16 @@ export interface SearchParams {
 }
 
 export const DEFAULT_PARAMS: SearchParams = {
+  K: 3,
+  q0: 1,
+  alpha: 0.6,
+  tau: 1,
+  waveSize: 4,
+  shortlistSize: 2,
+}
+
+/** Optional benchmark profile; never selected implicitly by the v0.1 demo. */
+export const TERMINAL_BENCH_FORMAL_PARAMS: SearchParams = {
   K: 80,
   q0: 3,
   alpha: 0.6,

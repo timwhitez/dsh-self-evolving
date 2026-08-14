@@ -1,5 +1,13 @@
 export { RngStream, sampleBeta } from './rng.js'
 export {
+  buildDevelopmentPools,
+  STABLE_DEMO_TRIAL_PLAN,
+  sampleLowConsumptionPanel,
+  type BaselineTaskOutcome,
+  type DevelopmentPools,
+  type LowConsumptionPanel,
+} from './development-panel.js'
+export {
   cladeCMP,
   selectParentByCladeThompson,
   selectNodeByThompson,
@@ -7,6 +15,7 @@ export {
   needsColdStart,
   attributeObservation,
   DEFAULT_PARAMS,
+  TERMINAL_BENCH_FORMAL_PARAMS,
   type ArchiveView,
   type NodeUtility,
   type SearchParams,

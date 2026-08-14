@@ -91,3 +91,27 @@ budgets; no arbitrary weighted scalar lets cheapness offset a material score reg
 
 **Why:** models, harnesses, verification and submission policy change. The prior hard-coded `83.8%` was already a
 moving external fact, not an architectural constant.
+
+## ADR-011 — Stable-iteration release precedes benchmark-scale search
+
+**Decision:** v0.1 completion means a usable open-source project that proves stable iteration, not a completed
+Terminal-Bench improvement campaign. The default demo keeps `high`, the 1M context window and the 32k per-response
+ceiling, and reduces API use only by limiting task trials:
+
+- run baseline failure discovery in deterministic batches up to 12 observed tasks;
+- freeze the baseline-failed pool before generating candidates;
+- produce K=3 unique candidates across at least two lineage depths and evaluate each on one frozen baseline-failed
+  task;
+- inject and recover from one real process crash without duplicate effects;
+- stop after engineering evidence, regardless of score.
+
+The candidate-specific task is derived only from baseline outcomes and a committed RNG stream. It MUST NOT be
+resampled after seeing that candidate's reward. A panel therefore guarantees known baseline failures, not candidate
+failures.
+
+**Why:** the reusable product is the iteration engine. Paying for 80 candidates, sealed confirmation and 445 formal
+trials before the runner is packaged would test a benchmark campaign rather than open-source usability. The v0.1
+solver envelope is at most 15 trials: 12 baseline discovery plus 3 candidate evaluations.
+
+**Claim boundary:** `STABLE_ITERATION_VERIFIED` proves lifecycle/recovery/evidence behavior only. K=10/K=80,
+sealed confirmation, full-set and SOTA remain optional post-release profiles with their original strict claims.

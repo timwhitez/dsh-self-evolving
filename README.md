@@ -3,8 +3,9 @@
 `dsh-RSI` 是一个以 DeepSeek Harness（DSH）插件为唯一运行时核心、以
 Terminal-Bench 2.1 为首个验证环境的递归自改进（RSI）项目。
 
-项目当前处于**规范冻结前**：参考源码和论文已经纳入设计，但尚未实现闭环，尚未建立
-baseline，也没有任何性能、成本、安全或 SOTA 结论。本文档集合定义实现必须满足的契约。
+项目当前处于 **v0.1 稳定迭代发布阶段**。Gate 0–4 的 Loader、candidate builder、Harbor ACP、
+durable controller 和真实 Zen proposer 已有验收证据；当前工作是把它们接成一个可安装、可恢复、
+可审计的 K=3 真实迭代命令。尚无 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA 结论。
 
 ## 一句话架构
 
@@ -36,21 +37,28 @@ Harbor 是可替换 benchmark provider，而不是 RSI 的所有者。
 - [`docs/research-basis.md`](docs/research-basis.md)：论文/项目依据、采用方式和已纠正的旧结论。
 - [`docs/decisions.md`](docs/decisions.md)：关键架构决策记录（ADR）。
 - [`docs/phase-todolist.md`](docs/phase-todolist.md)：按 Gate 0–8 展开的落地执行清单。
+- [`docs/v0.1-release-gates.md`](docs/v0.1-release-gates.md)：当前开源发布范围的短版 Gate 定义。
 - [`PROJECT_STATUS.md`](PROJECT_STATUS.md)：当前真实进度与最近一个验收门。
 
 当文档冲突时，优先级为：冻结的 run manifest > `specs/` > `docs/` > README >
 历史讨论。代码接口若与固定版本的上游源码不符，必须停止并更新兼容性记录，不能静默猜测。
 
-## 固定目标
+## v0.1 完成目标
 
-- 在同一固定模型、模型参数、数据版本和预算下，对 80 次候选扩展实现无人值守、可中断恢复的
-  闭环搜索。
-- 最终只选择一个候选，在此前从未向 proposer/selector 暴露反馈的 29 个 sealed 任务上，
-  相对 baseline 的配对 Pass@1 点估计提升至少 5 个百分点，且 95% 区间下界大于 0。
-- 正式排行榜评测遵循 Terminal-Bench 2.1 的 89 任务、每任务至少 5 次协议；搜索分数、sealed
-  泛化分数和官方 full-set 分数必须分开报告。
+- 从一条真实失败证据出发，连续生成、构建、装载并评测 3 个 unique candidates，且至少形成两层
+  lineage；不要求候选得分高于 baseline。
+- 真实运行中注入一次 crash，恢复后 proposal/evaluation/cost/Archive 均 exactly-once，journal replay
+  与最终 state hash 一致。
+- 默认最多运行 12 个 baseline failure-discovery trials 和 3 个 candidate trials；模型保持
+  `high + 1M context + 32k output ceiling`，不通过截断 token 降耗。
+- fresh profile 可安装并运行同一 demo；发布物包含文档、测试、SBOM、provenance、checksums 和回滚说明。
 - 搜索阶段不得修改 DSH 上游、benchmark、verifier、模型路由、计分器、切分或安全策略。
-- `$500` 和 16 小时是待 baseline 校准验证的硬预算目标，不是尚未测量就能宣称的事实。
+
+## 发布后可选目标
+
+Terminal-Bench K=10/K=80 搜索、29-task sealed confirmation、89×≥5 full-set 和 leaderboard submission
+属于持续提分 profile，不阻塞 v0.1 开源发布。启用时仍必须遵守 split、预算、统计和 claim boundary，
+工程稳定不等于 benchmark 提升。
 
 ## 当前固定版本快照
 

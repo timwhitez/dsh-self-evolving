@@ -132,6 +132,9 @@ export async function runPilotLoop(
   caps: PilotCapabilities,
   state: PilotState = initialPilotState(baselineId, config),
 ): Promise<PilotState> {
+  // PilotConfig predates SearchParams.K. Treat the explicit pilot K as the
+  // single source of truth so a profile default cannot terminate a custom run.
+  const params: SearchParams = { ...config.params, K: config.K }
   const rng = new RngStream(config.masterSeed, 'pilot-scheduler')
   let taskIdCursor = 0
   // Hard iteration cap as a liveness guard; a healthy run terminates via K or
@@ -161,7 +164,7 @@ export async function runPilotLoop(
       P_eval: 0,
       T: state.admittedCount,
       admittedCount: state.admittedCount,
-      params: config.params,
+      params,
     })
     if (decision === 'expand') {
       // Pick a parent via clade Thompson.
@@ -169,7 +172,7 @@ export async function runPilotLoop(
       const parentId = selectParentByCladeThompson(
         toArchiveView(state.archive),
         eligibleParents,
-        config.params,
+        params,
         rng,
       )
       if (parentId === null) {
@@ -206,7 +209,7 @@ export async function runPilotLoop(
     } else {
       // Evaluate: pick a node needing cold-start (q0), else the first node.
       const evalNode =
-        state.archive.nodes.find((n) => needsColdStart(n, config.params)) ?? state.archive.nodes[0]
+        state.archive.nodes.find((n) => needsColdStart(n, params)) ?? state.archive.nodes[0]
       if (!evalNode) continue
       const taskId = config.devTaskIds[taskIdCursor % config.devTaskIds.length]!
       taskIdCursor += 1

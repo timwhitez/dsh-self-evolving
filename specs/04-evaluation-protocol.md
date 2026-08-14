@@ -88,25 +88,30 @@ commitment、解密、执行并把一次性 reveal receipt 写入 run。
 Baseline 不是零散 smoke score。`c0000` 必须与候选使用同一 stable runner/candidate contract，只含
 预注册的初始 DSH plugin。
 
-### 4.1 Engineering baseline
+### 4.1 Stable-demo failure discovery
 
-在 development task 上建立：
+只在 published observed IDs 中按预注册顺序分批运行：
 
-- 每 task 至少 2 attempts（calibration 可先分阶段）；
+- 首批 6 题，每题 1 attempt；没有 failure 时再运行第二批 6 题；硬上限 12 trials；
+- 出现至少 1 个真实 baseline failure 后冻结 failure pool；
+- 12 题均通过时状态为 `NO_REAL_FAILURE_SIGNAL`，不得根据 candidate reward 再选题；
 - raw pass/fail、error、timeout、tokens、cost、duration、tool calls；
-- category/timeout/resource stratification；
-- model route effective request headers；
 - DSH event/ACP/ATIF reconciliation。
 
-该 baseline 为 scheduler、difficulty bins、预算和 paired comparison 提供参照。
+该 evidence 只服务 K=3 stable demo，报告标记 `FAILURE_DISCOVERY_SAMPLE`。
 
-### 4.2 Sealed baseline
+### 4.2 Optional benchmark baseline
+
+启动 K=10/K=80 benchmark profile 前另行冻结对应 baseline。正式 K=80 仍要求 60 development tasks、
+每 task 至少 2 attempts；stable-demo evidence 不可冒充或直接补齐这一矩阵。
+
+### 4.3 Sealed baseline
 
 为了避免先看 baseline sealed score 再调搜索，sealed baseline 与 locked candidate 在同一 reveal
 ceremony 中运行。两者使用相同 task/attempt schedule 和 independent trial seeds，执行顺序按
 task/attempt 随机交错；scheduler 不读取中间 reward。
 
-### 4.3 Full-set baseline
+### 4.4 Full-set baseline
 
 正式 fixed-artifact comparison 使用所有 89 task，每 task至少 5 attempts。若已有同一 manifest 的
 不可变 baseline 结果可复用，必须验证每个 identity field；任一差异都要重跑。
@@ -220,9 +225,10 @@ Secondary、预注册但不替代 primary：
 任一 critical safety violation 直接拒绝。其他 regression 不另设未经 power 校准的硬阈值；完整展示，
 用于后续新 run 的设计，而不是本 run 的二次适应。
 
-## 11. Formal 89-task evaluation
+## 11. Optional formal 89-task evaluation
 
-只有 sealed-promoted candidate 才进入 formal run。协议使用官方当前要求：
+v0.1 open-source release 不运行 full-set。只有发布后 benchmark profile 得到 sealed promotion且另行
+授权官方评测预算后才进入 formal run。协议使用官方当前要求：
 
 ```text
 dataset: pinned Terminal-Bench 2.1, 89 tasks

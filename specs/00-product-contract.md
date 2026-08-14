@@ -53,7 +53,7 @@ agent/session/tool seams。RSI 控制面和候选都应使用这些原语，而�
 | -------------------- | ------------------------------------------------------------- | --------------------- |
 | Candidate            | 一个不可变、内容寻址的 DSH plugin/bundle artifact             | 已接受改进            |
 | Archive admission    | 候选通过结构/安全检查并进入谱系                               | 分数提升或晋升        |
-| Development score    | 在 60 个开发任务上的搜索反馈                                  | held-out 泛化结果     |
+| Development score    | 在预注册 sampled development panel 上的搜索反馈               | held-out 泛化结果     |
 | Development champion | 按预注册规则从 Archive 锁定的单一候选                         | 最终成功              |
 | Sealed promotion     | 单一锁定候选通过 29 个 sealed task 的门                       | 官方 leaderboard 分数 |
 | Full-set evaluation  | 89 任务、每任务至少 5 次的固定候选评测                        | 搜索证据或在线自适应  |
@@ -113,6 +113,16 @@ temperature、tool transport 或 context window 会创建新 lineage，旧结果
 [`02-candidate-contract.md`](02-candidate-contract.md)。
 
 ## 6. Primary objectives and constraints
+
+### 6.0 v0.1 open-source completion
+
+当前开发范围的完成状态是 `STABLE_ITERATION_VERIFIED` + `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`：真实
+K=3 闭环从 failure evidence 生成、构建、Loader 启动并 Harbor 评测候选；至少两层 lineage；一次真实
+crash/resume 后 external effects、score 与 cost exactly-once；fresh profile 可安装复现。它不要求候选
+提分，也不要求访问 sealed tasks。
+
+K=10/K=80、sealed promotion、full-set 和 SOTA 是发布后可选 benchmark profiles。以下 6.1–6.4 仅在
+对应 profile 显式启动时生效，不能反向阻塞 v0.1 工程发布。
 
 ### 6.1 Search completion
 

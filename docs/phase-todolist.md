@@ -123,87 +123,48 @@
 > networkless Bubblewrap + fixed gateway 拓扑生成 1 个 admitted child。CPA 未修改，reasoning/模型正文
 > 未持久化。旧 free route 的 429 审计保留为 predecessor。
 
-## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
+## Phase 5 — 产品化迭代闭环（Gate 5，1–3 天）
 
-- [x] CMP/clade Thompson、node Thompson、UCB-Air（`alpha=0.6`）wave scheduler + task sampler
-- [x] golden tests：small-tree CMP 手算、UCB-Air 边界、seeded RNG replay、duplicate/donor 不重复计数
-- [x] shortlist tournament + 合格节点不足时的确定性降级路径（spec 03 §11）
-- [x] deterministic split ceremony：48/12/29、seed commitment、Merkle root；difficulty bin 按 spec 04 §3.2 两种合法来源之一或放弃
-- [ ] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
-- [ ] candidate lock 事务：lock 后 selector/proposer 永久拒绝
-- [x] paired cluster-bootstrap 统计 + report generator（固定 seed、固定分析容器 hash）
-- [ ] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
-- [ ] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
+- [x] 搜索、split/sealed、bootstrap、durable controller 的核心模块与测试已存在
+- [ ] 将真实 proposer → candidate builder → Loader → Harbor evaluator → Archive 接到统一 CLI
+- [ ] 实现 `init/run/resume/status/audit/doctor` 和 versioned config
+- [ ] 默认 profile 固定为 `K=3`、development-only、sealedAccessCount=0、solver trial 上限 15
+- [ ] 付费 launch 前检查 credential、Docker、Harbor、task materialization、预算和 writable state
+- [ ] 同 idempotency key / crash resume 不重复 proposal、trial、score 或 cost
 
-**退出证据**：算法测试全绿 + baseline 波动/成本测量 + 可行性判定书面结论。
+**退出证据**：单命令真实完成一次 propose/build/evaluate/commit，重启后 status/replay 一致。
 
-> **历史 fixture（2026-08-14，非验收）**：Harbor `nop` job 测量 3 个 dev task
-> （wall 31.1/41.8/76.9s）。
-> 证据：`evidence/calibration/{split-commitment,calibration-samples,budget-model}.json` +
-> `tb21-inventory.json`（89 task）。**CALIBRATION_FEASIBLE**：p90 cost $41.96（≤$500）、p90 wall 2.38h（≤16h）；
-> frozen `B_eval=760 / B_prop=$40 / k_sealed=1 / concurrency=4 / reserve=20%`。
-> calibration-evidence test 验证 artifact 自洽（4 绿）。
-> 这不是完整 baseline、real candidate calibration 或有效 concealed split，不满足 spec 07 §7。
->
-> **独立审计更正（2026-08-14）**：以上 3 个 `nop` trial 仅是 pipeline overhead，不满足 Gate 5。
-> 公共常量 seed 也不能作为 concealed split。原 artifact 保留并标记
-> `QUARANTINED_NOT_ACCEPTED`；Gate 5 verifier 当前如实拒绝，需新 sealed ceremony、120+ real baseline
-> trials 与 real 3-candidate calibration successor。
->
-> **sealed-service 工程 preflight（2026-08-14，非正式 ceremony）**：新增独立 worker process、
-> `0700/0600` private state、非覆盖式 public receipt、256-bit internal seed、difficulty omitted、
-> 48/12/29 controller view，以及绑定 split root 的 candidate lock。5 unit + 2 process E2E 通过，
-> 包括非服务 UID 读拒绝、state tamper、receipt conflict、lock 后 proposer/selector 拒绝。尚未部署
-> 正式独立 account/volume 或 mint 正式 split，因此上方两项保持未勾选。
+## Phase 6 — 稳定 K=3 迭代证明（Gate 6，1–2 天 + runtime）
 
-## Phase 6 — 10-candidate pilot（Gate 6，1–3 天 + runtime）
+- [ ] fresh run ID；baseline failure discovery 分批运行，最多 12 个 observed tasks
+- [ ] 在 candidate reward 前冻结 failure pool 与每个 candidate 的 task draw
+- [ ] 无人工干预产生 3 个 unique admitted candidates，lineage depth ≥2
+- [ ] 每个 candidate 只评测 1 个 frozen baseline-failed task；不要求分数提升
+- [ ] 真实 external effect 后注入一次 crash，resume 后 exactly-once 且 state hash/replay 一致
+- [ ] proposer 引用历史 raw evidence；全部 raw/normalized/usage/cost refs 完整
+- [ ] sealedAccessCount 始终为 0；终态为 `STABLE_ITERATION_VERIFIED`
 
-- [ ] 新 pilot run ID，`K=10`，development-only，无 sealed reveal，代码路径与正式 run 完全一致
-- [ ] 无人工干预完成 10 个 admitted candidates
-- [ ] 至少一次真实 crash/resume，事后 evidence 完整、replay 一致
-- [x] build reject/runtime fail/infra retry/duplicate child 至少各覆盖一次（fixture 或真实事件）
-- [ ] proposer 实际引用历史 raw evidence（而非只看摘要）的记录
-- [ ] 成本预测误差 ≤ ±20%；audit 无 critical finding
-- [x] pilot 结果隔离，不并入正式 Archive；据此冻结实现与 manifest 参数
+**停止条件**：12 个 baseline tasks 均通过时标记 `NO_REAL_FAILURE_SIGNAL`，不按候选结果动态换题。
 
-> **历史 fixture（2026-08-14，非验收）**：`packages/dsh-rsi-pilot/` loop driver 与原始
-> `evidence/pilot/pilot-result.json`。
-> pilot 跑通 terminal state（`evidence/pilot/pilot-result.json`，10 admitted，39 observations）。
-> loop tests（6 绿）覆盖 SEARCH_COMPLETE / B_EVAL_EXHAUSTED / dedup / build-reject / eval-fail / attribution；
-> evidence+crash/resume 测试（2 绿）证明同 seed resume → 同 lineage。
-> 原运行用 stub capabilities 与 `Math.random`，不是 deterministic evidence，也不是 Gate 6。
-> 原 `pilot-001` 已标记 `QUARANTINED_NOT_ACCEPTED`；当前 `scripts/run-pilot.ts` 只向
-> `evidence/fixtures/pilot-loop/` 写确定性 fixture。新增 verifier 要求
-> real proposer/builder/Harbor、完整 identities、真实 crash、raw refs、audit 与 ±20% cost error。
+## Phase 7 — 开源 v0.1 release candidate（Gate 7，1–2 天）
 
-## Phase 7 — 正式 80-candidate evolution（Gate 7，runtime ≤16h + audit）
+- [ ] README/quickstart/config/troubleshooting/architecture/evidence interpretation 与当前实现一致
+- [ ] 用户确认 OSI license；补齐 CONTRIBUTING、SECURITY、code of conduct、CHANGELOG
+- [ ] fresh-profile 安装后运行真实 Loader 与 K=3 demo smoke
+- [ ] 生成 source/package、SBOM、provenance、checksums、dependency/license scan、secret/leak scan
+- [ ] full unit/E2E/typecheck/lint/format/provenance/upstream-clean/UTF-8 全绿
+- [ ] 实测 uninstall/rollback 与一次 state backup/restore
+- [ ] 发布审计只声明 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`，不声明 benchmark 提升
 
-> **preflight verifier 已完成（2026-08-14）**：signed manifest、trusted signer、Git tag/clean、
-> Gate 4/5/6 receipts、real baseline、provider smoke、split concealment、budget reservation、leaderboard、
-> stats publication 与 operator procedures 均为硬门。当前 verdict=`BLOCKED_NOT_STARTED`，没有创建
-> run directory 或启动付费搜索；证据见 `evidence/formal/STATUS.json`。
+## Phase 8 — 发布后持续提分 profiles（可选，不阻塞 v0.1）
 
-- [ ] pre-start checklist：tag clean commit、签名 run manifest（track=`self`）、split commitment、leaderboard snapshot、预算含 sealed + 20% reserve、揭盲前发布统计协议
-- [ ] fresh 60-task baseline 或 exact-identity 复用验证
-- [ ] controller 自治运行至 terminal state；operator 只做安全/成本/基础设施干预，不按分数 steer
-- [ ] 中途 bug fix = 终止当前 run，successor run 不继承受影响评测
-- [ ] `SEARCH_COMPLETE`：80 unique admitted artifacts、全部 action terminal/reconciled、journal replay 一致
-- [ ] tournament 锁定唯一 development champion（或如实报告 `NO_DEVELOPMENT_IMPROVEMENT`）
-- [ ] lock 前 sealed store access count == 0 的审计记录
+- [ ] `pilot`：K=10 sampled development run
+- [ ] `search`：K=80 signed formal development run
+- [ ] `sealed`：唯一 champion 的 29×k paired confirmation + frozen bootstrap
+- [ ] `official`：仅 sealed promotion 后运行 89×≥5 或 maintainer submission
+- [ ] 每个 profile 使用 fresh lineage；sealed 结果不得反馈给同一 run selector/proposer
 
-## Phase 8 — Sealed 确认、full-set 评测与发布（Gate 8，2–5 天 + runtime/review）
-
-> **evidence verifier 已完成（2026-08-14）**：完整 29×k paired identity/matrix、single reveal、
-> 100k bootstrap、promotion state、89×≥5 fixed-capsule full set 与 release receipts 均为硬门。
-> 当前 `BLOCKED_NOT_STARTED`：candidate lock=null、reveal=0、sealed/full trials=0，未产生 promotion
-> 或 release claim；证据见 `evidence/gate8/STATUS.json`。
-
-- [ ] 验证 split commitment + candidate lock；baseline/candidate 29×`k_sealed` 配对交错运行，无中间适应
-- [ ] 冻结分析容器计算 `Delta`/95% CI/regression 表；准确赋予 `SEALED_PROMOTED`/`PROMISING_NOT_CONFIRMED`/`SEALED_REJECTED`
-- [ ] 自动 100% trial 审计 + 预注册人工轨迹审查（sealed 全部 PASS + regressions + 20% 抽样）
-- [ ] 仅 `SEALED_PROMOTED` 后：固定 capsule 89×≥5 official protocol；community submission 关闭时标 `FULL_SET_VERIFIED_LOCAL`
-- [ ] release：pack + fresh profile 安装 + Loader smoke；SBOM/provenance/checksums/rollback hash
-- [ ] 最终报告：candidate/baseline hash、digest、model route、split/attempts、cost/time、全部 `NOT_VERIFIED`/`QUARANTINED` 项如实列出
+未运行时统一报告 `BENCHMARK_PROFILES_NOT_RUN`，不是 v0.1 工程发布失败。
 
 ## 跨阶段持续项
 

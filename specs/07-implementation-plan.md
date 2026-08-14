@@ -10,19 +10,19 @@
 
 估时按一名熟悉 TypeScript/DSH/Harbor 的工程师给出，包含测试和修复，不包含云队列等待：
 
-| Gate | Outcome                                   |                        Estimate |
-| ---- | ----------------------------------------- | ------------------------------: |
-| 0    | pinned provenance + real Loader lifecycle |                        1–2 days |
-| 1    | candidate contract + reproducible capsule |                        3–5 days |
-| 2    | Harbor ACP smoke + trusted normalization  |                        3–5 days |
-| 3    | journal/reducer/archive/budget crash-safe |                        5–8 days |
-| 4    | proposal sandbox + one child end-to-end   |                        4–7 days |
-| 5    | algorithm + split/sealed + calibration    |                        5–8 days |
-| 6    | 10-candidate pilot                        |           1–3 days plus runtime |
-| 7    | 80-candidate formal search                | runtime target ≤16 h plus audit |
-| 8    | sealed/full evaluation + release          |    2–5 days plus runtime/review |
+| Gate | Outcome                                   |                         Estimate |
+| ---- | ----------------------------------------- | -------------------------------: |
+| 0    | pinned provenance + real Loader lifecycle |                         1–2 days |
+| 1    | candidate contract + reproducible capsule |                         3–5 days |
+| 2    | Harbor ACP smoke + trusted normalization  |                         3–5 days |
+| 3    | journal/reducer/archive/budget crash-safe |                         5–8 days |
+| 4    | proposal sandbox + one child end-to-end   |                         4–7 days |
+| 5    | productized iteration CLI closure         |                         1–3 days |
+| 6    | stable K=3 real iteration proof           |            1–2 days plus runtime |
+| 7    | open-source v0.1 release candidate        |                         1–2 days |
+| 8    | optional continuous benchmark profiles    | separately budgeted post-release |
 
-首个可信 80-iteration 结果约 4–7 周，而不是旧文档中未经 integration evidence 的固定 Week 5。
+当前交付目标是 Gate 7 开源 release candidate；K=80 与 benchmark 提分不再决定项目是否完成。
 
 ## 2. Gate 0 — Provenance and Cordis lifecycle spike
 
@@ -117,92 +117,66 @@
 - child 在 mock task 上行为符合 hypothesis，parent preservation tests 通过；
 - proposal transcript/tool use/token/cost/source refs 完整。
 
-## 7. Gate 5 — Search, split, sealed, and calibration
+## 7. Gate 5 — Productized iteration closure
 
 ### Build
 
-- CMP/Thompson/UCB-Air wave scheduler、task sampler、shortlist tournament；
-- deterministic split ceremony、labels/export firewall、sealed service/candidate lock；
-- paired bootstrap/statistics/report generator；
-- full baseline on development set；
-- representative 3-candidate × task-strata calibration pilot。
+- connect the accepted proposer, candidate builder, Harbor provider, durable controller and Archive behind one CLI;
+- add versioned config plus `init`, `run`, `resume`, `status`, `audit` and `doctor` commands;
+- default to the stable demo profile (`K=3`, no sealed access, at most 15 solver trials);
+- keep credentials in root-readable external files and preserve the compatible Zen/high/1M/32k route;
+- retain CMP/Thompson/UCB-Air, split/sealed and statistics modules as optional benchmark capabilities.
 
 ### Accept
 
-- algorithm golden/property/RNG replay tests 全通过；
-- selector/proposer 接触 sealed event/canary 会 abort；
-- candidate lock 后任何 selector/proposer call 被永久拒；
-- baseline 重复波动、cost/time/token 估计和 provider concurrency 已测量；
-- `B_eval`/`B_prop`/k/worker/reserve 的完整预算模型证明目标可行。
+- one command reaches propose → build → real Loader → Harbor evaluate → normalize → Archive commit;
+- invalid config, missing credential, unavailable Docker/Harbor or budget exhaustion fails before paid launch;
+- repeat submit/resume does not duplicate proposal, model trial, score or cost;
+- CLI status comes entirely from durable evidence and works after process restart;
+- selector/proposer still cannot access guard/sealed material.
 
-若预计 p90 cost > `$500` 或 p90 wall time >16 h，状态 `CALIBRATION_INFEASIBLE`。可选择更便宜固定
-模型/更高合法并发/更高预算后新 run，但不能在原目标下直接开始 80 candidates。
+## 8. Gate 6 — Stable K=3 iteration proof
 
-## 8. Gate 6 — Ten-candidate pilot
-
-使用新的 pilot run ID，`K=10`、相同代码路径、development-only，无 sealed reveal。
+Use a fresh development-only run. Run baseline failure discovery in deterministic batches of at most 12 observed
+tasks. Freeze the resulting failure pool before proposals. If no real failure exists, stop as
+`NO_REAL_FAILURE_SIGNAL`; do not choose tasks after candidate results.
 
 ### Accept
 
-- 无人工干预完成 10 admitted candidates；
-- 至少一次真实 crash/resume，最终 evidence 完整；
-- build reject、runtime fail、infra retry、duplicate child 均至少通过 fixture 或真实事件覆盖；
-- Archive/CMP/wave/budget 与独立 replay report 一致；
-- proposer 能引用历史 raw evidence，而非只看最近 summary；
-- audit 没有 critical finding，成本预测误差在预注册容限内（建议 ±20%）。
+- autonomously admit 3 unique candidates across at least two lineage depths;
+- evaluate each candidate on one task selected from the frozen baseline-failure pool;
+- inject one real process crash after an external effect and resume to the same terminal state;
+- exactly-once proposal/evaluation/cost, complete raw refs, hash-chain replay and normalized Harbor evidence;
+- proposer cites historical raw evidence; build reject/runtime fail/infra retry/duplicate remain covered by fixtures;
+- no score improvement, champion, sealed access or leaderboard claim is required.
 
-Pilot 结果不能与 formal run Archive 合并；它只用于修复/冻结实现。
+Successful status is `STABLE_ITERATION_VERIFIED`. It is an engineering lifecycle claim only.
 
-## 9. Gate 7 — Formal 80-candidate evolution
+## 9. Gate 7 — Open-source v0.1 release
 
-### Pre-start checklist
+### Accept
 
-1. tag/commit clean implementation；
-2. freeze signed run manifest/provenance/split commitment/leaderboard snapshot；
-3. fresh 60-task baseline or exact-identity reusable artifact；
-4. budget reservations include sealed baseline/candidate and 20% reserve；
-5. no unreviewed source/config change；
-6. operator stop/incident/secret rotation/backup procedures tested；
-7. publish hypothesis/primary metric/statistical protocol before reveal。
+- clean fresh-profile install using documented commands, followed by real Loader and K=3 demo smoke;
+- public README/architecture/quickstart/config reference/troubleshooting and evidence interpretation docs;
+- user-selected OSI license, CONTRIBUTING, SECURITY, code of conduct and release notes;
+- source tarball/package, SBOM, provenance, checksums, dependency/license scan and secret/leak scan;
+- full unit/E2E/typecheck/lint/format/provenance/upstream-clean/UTF-8 suites pass;
+- rollback/uninstall and one prior-state restore are executed, not only documented.
 
-### Runtime policy
+Gate 7 produces `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`; it does not require benchmark improvement.
 
-- controller autonomous until terminal state；status/metrics read-only；
-- operator may stop for safety/cost/infrastructure but不得按分数 steer parent/proposal；
-- bug fix terminates current formal run；successor run 不继承受影响评测；
-- 60 秒内可获得 progress，而不改变 scheduler；
-- completion 必须是 80 unique admitted candidate objects，不是 loop counter。
+## 10. Gate 8 — Optional continuous benchmark profiles
 
-### Accept search
+Gate 8 is post-release and never blocks v0.1:
 
-- `SEARCH_COMPLETE` + 80 candidates；
-- all planned actions terminal/reconciled；
-- budget/usage/objects/journal/replay/audit complete；
-- tournament 锁定一个 development champion 或明确 no-improvement；
-- 在 lock 之前 sealed store access count=0。
+- `pilot`: K=10 sampled development run for tuning stability and budgets;
+- `search`: K=80 formal development search with signed manifest;
+- `sealed`: one locked champion, paired 29×k confirmation and frozen bootstrap analysis;
+- `official`: only after sealed promotion, 89×≥5 full-set/maintainer submission.
 
-## 10. Gate 8 — Sealed confirmation, full evaluation, release
-
-### Sealed
-
-- verify split commitment and candidate lock；
-- baseline/candidate paired 29×k run without intermediate adaptation；
-- run frozen analysis container；
-- complete automatic/human audit；
-- assign exact promotion state, including CI uncertainty。
-
-### Full set
-
-Only after `SEALED_PROMOTED`：run fixed capsule on 89×≥5 official protocol，公开完整 raw/normalized
-evidence。Community submission unavailable时标 `FULL_SET_VERIFIED_LOCAL`，等待 maintainer run。
-
-### Release
-
-- pack/install fresh profile test；
-- source/bundle/capsule/SBOM/provenance/checksums；
-- baseline/candidate/per-task/statistics/cost/time/safety reports；
-- compatibility/limitations/rollback；
-- no secrets/guard-before-reveal/private provider logs in public export。
+Each profile gets a fresh run lineage and retains the original split, budget, no-adaptation and claim boundaries.
+Repeated small development runs may improve the harness over time; sealed results never feed the same run back into
+selection. Skipping Gate 8 must be reported as `BENCHMARK_PROFILES_NOT_RUN`, not as failure of the open-source tool.
 
 ## 11. Test matrix
 

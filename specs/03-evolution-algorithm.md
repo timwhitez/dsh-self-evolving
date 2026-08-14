@@ -22,17 +22,19 @@ Run manifest 在启动前固定：
 
 | Symbol          | Meaning                                        |           Initial default |
 | --------------- | ---------------------------------------------- | ------------------------: |
-| `K`             | admitted non-baseline candidates target        |                        80 |
+| `K`             | admitted non-baseline candidates target        |                         3 |
 | `B_eval`        | completed development agent-task trials budget | Gate 5 calibration output |
 | `B_prop`        | proposal model token/USD budget                | Gate 5 calibration output |
 | `W_p`           | independent children requested per expansion   |                         3 |
-| `q0`            | forced cold-start trials per admitted node     |                         3 |
+| `q0`            | forced cold-start trials per admitted node     |                         1 |
 | `alpha`         | UCB-Air exponent                               |                       0.6 |
 | `waveSize`      | decisions made from one frozen state           |    available worker slots |
-| `shortlistSize` | final development tournament candidates        |                         5 |
+| `shortlistSize` | final development tournament candidates        |                         2 |
 
-`K=80` 指 80 个通过完整 build/admission pipeline 的唯一 artifacts。被拒 proposal、duplicate source、
-infrastructure retry 和单个 task evaluation 都不计为 candidate iteration，但全部记入预算/证据。
+默认 `stable-demo` 的 `K=3/q0=1/shortlistSize=2` 只证明稳定迭代，不执行 champion tournament。可选
+`terminal-bench-formal` profile 使用 `K=80/q0=3/shortlistSize=5`。K 始终指通过完整 build/admission
+pipeline 的唯一 artifacts；被拒 proposal、duplicate source、retry 和 evaluation 不计为 candidate，
+但全部记入预算/证据。
 
 若 UCB-Air 达到 `K` 所需的最低 `B_eval` 与总预算冲突，calibration 必须拒绝 run；不能临时更改
 `alpha` 或把 failed build 算入 80。
@@ -128,7 +130,8 @@ candidate_to_evaluate = argmax theta_node(a)
 
 例外优先级高于 Thompson：
 
-1. 新 admitted node 必须完成 `q0=3` 个 cold-start trials（2 observed + 1 guard，顺序由 seed 决定）；
+1. 新 admitted node 必须完成 `q0=1` 个 cold-start trial：从 search 前冻结的 baseline-failed observed
+   pool 确定性抽取 1 题；
 2. shortlist tournament 的 coverage plan；
 3. 已预注册的 paired baseline confirmation。
 
@@ -213,15 +216,17 @@ minimize: model cost, median wall time, input tokens, critical-risk count
 
 Parent selection 仍以 CMP Thompson 为主，Pareto view 不删枝。
 
-## 11. Shortlist and development champion
+## 11. Stable-demo stop and optional formal tournament
 
-完成 80 个 admitted candidates 后进入固定 tournament：
+`stable-demo` 完成 3 个 admitted candidates、至少两层 lineage 和 crash/replay 验收后直接停止，状态为
+`STABLE_ITERATION_VERIFIED`。它不选择 champion，也不接触 guard/sealed service。
+
+只有显式启动 `terminal-bench-formal` profile，完成 80 个 admitted candidates 后才进入固定 tournament：
 
 1. 排除 invalid/quarantined、少于 `minEligibilityTrials`（默认 12）或 artifact 不完整节点；
 2. 按 `q10(Beta(1+s,1+f))` 选前 `shortlistSize=5`，hash 固定 tie-break；
-3. 为 shortlist 与 baseline 执行相同的 60-task development coverage plan；默认每 task 至少 1 次，
-   对差异接近 0 的候选按 manifest 预算增加至最多 3 次；
-4. observed 48 和 guard 12 都参与 selector；guard 只向 proposer 隐藏，不伪称 held-out；
+3. 为 shortlist 与 baseline 执行相同的 60-task development coverage plan；默认每 task至少 1 次；
+4. observed 48 和 guard 12 都参与 selector；guard 始终向 proposer 隐藏，不伪称 held-out；
 5. 计算 task-weighted paired delta、90% cluster-bootstrap LCB、cost/time；
 6. 在 baseline + shortlist 中选最高 performance LCB，按第 10 节 tie-break。
 
@@ -236,6 +241,10 @@ Parent selection 仍以 CMP Thompson 为主，Pareto view 不删枝。
 若 baseline 获胜或 winner 的 development point delta `<= 0`，状态为
 `NO_DEVELOPMENT_IMPROVEMENT`，不接触 sealed service。否则将 winner source/capsule/run manifest
 三重 hash 写入 candidate lock；此后任何 mutation 都创建新 run。
+
+stable-demo 的 baseline failure pool 和 candidate task RNG streams 必须在 candidate reward 可见前写入
+manifest/journal。reward 出现后不得换题、补抽失败题或丢弃通过题。该 development score 只代表 demo
+sample，不代表 Terminal-Bench 性能。
 
 ## 12. Sealed gate is outside the search algorithm
 

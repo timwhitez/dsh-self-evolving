@@ -196,7 +196,7 @@ describe('cold-start enforcement (spec 03 §6)', () => {
       s: 1,
       f: 1,
     }
-    expect(needsColdStart(node, DEFAULT_PARAMS)).toBe(true) // 2 < 3
+    expect(needsColdStart(node, { ...DEFAULT_PARAMS, q0: 3 })).toBe(true) // 2 < 3
   })
 
   it('a node with >= q0 trials is cold-start-complete', () => {
@@ -207,7 +207,7 @@ describe('cold-start enforcement (spec 03 §6)', () => {
       s: 2,
       f: 1,
     }
-    expect(needsColdStart(node, DEFAULT_PARAMS)).toBe(false) // 3 >= 3
+    expect(needsColdStart(node, { ...DEFAULT_PARAMS, q0: 3 })).toBe(false) // 3 >= 3
   })
 })
 
