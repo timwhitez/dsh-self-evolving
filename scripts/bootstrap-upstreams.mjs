@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import process from 'node:process'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const provenance = JSON.parse(await readFile(join(repoRoot, 'provenance.lock.json'), 'utf8'))
