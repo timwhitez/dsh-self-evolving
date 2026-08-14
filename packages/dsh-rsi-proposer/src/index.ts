@@ -27,3 +27,4 @@ export {
   createProposalGatewayLlmHandler,
   type ProposalGatewayAdapterConfig,
 } from './gateway-adapter.js'
+export { TrustedResponsesAdapter, type TrustedResponsesAdapterConfig } from './responses-adapter.js'

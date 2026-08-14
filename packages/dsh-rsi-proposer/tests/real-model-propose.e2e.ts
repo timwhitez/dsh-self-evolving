@@ -6,7 +6,7 @@
  *
  * This test boots the REAL DSH Loader with a model-backed composition
  * (llm-deepseek → agent-spine-demo → agent-default-model), drives
- * ctx.agents.create with the verified deepseek-v4-flash provider, and asserts
+ * ctx.agents.create with the verified deepseek-v4-flash-free provider, and asserts
  * the model produces ≥1 nontrivial proposal that passes the protocol validator.
  *
  * Requires: DEEPSEEK_API_KEY env + the verified provider endpoint. Skips
@@ -33,7 +33,7 @@ const repoRoot = resolve(here, '..', '..', '..')
 const baselineRoot = resolve(repoRoot, 'packages', 'candidate-baseline')
 const dshRoot = resolve(repoRoot, 'deepseek-harness')
 
-const ROUTE: ModelRoute = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+const ROUTE: ModelRoute = { provider: 'deepseek-official', model: 'deepseek-v4-flash-free' }
 const API_KEY = process.env['DEEPSEEK_API_KEY'] ?? process.env['RSI_PROVIDER_API_KEY'] ?? ''
 const BASE_URL = process.env['RSI_PROVIDER_BASE_URL'] ?? 'https://64.186.236.156:24635/v1'
 
@@ -118,7 +118,7 @@ async function bootModelComposition(): Promise<Context> {
       "  name: '@deepseek-ai/dsh-agent-default-model'",
       '  config:',
       '    provider: deepseek-official',
-      '    model: deepseek-v4-flash',
+      '    model: deepseek-v4-flash-free',
       '- id: agent-spine',
       "  name: '@deepseek-ai/dsh-agent-spine-demo'",
       '  config:',
@@ -159,7 +159,7 @@ async function bootModelComposition(): Promise<Context> {
 
 const MODEL_TIMEOUT = { timeout: 180_000 }
 
-describe.skipIf(!API_KEY)('Gate 4 — real-model proposal (deepseek-v4-flash)', () => {
+describe.skipIf(!API_KEY)('Gate 4 — real-model proposal (deepseek-v4-flash-free)', () => {
   it(
     'generates >=1 nontrivial admitted child from the baseline parent + synthetic evidence',
     MODEL_TIMEOUT,
@@ -207,7 +207,7 @@ export function apply(ctx, config) {
         }
         expect(transcript.assistantText.length).toBeGreaterThan(0)
         expect(transcript.eventCount).toBeGreaterThan(0)
-        expect(transcript.modelRoute.model).toBe('deepseek-v4-flash')
+        expect(transcript.modelRoute.model).toBe('deepseek-v4-flash-free')
 
         // Parse + validate: >=1 nontrivial admitted child.
         const parsed = parseAndValidate(transcript.assistantText, parentDigest, 3)

@@ -30,8 +30,12 @@ transport 字段，并按 request hash 幂等返回、记录 content-free receip
 该集成点的 model-free 路径现已闭合：immutable runtime 中的真实 Cordis agent-spine、baseline
 propose-mode candidate、GatewayAdapter、session loop 和 proposal parser 已在 Bubblewrap 内通过固定
 Unix gateway 生成 1 个 admitted child；sandbox 仍无 IP network、无 credential。Gate 4 唯一剩余
-验收项是把 trusted handler 换成真实 provider adapter 后复验同一拓扑。当前无 credential，故仍不
-宣称 Gate 4 accepted。
+验收项是把 trusted handler 换成真实 provider adapter 后复验同一拓扑。现已按用户授权从 root-only
+Codex auth store 向可信宿主进程注入 `deepseek-v4-flash-free` credential，并冻结 200k context；两次
+strict-TLS Responses smoke 返回 200。但完整 sandbox successor 的 12 次有界尝试均返回 429
+(`model_cooldown` / `FreeUsageLimitError`)，没有 assistant message 或 admitted child。因此 Gate 4 继续
+`GATE_4_ACCEPTANCE_FAILED`。详见
+[`docs/audits/2026-08-14-gate4-free-provider-attempt.md`](docs/audits/2026-08-14-gate4-free-provider-attempt.md)。
 
 ## Gate 5/6 历史证据隔离
 
@@ -352,8 +356,8 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 
 ## 尚未完成（真实运行与外部依赖）
 
-- Gate 4：在同一 Bubblewrap + fixed gateway topology 中注入当前 provider credential，取得真实
-  provider successor receipt。
+- Gate 4：等待 `deepseek-v4-flash-free` 免费额度/cooldown 恢复，在同一 Bubblewrap + fixed gateway
+  topology 中取得真实 provider successor receipt。
 - Gate 5：正式独立 principal/volume split ceremony、60×≥2 real baseline、real 3-candidate
   calibration 与 accepted budget。
 - Gate 6：新的 real K=10 pilot、真实 crash/reconcile、raw evidence 与成本误差审计。
@@ -365,6 +369,6 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 
 ## 下一个可执行验收门
 
-提供当前 provider credential 后，复验 Gate 4 同一 sandbox/gateway topology；随后才可部署正式
-sealed-service principal 并 mint successor split。未获得 credential 时不得跳到 Gate 5 付费基线、
-Gate 7 formal search 或 Gate 8 reveal。逐项清单见 `docs/phase-todolist.md`。
+等待 `deepseek-v4-flash-free` cooldown/免费额度恢复后，复验 Gate 4 同一 sandbox/gateway topology；
+随后才可部署正式 sealed-service principal 并 mint successor split。不得因 429 替换模型或跳到 Gate 5
+付费基线、Gate 7 formal search、Gate 8 reveal。逐项清单见 `docs/phase-todolist.md`。

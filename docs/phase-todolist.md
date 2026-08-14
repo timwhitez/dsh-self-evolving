@@ -117,6 +117,11 @@
 > 随后 model-free 集成 E2E 已使 immutable runtime 内的真实 agent-spine、baseline propose candidate、
 > session loop、GatewayAdapter 与 parser 在 Bubblewrap 内生成 1 个 admitted child。仅剩将 trusted
 > handler 接真实 provider adapter 的同拓扑复验；无 credential 时继续 fail closed。
+>
+> **provider 注入更新**：已从 root-only Codex auth store 向可信宿主进程注入精确
+> `deepseek-v4-flash-free` route（200k context）。strict-TLS smoke=HTTP 200；完整 sandbox successor
+> 因 `model_cooldown` / `FreeUsageLimitError` 在 12 次有界 retry 后仍为 HTTP 429，故仍未验收，且不
+> 替换模型。
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 

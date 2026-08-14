@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "status": "PROVIDER_RATE_LIMITED_NOT_ACCEPTED",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash-free",
+  "contextWindowTokens": 200000,
+  "reasoningEffort": "high",
+  "credentialSource": "root-only external Codex auth store",
+  "credentialPersistedInRepository": false,
+  "responsesSmoke": {
+    "status": "PASSED",
+    "httpStatus": 200,
+    "exactModelEcho": true
+  },
+  "sandboxedSuccessor": {
+    "status": "FAILED_PROVIDER_RATE_LIMIT",
+    "httpStatus": 429,
+    "providerCodes": [
+      "model_cooldown",
+      "FreeUsageLimitError"
+    ],
+    "admittedCandidates": 0,
+    "credentialVisibleInSandbox": false
+  },
+  "sealedAccessCount": 0,
+  "claimBoundary": [
+    "ROUTE_AND_CREDENTIAL_SMOKE_ONLY",
+    "GATE_4_ACCEPTANCE_FAILED",
+    "NO_CANDIDATE_CAPABILITY_CLAIM",
+    "FORMAL_SEARCH_NOT_STARTED"
+  ]
+}

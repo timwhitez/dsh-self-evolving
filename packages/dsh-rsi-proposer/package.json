@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Agentic proposal runner: boots the real DSH Loader, drives the verified deepseek-v4-flash model via ctx.agents.create to generate child candidate proposals from a parent + filtered evidence, then validates them through the candidate-SDK builder + proposal protocol. Gate 4 vertical slice.",
+  "description": "Agentic proposal runner: boots the real DSH Loader, drives a manifest-locked model via ctx.agents.create to generate child proposals from filtered evidence, then validates them through the candidate-SDK builder and proposal protocol.",
   "main": "lib/index.js",
   "files": [
     "lib"

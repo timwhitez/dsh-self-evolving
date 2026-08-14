@@ -24,6 +24,7 @@ export interface FormalRunManifest {
     endpointHash: string
     model: string
     reasoningEffort: string
+    contextWindowTokens: number
     requestDefaultsHash: string
   }
   proposerRoute: {
@@ -31,6 +32,7 @@ export interface FormalRunManifest {
     endpointHash: string
     model: string
     reasoningEffort: string
+    contextWindowTokens: number
     requestDefaultsHash: string
   }
   benchmark: {
@@ -201,11 +203,12 @@ export function verifyFormalPreflight(
     reasons.push('frozen Terminal-Bench 2.1 identity is incomplete or mismatched')
   }
   if (
-    !manifest.solverRoute.provider ||
-    !manifest.solverRoute.model ||
-    !manifest.solverRoute.reasoningEffort
+    manifest.solverRoute.provider !== 'deepseek' ||
+    manifest.solverRoute.model !== 'deepseek-v4-flash-free' ||
+    manifest.solverRoute.reasoningEffort !== 'high' ||
+    manifest.solverRoute.contextWindowTokens !== 200_000
   ) {
-    reasons.push('solver route identity is incomplete')
+    reasons.push('solver route is not the frozen deepseek-v4-flash-free/high/200k identity')
   }
   if (routeIdentity(manifest.solverRoute) !== routeIdentity(manifest.proposerRoute)) {
     reasons.push('self track proposer and solver routes differ')

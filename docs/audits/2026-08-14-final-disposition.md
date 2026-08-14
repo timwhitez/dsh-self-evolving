@@ -2,20 +2,21 @@
 
 ## Outcome
 
-The safe, credential-free engineering scope is complete. The project is not a completed RSI
-experiment and has no performance, promotion, full-set, leaderboard, or release claim.
+The safe engineering scope and the authorized free-provider injection attempt are complete. The
+project is not a completed RSI experiment and has no performance, promotion, full-set, leaderboard,
+or release claim.
 
-| Gate | Current status        | Evidence boundary                                                                     |
-| ---- | --------------------- | ------------------------------------------------------------------------------------- |
-| 0    | `ACCEPTED`            | pinned provenance and real Cordis Loader lifecycle                                    |
-| 1    | `ACCEPTED`            | self-contained deterministic capsule; offline ACP in namespace/scratch container      |
-| 2    | `ACCEPTED`            | packed candidate through real Harbor ACP with native trajectory/events/summary        |
-| 3    | `ACCEPTED`            | DSH service, durable journal/budget/provider saga, real SIGKILL recovery              |
-| 4    | `ACCEPTANCE_FAILED`   | model-free real DSH sandbox/gateway topology passes; no current real-provider receipt |
-| 5    | `NOT_ACCEPTED`        | historical nop calibration quarantined; sealed service is synthetic preflight only    |
-| 6    | `NOT_ACCEPTED`        | historical stub/Math.random pilot quarantined; no real K=10 successor                 |
-| 7    | `BLOCKED_NOT_STARTED` | signed preflight verifier exists; no formal run directory/search                      |
-| 8    | `BLOCKED_NOT_STARTED` | evidence verifier exists; no lock/reveal/sealed/full/release evidence                 |
+| Gate | Current status        | Evidence boundary                                                                  |
+| ---- | --------------------- | ---------------------------------------------------------------------------------- |
+| 0    | `ACCEPTED`            | pinned provenance and real Cordis Loader lifecycle                                 |
+| 1    | `ACCEPTED`            | self-contained deterministic capsule; offline ACP in namespace/scratch container   |
+| 2    | `ACCEPTED`            | packed candidate through real Harbor ACP with native trajectory/events/summary     |
+| 3    | `ACCEPTED`            | DSH service, durable journal/budget/provider saga, real SIGKILL recovery           |
+| 4    | `ACCEPTANCE_FAILED`   | exact free-model smoke passes; full sandbox successor is provider-rate-limited     |
+| 5    | `NOT_ACCEPTED`        | historical nop calibration quarantined; sealed service is synthetic preflight only |
+| 6    | `NOT_ACCEPTED`        | historical stub/Math.random pilot quarantined; no real K=10 successor              |
+| 7    | `BLOCKED_NOT_STARTED` | signed preflight verifier exists; no formal run directory/search                   |
+| 8    | `BLOCKED_NOT_STARTED` | evidence verifier exists; no lock/reveal/sealed/full/release evidence              |
 
 ## Successor commits
 
@@ -37,6 +38,8 @@ experiment and has no performance, promotion, full-set, leaderboard, or release 
 - Terminal-Bench source: `d28711d0da2675d0bb1d56de45ae5df6082438a3`.
 - Designed TB 2.1 dataset digest:
   `sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a`.
+- Frozen requested model route: `deepseek` / `deepseek-v4-flash-free` / `high` / 200,000-token
+  context; the endpoint is represented by hash in any future signed formal manifest.
 - Historical public-seed split/calibration and `pilot-001` bytes remain unchanged and carry
   `QUARANTINED_NOT_ACCEPTED` sidecars.
 - No formal split was minted, no formal run directory was created, and sealed access/reveal counts
@@ -46,16 +49,16 @@ experiment and has no performance, promotion, full-set, leaderboard, or release 
 
 - TypeScript, ESLint, Prettier, provenance, upstream-clean, AGENTS/CLAUDE byte equality, and U+FFFD
   scans pass.
-- Unit suite: 224/224 pass after the Gate 8 and candidate-lock successor.
+- Unit suite: 226/226 pass after the provider-adapter and 200k formal-route successor.
 - Sealed-service process E2E: 2/2 pass after the complete lock-identity successor.
-- The most recent complete E2E suite before final documentation passed every executed test; the
-  real-model proposal test was skipped because no provider credential was available. A final
-  exact-HEAD complete E2E rerun is required before handoff and is recorded in the final response.
+- The previously recorded exact-HEAD complete E2E suite passed every executed test with the
+  real-model case skipped. A later authorized `deepseek-v4-flash-free` Responses smoke passed, but
+  the full sandboxed provider successor exhausted bounded retries on HTTP 429 and remains failed.
 
 ## Required resume order
 
-1. Supply a current provider credential through the trusted host boundary and rerun Gate 4's exact
-   Bubblewrap/fixed-gateway topology without exposing the credential to the sandbox or logs.
+1. After the frozen free model's cooldown/quota recovers, rerun Gate 4's exact
+   Bubblewrap/fixed-gateway topology using the authorized root-only credential source.
 2. Deploy the sealed service under a durable separate principal/volume, mint a fresh formal split,
    then run the real 60x2 baseline and 3-candidate strata calibration.
 3. Only after Gate 5 acceptance, run a fresh real K=10 Gate 6 pilot with process crash/reconcile,

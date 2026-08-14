@@ -24,6 +24,9 @@ evidence/formal/*
 !evidence/gate8/
 evidence/gate8/*
 !evidence/gate8/STATUS.json
+!evidence/gate4/
+evidence/gate4/*
+!evidence/gate4/STATUS.json
 runs/
 
 # Editor / OS noise.

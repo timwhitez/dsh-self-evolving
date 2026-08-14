@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildCandidate, packCapsule } from '@dsh-rsi/candidate-sdk'
 import { runProposalSandbox, type ProposalSandboxMounts } from '@dsh-rsi/core'
-import { startProposalGateway, type ProposalGatewayRoute } from '../src/index.js'
+import {
+  TrustedResponsesAdapter,
+  createProposalGatewayLlmHandler,
+  startProposalGateway,
+  type ProposalGatewayRoute,
+} from '../src/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..', '..', '..')
@@ -22,11 +27,20 @@ const sourceFiles = [
 ]
 
 const route: ProposalGatewayRoute = {
-  provider: 'deepseek-official',
+  provider: 'deepseek',
   endpoint: 'https://provider.invalid/v1',
-  model: 'deepseek-v4-flash',
+  model: 'deepseek-v4-flash-free',
   reasoningEffort: 'high',
   maxTokens: 2048,
+}
+const realApiKey = process.env['RSI_PROVIDER_API_KEY'] ?? ''
+const realBaseUrl = process.env['RSI_PROVIDER_BASE_URL'] ?? ''
+const realRoute: ProposalGatewayRoute = {
+  provider: 'deepseek',
+  endpoint: realBaseUrl,
+  model: 'deepseek-v4-flash-free',
+  reasoningEffort: 'high',
+  maxTokens: 4096,
 }
 
 let root: string | undefined
@@ -62,49 +76,58 @@ async function makeMounts(): Promise<ProposalSandboxMounts> {
   return mounts
 }
 
+async function prepareTopology(selectedRoute: ProposalGatewayRoute): Promise<{
+  mounts: ProposalSandboxMounts
+  capsuleDir: string
+  parentDigest: string
+}> {
+  const receipt = await buildCandidate({
+    sourceRoot: baselineRoot,
+    sourceFiles,
+    tscBin,
+  })
+  const capsuleDir = join(root!, 'capsule')
+  await packCapsule({
+    outDir: capsuleDir,
+    receipt,
+    runnerOverlay: '\n',
+    provenanceJson: '{"dsh":"pinned"}',
+    sbomJson: '{"spdxVersion":"SPDX-2.3"}',
+    runtimeClosure: {
+      catalogRoots: [
+        join(repoRoot, 'packages'),
+        join(dshRoot, 'packages'),
+        join(dshRoot, 'vendor'),
+      ],
+      seedPackages: [
+        '@dsh-rsi/proposer',
+        '@deepseek-ai/dsh-agent-spine-demo',
+        '@deepseek-ai/dsh-agent-default-model',
+      ],
+      entryPackage: '@dsh-rsi/proposer',
+      entryBin: 'lib/sandbox-worker.js',
+    },
+  })
+  const mounts = await makeMounts()
+  const parentDigest = `sha256:${receipt.sourceHash}`
+  await writeFile(
+    join(mounts.contracts, 'request.json'),
+    JSON.stringify({
+      route: selectedRoute,
+      parentDigest,
+      candidateId: receipt.candidateId,
+      width: 3,
+    }) + '\n',
+  )
+  return { mounts, capsuleDir, parentDigest }
+}
+
 describe('Gate 4 — sandboxed real DSH proposal topology', () => {
   it(
     'runs agent-spine + propose candidate through the broker and validates one child',
     { timeout: 180_000 },
     async () => {
-      const receipt = await buildCandidate({
-        sourceRoot: baselineRoot,
-        sourceFiles,
-        tscBin,
-      })
-      const capsuleDir = join(root!, 'capsule')
-      await packCapsule({
-        outDir: capsuleDir,
-        receipt,
-        runnerOverlay: '\n',
-        provenanceJson: '{"dsh":"pinned"}',
-        sbomJson: '{"spdxVersion":"SPDX-2.3"}',
-        runtimeClosure: {
-          catalogRoots: [
-            join(repoRoot, 'packages'),
-            join(dshRoot, 'packages'),
-            join(dshRoot, 'vendor'),
-          ],
-          seedPackages: [
-            '@dsh-rsi/proposer',
-            '@deepseek-ai/dsh-agent-spine-demo',
-            '@deepseek-ai/dsh-agent-default-model',
-          ],
-          entryPackage: '@dsh-rsi/proposer',
-          entryBin: 'lib/sandbox-worker.js',
-        },
-      })
-      const mounts = await makeMounts()
-      const parentDigest = `sha256:${receipt.sourceHash}`
-      await writeFile(
-        join(mounts.contracts, 'request.json'),
-        JSON.stringify({
-          route,
-          parentDigest,
-          candidateId: receipt.candidateId,
-          width: 3,
-        }) + '\n',
-      )
+      const { mounts, capsuleDir, parentDigest } = await prepareTopology(route)
 
       const proposal = {
         proposalId: 'sandboxed-p1',
@@ -155,3 +178,78 @@ describe('Gate 4 — sandboxed real DSH proposal topology', () => {
     },
   )
 })
+
+describe.skipIf(!realApiKey || !realBaseUrl)(
+  'Gate 4 — sandboxed real provider successor (deepseek-v4-flash-free, 200k)',
+  () => {
+    it(
+      'generates an admitted child through the exact networkless DSH + trusted gateway topology',
+      { timeout: 240_000 },
+      async () => {
+        const { mounts, capsuleDir } = await prepareTopology(realRoute)
+        const adapter = new TrustedResponsesAdapter({
+          route: realRoute,
+          apiKeyEnv: 'RSI_PROVIDER_API_KEY',
+          contextWindow: 200_000,
+          requestMaxRetries: 12,
+        })
+        const handler = createProposalGatewayLlmHandler(adapter, realRoute)
+        let providerFailure: string | null = null
+        let providerRequestShape: Record<string, number> | null = null
+        const gateway = await startProposalGateway({
+          socketPath: join(root!, 'gateway', 'proposal.sock'),
+          route: realRoute,
+          async handle(payload) {
+            try {
+              const record = payload as Record<string, unknown>
+              providerRequestShape = {
+                payloadBytes: Buffer.byteLength(JSON.stringify(payload)),
+                systemChars: typeof record['system'] === 'string' ? record['system'].length : 0,
+                messageCount: Array.isArray(record['messages']) ? record['messages'].length : 0,
+                toolCount: Array.isArray(record['tools']) ? record['tools'].length : 0,
+                maxTokens: typeof record['maxTokens'] === 'number' ? record['maxTokens'] : 0,
+              }
+              return await handler(payload)
+            } catch (error) {
+              providerFailure = error instanceof Error ? error.message : 'unknown provider failure'
+              throw error
+            }
+          },
+        })
+        try {
+          const result = await runProposalSandbox({
+            mounts,
+            runtimeRoot: join(capsuleDir, 'runtime'),
+            command: '/runtime/node',
+            args: ['/runtime/node_modules/@dsh-rsi/proposer/lib/sandbox-worker.js'],
+            timeoutMs: 210_000,
+            maxOutputBytes: 2 * 1024 * 1024,
+            gatewaySocket: gateway.socketPath,
+          })
+          expect(result.exitCode, result.stderr).toBe(0)
+          const output = JSON.parse(
+            await readFile(join(mounts.childrenRoot, 'proposal-output.json'), 'utf8'),
+          ) as {
+            transcript: { eventCount: number; modelRoute: { model: string }; assistantText: string }
+            parsed: { accepted: unknown[]; rejected: Array<{ reason: string }> }
+          }
+          expect(output.transcript.modelRoute.model).toBe('deepseek-v4-flash-free')
+          expect(output.transcript.eventCount).toBeGreaterThan(0)
+          expect(
+            output.parsed.accepted.length,
+            JSON.stringify({
+              rejected: output.parsed.rejected.map((entry) => entry.reason),
+              assistantPreview: output.transcript.assistantText.slice(0, 800),
+              receiptCount: gateway.receipts().length,
+              providerFailure,
+              providerRequestShape,
+            }),
+          ).toBeGreaterThanOrEqual(1)
+          expect(gateway.receipts()).toHaveLength(1)
+        } finally {
+          await gateway.close()
+        }
+      },
+    )
+  },
+)

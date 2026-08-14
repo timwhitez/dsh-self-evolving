@@ -11,7 +11,8 @@
 public key, rather than accepting a self-declared signer. The canonical manifest binds:
 
 - reviewed Git commit/tag/tree and provenance identities;
-- self-track solver/proposer routes and request defaults;
+- self-track solver/proposer routes, request defaults, and the exact
+  `deepseek-v4-flash-free`/`high`/200,000-token context identity;
 - exact Terminal-Bench 2.1 registry/dataset/source/inventory identities;
 - controller, candidate SDK, evaluator, statistics, protocol, and sealed-service hashes;
 - split commitment, search parameters, master-seed commitment, budget limits/reserve; and
