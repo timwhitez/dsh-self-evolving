@@ -16,3 +16,6 @@ runs/
 # Editor / OS noise.
 .DS_Store
 *.log
+
+# ZCode session/plan artifacts (not part of the project).
+.zcode/

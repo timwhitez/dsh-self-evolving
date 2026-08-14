@@ -24,6 +24,7 @@ interface Upstream {
   path: string
   vcs?: string
   commit: string
+  lockfileIntegrity?: { algo: string; value: string }
 }
 interface Lock {
   version: number
@@ -66,6 +67,21 @@ async function main(): Promise<void> {
     else console.log(`✓ ${name} @ ${head.slice(0, 12)}`)
     const dirty = git(dir, 'status', '--porcelain')
     if (dirty) fail(`upstream ${name}: working tree dirty (read-only pin violated):\n${dirty}`)
+    // 2b. Optional lockfile integrity (content-addressed pin of the upstream's lockfile).
+    if (up.lockfileIntegrity) {
+      const lockfilePath = resolve(dir, 'pnpm-lock.yaml')
+      const data = await readFile(lockfilePath).catch(() => null)
+      if (data === null) {
+        fail(`upstream ${name}: lockfileIntegrity pinned but pnpm-lock.yaml missing`)
+      } else {
+        const hash = createHash('sha256').update(data).digest('hex')
+        if (hash !== up.lockfileIntegrity.value) {
+          fail(`upstream ${name}: lockfile sha256 ${hash} != pinned ${up.lockfileIntegrity.value}`)
+        } else {
+          console.log(`✓ ${name} lockfile sha256 matched`)
+        }
+      }
+    }
   }
 
   // 3. Toolchain.

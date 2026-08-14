@@ -76,7 +76,7 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 ### CI 骨架
 
-- `format:check`、`lint`、`typecheck`、`test`（57 单元）、`test:e2e`（4 真实 Loader 测试，含
+- `format:check`、`lint`、`typecheck`、`test`（79 单元：50 SDK + 22 adapter + 7 guards）、`test:e2e`（7 真实测试，含
   capsule offline boot）、`provenance:check`、`upstream:check`、`byteequal:check` 全绿。
 - `.github/workflows/ci.yml` 定义 fast-ci + loader-e2e 两个 job。
 - 三上游 working tree clean；`AGENTS.md` 与 `CLAUDE.md` 字节一致。

@@ -14,3 +14,7 @@ provenance.lock.json
 
 # Evidence and run artifacts.
 evidence/
+runs/
+
+# ZCode session/plan artifacts.
+.zcode/

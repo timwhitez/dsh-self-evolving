@@ -37,7 +37,7 @@
 > golden build 三 hash 一致（`builder-golden.test.ts`，2 绿）；canonical tar/identity 10 绿；
 > policy scanner 19 绿（含 15 reject fixture）；manifest validation 7 绿；rejection suite 9 绿
 > （dynamic-import/default-export/task-literal/external-import/child-process/secret/symlink/install-script）；
-> packed capsule 离线 boot 真实 Loader（`capsule-offline-boot.e2e.ts`，1 绿）。共 57 单元 + 4 E2E。
+> packed capsule 离线 boot 真实 Loader（`capsule-offline-boot.e2e.ts`，1 绿）。共 50 SDK 单元 + 4 E2E（Phase 1 范围）。
 
 ## Phase 2 — Terminal-Bench provider 垂直切片（Gate 2，3–5 天）
 

@@ -12,7 +12,7 @@
       "packageJsonVersion": "0.1.0-rc.5",
       "nodeVersion": ">=22.19.0 || >=24.0.0",
       "packageManager": "pnpm@11.7.0",
-      "lockfileIntegrity": { "algo": "sha256", "value": "${computed:deepseek-harness/pnpm-lock.yaml}" }
+      "lockfileIntegrity": { "algo": "sha256", "value": "6177ec61bdb8194eb5a606813a62ffb0ab2cc7fdfe2cd6e0249dcbfe4bce58e0" }
     },
     "harbor": {
       "path": "./harbor",
