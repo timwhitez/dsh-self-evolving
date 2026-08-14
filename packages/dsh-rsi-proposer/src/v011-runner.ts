@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ModelRoute, ProposalTranscript } from './runner.js'
 import { runProposalTurn } from './runner.js'
 import { installV011Tools, type V011ToolRoots, type V011ToolState } from './v011-tools.js'
+import type { V011ParentEvidenceBinding } from '@dsh-rsi/core'
 
 export interface V011ProposalTurnInput {
   proposalId: string
@@ -10,6 +11,7 @@ export interface V011ProposalTurnInput {
   exportMerkleRoot: string
   capabilityCatalogDigest: string
   ancestorClusters: string[]
+  requiredParentEvidence?: V011ParentEvidenceBinding
   roots: V011ToolRoots
 }
 
@@ -29,6 +31,14 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     `Evidence export Merkle root: ${input.exportMerkleRoot}`,
     `Frozen capability catalog digest: ${input.capabilityCatalogDigest}`,
     `Ancestor clusters requiring reconciliation: ${JSON.stringify(input.ancestorClusters)}`,
+    ...(input.requiredParentEvidence === undefined
+      ? []
+      : [
+          `Exact parent analysis digest: ${input.requiredParentEvidence.analysisDigest}`,
+          `Exact parent mechanism-outcome digest: ${input.requiredParentEvidence.mechanismOutcomeDigest}`,
+          `Exact parent normalized trial digest: ${input.requiredParentEvidence.normalizedTrialDigest}`,
+          `Exact parent trajectory digest: ${input.requiredParentEvidence.trajectoryDigest}`,
+        ]),
     '',
     'Use list_files/read_file/search_text to inspect the parent, raw evidence, archive, and contracts.',
     'Inspect every exported application/vnd.dsh-rsi.rejection+json object before authoring; its reason is corrective evidence for this attempt.',
@@ -40,6 +50,7 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     'Write the slot metadata files with write_file paths analysis.json and proposal.json.',
     'Citations must resolve to exact exported object digests and JSON Pointer or JSONL line spans.',
     'If an ancestor cluster is listed, cite its analysis and mechanism-outcome record and state your position.',
+    'When exact parent evidence digests are listed, the selected failure cluster must cite that exact trajectory and normalized trial; its reconciliation must cite that exact parent analysis and mechanism-outcome.',
     'Capability requests are data-only and cannot alter this run.',
     'Call validate_child, then finish_proposal. finish_proposal runs the same semantic validator as trusted materialization.',
     'If finish_proposal returns an error, correct the named defect and call it again. Do not stop after only explaining the change.',
@@ -71,6 +82,9 @@ export async function runV011ProposalTurn(
         exportManifestDigest: input.exportManifestDigest as `sha256:${string}`,
         exportMerkleRoot: input.exportMerkleRoot as `sha256:${string}`,
         ancestorClusters: input.ancestorClusters,
+        ...(input.requiredParentEvidence === undefined
+          ? {}
+          : { requiredParentEvidence: input.requiredParentEvidence }),
       })
     },
   )

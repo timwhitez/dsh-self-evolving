@@ -12,6 +12,7 @@ import {
   validateV011ProposalSemantics,
   type CandidateIntent,
   type ExportManifest,
+  type V011ParentEvidenceBinding,
   type V011Analysis,
 } from '@dsh-rsi/core'
 
@@ -50,6 +51,7 @@ export interface V011ProposalBindings {
   exportManifestDigest: `sha256:${string}`
   exportMerkleRoot: `sha256:${string}`
   ancestorClusters: string[]
+  requiredParentEvidence?: V011ParentEvidenceBinding
 }
 
 export function consumeV011ToolBudget(
@@ -344,6 +346,9 @@ export function installV011Tools(
           analysis,
           candidateIntent,
           ancestorClustersRequiringReconciliation: bindings.ancestorClusters,
+          ...(bindings.requiredParentEvidence === undefined
+            ? {}
+            : { requiredParentEvidence: bindings.requiredParentEvidence }),
         })
         await snapshotV011Tree(roots.childTree)
         state.finished = true

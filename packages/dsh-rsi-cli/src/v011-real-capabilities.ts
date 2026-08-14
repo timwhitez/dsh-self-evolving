@@ -36,6 +36,7 @@ import {
   runProposalSandbox,
   type ObjectRef,
   type ObjectStore,
+  type V011ParentEvidenceBinding,
 } from '@dsh-rsi/core'
 import {
   TrustedChatCompletionsAdapter,
@@ -537,6 +538,71 @@ async function exportForProposal(
   return { root, manifest, refs }
 }
 
+async function exactParentEvidenceBinding(
+  config: V011DemoConfig,
+  input: StableProposalInput,
+  manifest: Awaited<ReturnType<typeof materializeProposerExport>>,
+): Promise<V011ParentEvidenceBinding | undefined> {
+  if (input.generation === 1) return undefined
+  if (input.parent.analysisDigest === undefined) {
+    throw new Error('v0.1.1 parent evidence: parent analysis digest missing')
+  }
+  const parentGeneration = input.generation - 1
+  const actionId = `eval:candidate:${parentGeneration}`
+  const status = await readControllerStatus(config as never)
+  const action = status.state.actions[actionId]
+  if (action?.status !== 'COMMITTED' || action.externalJobId === null) {
+    throw new Error('v0.1.1 parent evidence: parent evaluation is not committed')
+  }
+  const summaryBytes = await readFile(
+    join(config.stateDir, 'external-evaluator', action.externalJobId, 'summary.json'),
+  )
+  const summary = JSON.parse(summaryBytes.toString('utf8')) as {
+    runId?: unknown
+    normalized?: Array<{ trajectoryHash?: unknown }>
+  }
+  const trajectoryHash = summary.normalized?.[0]?.trajectoryHash
+  if (
+    summary.runId !== action.externalJobId ||
+    typeof trajectoryHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(trajectoryHash)
+  ) {
+    throw new Error('v0.1.1 parent evidence: normalized parent trial binding invalid')
+  }
+  const outcomeBytes = await readFile(
+    join(config.stateDir, 'v011', 'outcomes', `generation-${parentGeneration}`, 'outcome.json'),
+  )
+  const outcome = JSON.parse(outcomeBytes.toString('utf8')) as { candidateDigest?: unknown }
+  if (outcome.candidateDigest !== input.parent.candidateId) {
+    throw new Error('v0.1.1 parent evidence: mechanism outcome candidate mismatch')
+  }
+  const binding: V011ParentEvidenceBinding = {
+    schemaVersion: 1,
+    parentCandidateDigest: input.parent.candidateId as `sha256:${string}`,
+    parentEvaluationActionId: actionId,
+    parentExternalJobId: action.externalJobId,
+    analysisDigest: input.parent.analysisDigest as `sha256:${string}`,
+    mechanismOutcomeDigest: sha(outcomeBytes),
+    normalizedTrialDigest: sha(summaryBytes),
+    trajectoryDigest: `sha256:${trajectoryHash}`,
+  }
+  const exported = new Map(
+    manifest.objects.map((object) => [`sha256:${object.digest}`, object.mediaType]),
+  )
+  const expected = [
+    [binding.analysisDigest, /analysis/i],
+    [binding.mechanismOutcomeDigest, /mechanism-outcome/i],
+    [binding.normalizedTrialDigest, /normalized|trial-record/i],
+    [binding.trajectoryDigest, /atif|trajectory/i],
+  ] as const
+  for (const [digest, media] of expected) {
+    if (!media.test(exported.get(digest) ?? '')) {
+      throw new Error(`v0.1.1 parent evidence: ${digest} absent from exact export`)
+    }
+  }
+  return binding
+}
+
 async function realV011Proposal(
   config: V011DemoConfig,
   catalog: FrozenCapabilityCatalog,
@@ -568,6 +634,7 @@ async function realV011Proposal(
     throw new Error('v0.1.1 deterministic rejection fixture: undeclared output')
   }
   const exported = await exportForProposal(config, input.generation, input.attempt)
+  const requiredParentEvidence = await exactParentEvidenceBinding(config, input, exported.manifest)
   const exportDigest = digestV011(canonicalV011(exported.manifest))
   const proposalId = reserveProposalId({
     runId: config.runId,
@@ -608,6 +675,13 @@ async function realV011Proposal(
       join(contractsInput, 'capability-catalog.json'),
       JSON.stringify(catalog, null, 2) + '\n',
     )
+    if (requiredParentEvidence !== undefined) {
+      await writeFile(
+        join(contractsInput, 'parent-evidence-binding.json'),
+        JSON.stringify(requiredParentEvidence, null, 2) + '\n',
+        { mode: 0o600 },
+      )
+    }
     await mkdir(childrenRoot, { recursive: true, mode: 0o700 })
     await mkdir(slot, { recursive: true, mode: 0o700 })
     await materializeV011ChildSlot(input.parent.sourceRoot, join(slot, 'tree'))
@@ -662,6 +736,7 @@ async function realV011Proposal(
         capabilityCatalogDigest: catalog.digest,
         ancestorClusters:
           input.parent.targetClusterSlug === undefined ? [] : [input.parent.targetClusterSlug],
+        ...(requiredParentEvidence === undefined ? {} : { requiredParentEvidence }),
       }) + '\n',
       { mode: 0o600 },
     )
@@ -773,6 +848,7 @@ async function realV011Proposal(
       },
       ancestorClustersRequiringReconciliation:
         input.parent.targetClusterSlug === undefined ? [] : [input.parent.targetClusterSlug],
+      ...(requiredParentEvidence === undefined ? {} : { requiredParentEvidence }),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown semantic rejection'

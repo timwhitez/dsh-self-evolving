@@ -47,6 +47,17 @@ export interface CandidateIntent {
   runtime: { requiredServices: string[]; optionalServices: string[]; newToolNames: string[] }
 }
 
+export interface V011ParentEvidenceBinding {
+  schemaVersion: 1
+  parentCandidateDigest: `sha256:${string}`
+  parentEvaluationActionId: string
+  parentExternalJobId: string
+  analysisDigest: `sha256:${string}`
+  mechanismOutcomeDigest: `sha256:${string}`
+  normalizedTrialDigest: `sha256:${string}`
+  trajectoryDigest: `sha256:${string}`
+}
+
 export interface V011MaterializationReceipt {
   schemaVersion: 1
   proposalId: string
@@ -97,6 +108,37 @@ function assertTrajectoryGrounding(analysis: V011Analysis): void {
   }
 }
 
+export function assertExactParentEvidenceGrounding(
+  analysis: V011Analysis,
+  required: V011ParentEvidenceBinding,
+): void {
+  const selected = analysis.failureClusters.find(
+    (cluster) => cluster.slug === analysis.selectedCluster,
+  )
+  if (selected === undefined) throw new Error('v0.1.1 analysis: selected cluster does not exist')
+  const hasCitation = (digest: string, media: RegExp): boolean =>
+    selected.citations.some(
+      (citation) => citation.objectDigest === digest && media.test(citation.mediaType),
+    )
+  if (!hasCitation(required.trajectoryDigest, /atif|trajectory/i)) {
+    throw new Error('v0.1.1 analysis: selected cluster lacks exact parent trajectory citation')
+  }
+  if (!hasCitation(required.normalizedTrialDigest, /normalized|trial-record/i)) {
+    throw new Error('v0.1.1 analysis: selected cluster lacks exact parent normalized citation')
+  }
+  const reconciliation = analysis.ancestorReconciliations.find(
+    (row) => row.clusterSlug === analysis.selectedCluster,
+  )
+  if (reconciliation?.analysisCitation.objectDigest !== required.analysisDigest) {
+    throw new Error('v0.1.1 analysis: selected cluster lacks exact parent analysis citation')
+  }
+  if (reconciliation.outcomeCitation.objectDigest !== required.mechanismOutcomeDigest) {
+    throw new Error(
+      'v0.1.1 analysis: selected cluster lacks exact parent mechanism-outcome citation',
+    )
+  }
+}
+
 export async function validateV011ProposalSemantics(input: {
   parentRoot: string
   childRoot: string
@@ -113,6 +155,7 @@ export async function validateV011ProposalSemantics(input: {
   analysis: V011Analysis
   candidateIntent: CandidateIntent
   ancestorClustersRequiringReconciliation?: string[]
+  requiredParentEvidence?: V011ParentEvidenceBinding
 }): Promise<{ operations: TreeOperation[]; resolvedCitations: ResolvedCitation[] }> {
   if (!verifyExport(input.exportManifest))
     throw new Error('v0.1.1 materializer: invalid export Merkle root')
@@ -141,6 +184,9 @@ export async function validateV011ProposalSemantics(input: {
     )
   }
   assertTrajectoryGrounding(input.analysis)
+  if (input.requiredParentEvidence !== undefined) {
+    assertExactParentEvidenceGrounding(input.analysis, input.requiredParentEvidence)
+  }
   for (const cluster of new Set(input.ancestorClustersRequiringReconciliation ?? [])) {
     if (!input.analysis.ancestorReconciliations.some((row) => row.clusterSlug === cluster)) {
       throw new Error(`v0.1.1 analysis: missing ancestor reconciliation for ${cluster}`)
@@ -189,6 +235,7 @@ export async function materializeV011Proposal(input: {
   toolTrace: Uint8Array
   proposerUsage: Record<string, unknown>
   ancestorClustersRequiringReconciliation?: string[]
+  requiredParentEvidence?: V011ParentEvidenceBinding
 }): Promise<V011MaterializationOutput> {
   const proposalBytes = await readFile(join(input.childRoot, '..', 'proposal.json'))
   const analysisBytes = await readFile(join(input.childRoot, '..', 'analysis.json'))
@@ -217,6 +264,9 @@ export async function materializeV011Proposal(input: {
       : {
           ancestorClustersRequiringReconciliation: input.ancestorClustersRequiringReconciliation,
         }),
+    ...(input.requiredParentEvidence === undefined
+      ? {}
+      : { requiredParentEvidence: input.requiredParentEvidence }),
   })
   const child = await snapshotV011Tree(input.childRoot)
   const archive = await canonicalizeV011Tree(child)

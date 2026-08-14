@@ -9,7 +9,17 @@ describe('v0.1.1 proposal prompt contract', () => {
       exportManifestDigest: `sha256:${'2'.repeat(64)}`,
       exportMerkleRoot: `sha256:${'3'.repeat(64)}`,
       capabilityCatalogDigest: `sha256:${'4'.repeat(64)}`,
-      ancestorClusters: [],
+      ancestorClusters: ['transient-tool-stop'],
+      requiredParentEvidence: {
+        schemaVersion: 1,
+        parentCandidateDigest: `sha256:${'5'.repeat(64)}`,
+        parentEvaluationActionId: 'eval:candidate:1',
+        parentExternalJobId: 'stable-parent-job',
+        analysisDigest: `sha256:${'6'.repeat(64)}`,
+        mechanismOutcomeDigest: `sha256:${'7'.repeat(64)}`,
+        normalizedTrialDigest: `sha256:${'8'.repeat(64)}`,
+        trajectoryDigest: `sha256:${'9'.repeat(64)}`,
+      },
       roots: {
         parent: '/input/parent',
         archive: '/input/archive',
@@ -22,5 +32,10 @@ describe('v0.1.1 proposal prompt contract', () => {
     expect(prompt).toContain('import * as componentName')
     expect(prompt).toContain('relative `.js` specifier')
     expect(prompt).toContain('NodeNext extension')
+    expect(prompt).toContain(`sha256:${'6'.repeat(64)}`)
+    expect(prompt).toContain(`sha256:${'7'.repeat(64)}`)
+    expect(prompt).toContain(`sha256:${'8'.repeat(64)}`)
+    expect(prompt).toContain(`sha256:${'9'.repeat(64)}`)
+    expect(prompt).toContain('selected failure cluster')
   })
 })

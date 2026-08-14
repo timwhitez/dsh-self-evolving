@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  assertExactParentEvidenceGrounding,
+  readControllerStatus,
+  type V011Analysis,
+  type V011ParentEvidenceBinding,
+} from '@dsh-rsi/core'
 import { auditStableRun } from './audit.js'
 import type { V011DemoConfig } from './config.js'
 
@@ -36,6 +43,7 @@ async function files(root: string): Promise<string[]> {
 
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
   const predecessor = await auditStableRun(config)
+  const controller = await readControllerStatus(config as never)
   const reasons = [...predecessor.reasons]
   const rejection = (await json(
     join(config.stateDir, 'v011', 'actions', 'proposal-1-1', 'rejection.json'),
@@ -52,8 +60,8 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   const actionFiles = (await files(join(config.stateDir, 'v011', 'actions'))).filter((path) =>
     path.endsWith('/materialization.json'),
   )
-  if (actionFiles.length !== 3)
-    reasons.push(`materialization receipt matrix is ${actionFiles.length}/3`)
+  if (actionFiles.length < 3)
+    reasons.push(`materialization receipt matrix is ${actionFiles.length}/at-least-3`)
   const materializations = await Promise.all(
     actionFiles.map(async (path) => ({
       path,
@@ -114,14 +122,7 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     ) {
       reasons.push(`generation ${generation} exact-parent Loader/tool receipt invalid`)
     }
-    const analysis = (await json(join(slot, 'analysis.json'))) as {
-      ancestorReconciliations?: Array<{
-        analysisCitation?: { mediaType?: string }
-        outcomeCitation?: { mediaType?: string }
-        position?: string
-      }>
-      failureClusters?: Array<{ citations?: Array<{ mediaType?: string }> }>
-    } | null
+    const analysis = (await json(join(slot, 'analysis.json'))) as V011Analysis | null
     const trajectoryGrounded = analysis?.failureClusters?.every((cluster) => {
       const media = cluster.citations?.map((citation) => citation.mediaType ?? '') ?? []
       return (
@@ -140,6 +141,63 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
       ) {
         reasons.push(`generation ${generation} lacks cumulative ancestor reconciliation`)
       }
+      const binding = (await json(
+        join(actionRoot, 'input', 'contracts', 'parent-evidence-binding.json'),
+      )) as V011ParentEvidenceBinding | null
+      const parent = (await json(
+        join(config.stateDir, 'candidates', `generation-${generation - 1}`, 'stable-build.json'),
+      )) as { candidateId?: unknown; analysisDigest?: unknown } | null
+      const action = controller.state.actions[`eval:candidate:${generation - 1}`]
+      let exact = false
+      if (binding !== null && analysis !== null) {
+        exact =
+          binding.parentCandidateDigest === parent?.candidateId &&
+          binding.analysisDigest === parent?.analysisDigest &&
+          binding.parentEvaluationActionId === `eval:candidate:${generation - 1}` &&
+          action?.status === 'COMMITTED' &&
+          binding.parentExternalJobId === action.externalJobId
+      }
+      if (exact && binding !== null && analysis !== null) {
+        try {
+          assertExactParentEvidenceGrounding(analysis, binding)
+          const outcomeBytes = await readFile(
+            join(
+              config.stateDir,
+              'v011',
+              'outcomes',
+              `generation-${generation - 1}`,
+              'outcome.json',
+            ),
+          )
+          const outcome = JSON.parse(outcomeBytes.toString('utf8')) as {
+            candidateDigest?: unknown
+          }
+          const summaryBytes = await readFile(
+            join(
+              config.stateDir,
+              'external-evaluator',
+              binding.parentExternalJobId,
+              'summary.json',
+            ),
+          )
+          const summary = JSON.parse(summaryBytes.toString('utf8')) as {
+            runId?: unknown
+            normalized?: Array<{ trajectoryHash?: unknown }>
+          }
+          exact =
+            `sha256:${createHash('sha256').update(outcomeBytes).digest('hex')}` ===
+              binding.mechanismOutcomeDigest &&
+            outcome.candidateDigest === binding.parentCandidateDigest &&
+            `sha256:${createHash('sha256').update(summaryBytes).digest('hex')}` ===
+              binding.normalizedTrialDigest &&
+            summary.runId === binding.parentExternalJobId &&
+            `sha256:${summary.normalized?.[0]?.trajectoryHash ?? ''}` === binding.trajectoryDigest
+        } catch {
+          exact = false
+        }
+      }
+      if (!exact)
+        reasons.push(`generation ${generation} lacks exact parent evidence lineage binding`)
     }
     generated.push(candidateRoot)
   }

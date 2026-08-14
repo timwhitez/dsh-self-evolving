@@ -10,6 +10,7 @@ import * as AgentSpine from '@deepseek-ai/dsh-agent-spine-demo'
 import { ProposalGatewayAdapter } from './gateway-adapter.js'
 import { runV011ProposalTurn } from './v011-runner.js'
 import type { ProposalGatewayRoute } from './gateway.js'
+import type { V011ParentEvidenceBinding } from '@dsh-rsi/core'
 
 interface WorkerRequest {
   route: ProposalGatewayRoute
@@ -22,10 +23,22 @@ interface WorkerRequest {
   exportMerkleRoot: string
   capabilityCatalogDigest: string
   ancestorClusters: string[]
+  requiredParentEvidence?: V011ParentEvidenceBinding
 }
 
 const request = JSON.parse(await readFile('/input/contracts/request.json', 'utf8')) as WorkerRequest
 process.env['DSH_RSI_V011_SCHEMA_ROOT'] = '/input/contracts/schemas'
+const digestPattern = /^sha256:[0-9a-f]{64}$/
+const parentEvidenceValid =
+  request.requiredParentEvidence === undefined ||
+  (request.requiredParentEvidence.schemaVersion === 1 &&
+    digestPattern.test(request.requiredParentEvidence.parentCandidateDigest) &&
+    request.requiredParentEvidence.parentEvaluationActionId.length > 0 &&
+    request.requiredParentEvidence.parentExternalJobId.length > 0 &&
+    digestPattern.test(request.requiredParentEvidence.analysisDigest) &&
+    digestPattern.test(request.requiredParentEvidence.mechanismOutcomeDigest) &&
+    digestPattern.test(request.requiredParentEvidence.normalizedTrialDigest) &&
+    digestPattern.test(request.requiredParentEvidence.trajectoryDigest))
 if (
   request === null ||
   !/^p_[0-9a-f]{32}$/.test(request.proposalId) ||
@@ -35,7 +48,8 @@ if (
   !/^sha256:[0-9a-f]{64}$/.test(request.exportManifestDigest) ||
   !/^sha256:[0-9a-f]{64}$/.test(request.exportMerkleRoot) ||
   !/^sha256:[0-9a-f]{64}$/.test(request.capabilityCatalogDigest) ||
-  !Array.isArray(request.ancestorClusters)
+  !Array.isArray(request.ancestorClusters) ||
+  !parentEvidenceValid
 ) {
   throw new Error('v0.1.1 proposal worker: invalid durable request')
 }
@@ -134,6 +148,9 @@ try {
     exportMerkleRoot: request.exportMerkleRoot,
     capabilityCatalogDigest: request.capabilityCatalogDigest,
     ancestorClusters: request.ancestorClusters,
+    ...(request.requiredParentEvidence === undefined
+      ? {}
+      : { requiredParentEvidence: request.requiredParentEvidence }),
     roots: {
       parent: '/input/parent/tree',
       archive: '/input/archive',

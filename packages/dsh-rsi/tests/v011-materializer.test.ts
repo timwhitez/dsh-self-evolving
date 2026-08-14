@@ -219,6 +219,36 @@ describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
     expect(output.resolvedCitations).toHaveLength(2)
     expect(output.receipt.retainedCapabilityRequests).toEqual([request])
 
+    await expect(
+      materializeV011Proposal({
+        store,
+        parentRoot: parent,
+        childRoot: child,
+        exportRoot,
+        exportManifest: manifest,
+        expected: {
+          proposalId,
+          parentDigest,
+          exportManifestDigest: exportDigest,
+          exportMerkleRoot: manifest.merkleRoot,
+        },
+        capabilityCatalog: catalog,
+        transcript: Buffer.from('assistant transcript'),
+        toolTrace: Buffer.from('[{"tool":"read"}]'),
+        proposerUsage: { inputTokens: 100, outputTokens: 20 },
+        requiredParentEvidence: {
+          schemaVersion: 1,
+          parentCandidateDigest: `sha256:${'6'.repeat(64)}`,
+          parentEvaluationActionId: 'eval:candidate:1',
+          parentExternalJobId: 'stable-parent-job',
+          analysisDigest: `sha256:${'7'.repeat(64)}`,
+          mechanismOutcomeDigest: `sha256:${'8'.repeat(64)}`,
+          normalizedTrialDigest: `sha256:${'9'.repeat(64)}`,
+          trajectoryDigest: `sha256:${'a'.repeat(64)}`,
+        },
+      }),
+    ).rejects.toThrow(/selected cluster lacks exact parent trajectory citation/)
+
     const ledger = aggregateCapabilityRequests({
       currentCatalog: catalog,
       proposals: [{ proposalDigest: output.receipt.proposalDigest, requests: [request] }],
