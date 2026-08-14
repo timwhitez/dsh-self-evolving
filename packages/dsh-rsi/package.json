@@ -1,0 +1,40 @@
+{
+  "name": "@dsh-rsi/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Trusted durable RSI controller: content-addressed object store, hash-chain journal, pure state reducer + snapshot, action saga, budget double-entry ledger. Crash-safe by construction; the filesystem is the source of truth (spec 06).",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./object-store": {
+      "types": "./lib/object-store/index.d.ts",
+      "default": "./lib/object-store/index.js"
+    },
+    "./journal": {
+      "types": "./lib/journal/index.d.ts",
+      "default": "./lib/journal/index.js"
+    },
+    "./reducer": {
+      "types": "./lib/reducer/index.d.ts",
+      "default": "./lib/reducer/index.js"
+    },
+    "./budget": {
+      "types": "./lib/budget/index.d.ts",
+      "default": "./lib/budget/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "fastify": "^5.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

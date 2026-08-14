@@ -27,6 +27,7 @@
   "references": [
     { "path": "./packages/candidate-baseline" },
     { "path": "./packages/candidate-sdk" },
+    { "path": "./packages/dsh-rsi" },
     { "path": "./packages/dsh-rsi-loader-e2e" },
     { "path": "./benchmark-adapters/terminal-bench" }
   ]

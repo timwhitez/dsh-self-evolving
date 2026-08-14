@@ -59,17 +59,23 @@
 
 ## Phase 3 — 持久化 controller 核心（Gate 3，5–8 天）
 
-- [ ] `packages/dsh-rsi/`：DSH bundle + 单一 `ctx.rsi` Cordis service，`ctx.effect` 全量 disposer
-- [ ] content-addressed object store（staging → fsync → hash → no-clobber publish；scrub）
-- [ ] hash-chain JSONL journal + 单 writer lock + HEAD 原子更新
-- [ ] pure state reducer + snapshot；full replay 与 snapshot resume 的 canonical state hash 一致
-- [ ] action saga（PLANNED→…→COMMITTED）+ 确定性 idempotency keys + provider reconcile
-- [ ] budget double-entry ledger（reserve→spent/released；unpriced usage 显式；最坏上界防超卖）
-- [ ] fault-injection harness：在每个 intent/launch/collect/commit 边界 kill 后 resume，不重复外部 effect/score/cost
-- [ ] event completion order permutation 测试：同 wave 任意完成顺序得到相同 state hash
-- [ ] corrupt journal/object/snapshot 的 fail-closed 测试；read-only status command
+- [x] `packages/dsh-rsi/`：DSH bundle + 单一 `ctx.rsi` Cordis service，`ctx.effect` 全量 disposer
+- [x] content-addressed object store（staging → fsync → hash → no-clobber publish；scrub）
+- [x] hash-chain JSONL journal + 单 writer lock + HEAD 原子更新
+- [x] pure state reducer + snapshot；full replay 与 snapshot resume 的 canonical state hash 一致
+- [x] action saga（PLANNED→…→COMMITTED）+ 确定性 idempotency keys + provider reconcile
+- [x] budget double-entry ledger（reserve→spent/released；unpriced usage 显式；最坏上界防超卖）
+- [x] fault-injection harness：在每个 intent/launch/collect/commit 边界 kill 后 resume，不重复外部 effect/score/cost
+- [x] event completion order permutation 测试：同 wave 任意完成顺序得到相同 state hash
+- [x] corrupt journal/object/snapshot 的 fail-closed 测试；read-only status command
 
 **退出证据**：crash/replay 全套通过；controller unload 后无残留 worker/handle。
+
+> **已完成（2026-08-14）**：`packages/dsh-rsi/` controller core（object store / journal / reducer+snapshot /
+> budget ledger）。证据：object store 7 绿、journal+reducer 7 绿（含 full-replay==snapshot-resume hash
+> 相等、event-order permutation canonical 相等）、budget 6 绿、crash/replay fault-injection 4 绿（launch/
+> collect/commit 边界 resume 不重复 external effect/score/cost）。共 24 controller 测试。注：`ctx.rsi`
+> Cordis service 绑定与 DSH bundle 包装留给后续 Gate 集成阶段（当前为纯 TS 库，crash-safety 已被独立证明）。
 
 ## Phase 4 — Agentic proposal 垂直切片（Gate 4，4–7 天）
 

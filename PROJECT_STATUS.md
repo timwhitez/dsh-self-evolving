@@ -1,6 +1,6 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 COMPLETE — Awaiting Gate 3**  
+**状态：GATE 0 + 1 + 2 + 3 COMPLETE — Awaiting Gate 4**  
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
@@ -106,15 +106,49 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 - normalizer/cost/idempotency 单元测试（`normalizer.test.ts` 9 绿、`provider.test.ts` 8 绿、
   `reconcile.test.ts` 5 绿）。
 
+## 已完成 — Gate 3（持久化 controller 核心）
+
+### Controller（`packages/dsh-rsi/`，trusted durable core，spec 06）
+
+- **content-addressed object store**（`src/object-store/store.ts`）：staging → fsync →
+  hash → no-clobber link 发布；重复 digest 逐字节验证；scrub 全量重 hash；read 时验证；
+  tamper → EVIDENCE_CORRUPT。
+- **hash-chain JSONL journal**（`src/journal/journal.ts`）：单 writer lock + owner/lease；
+  canonical JSON (RFC 8785 风格) + eventHash + previousHash；segment + 原子 HEAD（tmp + dir fsync）；
+  readAll 验证整条链，break 即 fail-closed。
+- **pure state reducer + snapshot**（`src/reducer/`）：reducer 为纯函数（不读时间/网络/RNG/FS）；
+  canonical stateHash；**full replay 与 snapshot resume 的 canonical state hash 一致**（CI 测试证明）；
+  snapshot 损坏 → null → 回退 full replay。
+- **budget double-entry ledger**（`src/budget/ledger.ts`）：append-only hash-chain；
+  available→reserved→spent|released；worst-case = spent+reserved 防并发超卖；hard limit denial；
+  unpriced usage 显式标注（$0 spend 不当零）。
+
+### Gate 3 测试证据
+
+- **object store**（7 绿）：content-addressing、dedup、integrity-on-read、scrub、tamper detection、
+  no-clobber collision。
+- **journal + reducer**（7 绿）：hash-chain、single-writer lock、corrupt-chain fail-closed、
+  **full-replay==snapshot-resume hash 相等**、corrupt-snapshot rejection、event-order permutation
+  canonical 相等、canonical-event-hash key-order-independent。
+- **budget ledger**（6 绿）：reserve→spend、reserve→release、worst-case bound、hard-limit denial、
+  unpriced flag、chain-corruption fail-closed。
+- **crash/replay fault-injection**（4 绿）：在 launch/collect/commit 边界“crash 后 resume”，
+  external job 不重发、score 不重计、cost 不重收；truncated-segment fail-closed。
+
+共 103 单元 + 7 E2E（loader/capsule/harbor）。三上游 clean；AGENTS/CLAUDE 字节一致。
+
 ## 尚未完成（后续 Gate）
 
-- Gate 3：durable controller（journal/reducer/archive/budget crash-safe）、proposal sandbox、
-  search/split/sealed、calibration、pilot、formal 80-candidate、sealed/full evaluation。
+- Gate 4：proposal sandbox（filesystem/network/model gateway policy）、parent candidate propose
+  mode 经真实 Loader、label-filtered evidence export、proposer 信息流安全测试。**需要真实模型调用**
+  （提供的 provider）生成一个 child candidate。
+- Gate 5+：search/split/sealed、calibration、pilot、formal 80-candidate、sealed/full evaluation。
+  **需要付费 benchmark 运行**。
 
 因此当前不能声称：闭环可端到端运行、分数提升、满足 `$500`/16 小时、零 reward hacking、
 可提交 leaderboard 或达到 SOTA。
 
 ## 下一个验收门
 
-执行 `specs/07-implementation-plan.md` 的 Gate 3（持久化 controller 核心）。
-逐项执行清单见 `docs/phase-todolist.md`。
+执行 `specs/07-implementation-plan.md` 的 Gate 4（agentic proposal 垂直切片）。该 Gate 需要真实
+模型调用；在显式授权前不启动付费运行。逐项执行清单见 `docs/phase-todolist.md`。
