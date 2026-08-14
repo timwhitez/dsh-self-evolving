@@ -154,3 +154,16 @@ That is auditable but not live. Run `stable-demo-20260814-v3` was stopped during
 
 **Consequence:** at most nine proposer calls can produce the three admitted children, while the paid solver envelope
 remains unchanged at 15 trials. Exhausting three build attempts fails closed and requires a successor.
+
+## ADR-015 — Preserve normalizer status casing exactly
+
+**Decision:** stable-demo config schema v5 accepts only the Terminal-Bench adapter's actual lowercase
+`pass|fail|invalid` values and maps them identically into controller observations. Unknown values fail closed instead
+of becoming `invalid` through a fallback branch.
+
+**Why:** v4's typed summary declaration incorrectly used uppercase literals. Its first raw result was a real
+`status=pass/reward=1`, but the controller fallback recorded `invalid`. Run `stable-demo-20260814-v4` was stopped and
+marked `QUARANTINED_NORMALIZER_STATUS_CASE_MISMATCH`; its results are not reused.
+
+**Consequence:** a real one-task adapter smoke must compare raw summary, collected observation and journal projection
+before another multi-task successor starts.

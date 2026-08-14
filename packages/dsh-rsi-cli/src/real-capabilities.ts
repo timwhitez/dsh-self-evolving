@@ -362,6 +362,11 @@ function summaryPath(config: StableDemoConfig, runId: string): string {
   return join(config.stateDir, 'external-evaluator', runId, 'summary.json')
 }
 
+export function mapNormalizedStatus(status: unknown): 'pass' | 'fail' | 'invalid' {
+  if (status === 'pass' || status === 'fail' || status === 'invalid') return status
+  throw new Error(`real evaluator: unknown normalized status ${JSON.stringify(status)}`)
+}
+
 function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec) {
   const runId = evaluatorRunId(config, spec)
   return {
@@ -401,7 +406,7 @@ function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec
       const bytes = await readFile(summaryPath(config, runId), 'utf8')
       const summary = JSON.parse(bytes) as {
         normalized: Array<{
-          status: 'PASS' | 'FAIL' | 'INVALID'
+          status: 'pass' | 'fail' | 'invalid'
           reward: number | null
           costUsd: number
         }>
@@ -414,7 +419,7 @@ function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec
         candidateId: spec.candidate.candidateId,
         taskId: spec.taskId,
         attemptIndex: 0,
-        status: row.status === 'PASS' ? 'pass' : row.status === 'FAIL' ? 'fail' : 'invalid',
+        status: mapNormalizedStatus(row.status),
         reward: row.reward,
         costUsd: row.costUsd,
         rawEvidenceDigests: [sha256(bytes)],

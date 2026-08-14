@@ -136,16 +136,14 @@ async function main(): Promise<void> {
   )
   await copyFile(join(repoRoot, 'provenance.lock.json'), join(outDir, 'provenance.lock.json'))
 
-  const artifacts = (await readdir(outDir)).filter((name) => name !== 'SHA256SUMS').sort()
-  const sums = await Promise.all(
-    artifacts.map(async (name) => `${await sha256File(join(outDir, name))}  ${name}`),
-  )
-  await writeFile(join(outDir, 'SHA256SUMS'), sums.join('\n') + '\n')
+  const primaryArtifacts = (await readdir(outDir))
+    .filter((name) => name !== 'SHA256SUMS' && name !== 'release-receipt.json')
+    .sort()
   const receipt = {
     schemaVersion: 1,
     status: 'OPEN_SOURCE_V0_1_RELEASE_CANDIDATE',
     commit,
-    artifacts: [...artifacts, 'SHA256SUMS'],
+    artifacts: [...primaryArtifacts, 'release-receipt.json', 'SHA256SUMS'],
     trackedUtf8AndSecretScan: { ...safety, passed: true },
     benchmarkClaim: 'NONE',
   }
@@ -155,6 +153,11 @@ async function main(): Promise<void> {
   } finally {
     await receiptFile.close()
   }
+  const checksumArtifacts = (await readdir(outDir)).filter((name) => name !== 'SHA256SUMS').sort()
+  const sums = await Promise.all(
+    checksumArtifacts.map(async (name) => `${await sha256File(join(outDir, name))}  ${name}`),
+  )
+  await writeFile(join(outDir, 'SHA256SUMS'), sums.join('\n') + '\n')
   process.stdout.write(JSON.stringify(receipt) + '\n')
 }
 
