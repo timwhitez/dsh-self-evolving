@@ -17,6 +17,7 @@ import {
   readCrashInjectionRequest,
   requestCrashInjection,
 } from './crash.js'
+import { readSourceArchiveIdentity } from './source-identity.js'
 
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(name)
@@ -29,14 +30,20 @@ function required(name: string): string {
   return value
 }
 
-function gitHead(repoRoot: string): Promise<string> {
-  return new Promise((done, reject) => {
-    execFile('/usr/bin/git', ['-C', repoRoot, 'rev-parse', 'HEAD'], (error, stdout, stderr) =>
-      error
-        ? reject(new Error(`init: cannot resolve Git HEAD: ${stderr}`, { cause: error }))
-        : done(stdout.trim()),
+function gitHead(repoRoot: string): Promise<string | null> {
+  return new Promise((done) => {
+    execFile('/usr/bin/git', ['-C', repoRoot, 'rev-parse', 'HEAD'], (error, stdout) =>
+      error ? done(null) : done(stdout.trim()),
     )
   })
+}
+
+async function sourceCommit(repoRoot: string): Promise<string> {
+  const commit = await gitHead(repoRoot)
+  if (commit !== null) return commit
+  const identity = await readSourceArchiveIdentity(repoRoot)
+  if (identity === null) throw new Error('init: no Git HEAD or source archive identity')
+  return identity.commit
 }
 
 async function main(): Promise<void> {
@@ -47,7 +54,7 @@ async function main(): Promise<void> {
       runId: required('--run-id'),
       stateDir: resolve(required('--state-dir')),
       repoRoot,
-      codeCommit: await gitHead(repoRoot),
+      codeCommit: await sourceCommit(repoRoot),
       ...(option('--tb-root') === undefined ? {} : { terminalBenchRoot: option('--tb-root')! }),
       ...(option('--budget-usd') === undefined
         ? {}

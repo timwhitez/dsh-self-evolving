@@ -101,6 +101,32 @@ export async function assertTrackedTextSafe(): Promise<{ trackedFiles: number }>
   return { trackedFiles: files.length }
 }
 
+async function buildSourceArchiveIdentity(commit: string): Promise<Record<string, unknown>> {
+  const tree = normalizeGitCommit((await exec('/usr/bin/git', ['rev-parse', 'HEAD^{tree}'])).stdout)
+  const { stdout } = await exec('/usr/bin/git', [
+    'ls-files',
+    '-z',
+    '--',
+    'packages',
+    'benchmark-adapters',
+    'scripts',
+    'package.json',
+    'pnpm-lock.yaml',
+    'tsconfig.json',
+    'provenance.lock.json',
+  ])
+  const files = Object.fromEntries(
+    await Promise.all(
+      stdout
+        .split('\0')
+        .filter(Boolean)
+        .sort()
+        .map(async (path) => [path, `sha256:${await sha256File(join(repoRoot, path))}`]),
+    ),
+  )
+  return { schemaVersion: 1, commit, tree, files }
+}
+
 async function main(): Promise<void> {
   const index = process.argv.indexOf('--out-dir')
   const rawOut = index === -1 ? undefined : process.argv[index + 1]
@@ -112,13 +138,16 @@ async function main(): Promise<void> {
   if (status.length !== 0) throw new Error('release: worktree must be clean')
   const commit = normalizeGitCommit((await exec('/usr/bin/git', ['rev-parse', 'HEAD'])).stdout)
   const safety = await assertTrackedTextSafe()
+  const sourceIdentity = await buildSourceArchiveIdentity(commit)
   await mkdir(outDir, { recursive: false, mode: 0o755 })
 
   const sourceName = 'dsh-rsi-v0.1.0-rc.1-source.tar.gz'
+  const sourcePrefix = 'dsh-rsi-v0.1.0-rc.1/'
   await exec('/usr/bin/git', [
     'archive',
     '--format=tar.gz',
-    '--prefix=dsh-rsi-v0.1.0-rc.1/',
+    `--prefix=${sourcePrefix}`,
+    `--add-virtual-file=${sourcePrefix}.dsh-rsi-source-identity.json:${JSON.stringify(sourceIdentity)}`,
     '-o',
     join(outDir, sourceName),
     'HEAD',

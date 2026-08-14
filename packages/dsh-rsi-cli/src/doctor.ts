@@ -4,6 +4,7 @@ import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { StableDemoConfig } from './config.js'
+import { readSourceArchiveIdentity, verifySourceArchiveIdentity } from './source-identity.js'
 
 export type CheckStatus = 'PASS' | 'FAIL'
 export interface DoctorCheck {
@@ -72,7 +73,7 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
     (await access(join(config.terminalBenchRoot, taskProbe, 'task.toml'), constants.R_OK)
       .then(() => true)
       .catch(() => false))
-  const currentCommit = await commandOutput('/usr/bin/git', [
+  const gitCommit = await commandOutput('/usr/bin/git', [
     '-C',
     config.repoRoot,
     'rev-parse',
@@ -107,6 +108,21 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
     'benchmark-adapters',
     'scripts',
   ])
+  const archiveIdentity =
+    gitCommit === null ? await readSourceArchiveIdentity(config.repoRoot) : null
+  const archiveVerification =
+    archiveIdentity === null
+      ? null
+      : await verifySourceArchiveIdentity(config.repoRoot, archiveIdentity)
+  const currentCommit = gitCommit ?? archiveIdentity?.commit ?? null
+  const codeClean =
+    gitCommit === null
+      ? archiveVerification?.valid === true
+      : trackedCodeClean && untrackedCode === ''
+  const codeDetail =
+    gitCommit === null
+      ? (archiveVerification?.detail ?? 'source archive identity is missing')
+      : 'executable source paths match the frozen commit'
   const checks = [
     check(
       'private-auth',
@@ -133,12 +149,12 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
       'private run state is writable',
     ),
     check('budget', config.limits.budgetUsd > 0, `reserved budget $${config.limits.budgetUsd}`),
-    check('code-identity', currentCommit === config.codeCommit, `Git commit ${config.codeCommit}`),
     check(
-      'code-worktree',
-      trackedCodeClean && untrackedCode === '',
-      'executable source paths match the frozen commit',
+      'code-identity',
+      currentCommit === config.codeCommit,
+      `source commit ${config.codeCommit}`,
     ),
+    check('code-worktree', codeClean, codeDetail),
   ]
   return { ready: checks.every((item) => item.status === 'PASS'), checks }
 }
