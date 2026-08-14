@@ -289,4 +289,25 @@ describe('stable-demo engine', () => {
     expect(counters.launches).toBe(9)
     expect(counters.collects).toBe(9)
   })
+
+  it('reuses the frozen failure pool when resuming after the first candidate launch', async () => {
+    const { config, counters, capabilities } = await fixture(true)
+    let injected = false
+    capabilities.onEvaluationBoundary = (spec, boundary) => {
+      if (!injected && spec.actionId === 'eval:candidate:1' && boundary === 'launch') {
+        injected = true
+        throw new Error('fixture candidate process interruption')
+      }
+    }
+    await expect(runStableDemo(config, capabilities)).rejects.toThrow(
+      'fixture candidate process interruption',
+    )
+    delete capabilities.onEvaluationBoundary
+    const resumed = await runStableDemo(config, capabilities)
+    expect(resumed.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(resumed.baselineTrials).toBe(2)
+    expect(resumed.candidateTrials).toBe(3)
+    expect(counters.launches).toBe(5)
+    expect(counters.collects).toBe(5)
+  })
 })

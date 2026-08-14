@@ -176,7 +176,17 @@ async function writeFailurePool(config: ProjectConfig, pool: FailurePool): Promi
   const file = await open(path, 'wx', 0o600).catch(async (error: NodeJS.ErrnoException) => {
     if (error.code !== 'EEXIST') throw error
     const current = await readFile(path, 'utf8')
-    if (current !== bytes) throw new Error('stable engine: frozen failure pool conflict')
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(current) as unknown
+    } catch (parseError) {
+      throw new Error('stable engine: frozen failure pool is not valid JSON', {
+        cause: parseError,
+      })
+    }
+    if (canonicalJson(parsed) !== canonicalJson(pool)) {
+      throw new Error('stable engine: frozen failure pool conflict')
+    }
     return null
   })
   if (file === null) return
@@ -299,43 +309,71 @@ export async function runStableDemo(
       if (new Set(observed).size < 12)
         throw new Error('stable engine: fewer than 12 unique observed tasks')
       const planned = observed.slice(0, 12)
-      let evaluated = 0
-      const discoveryBatches =
-        config.profile === 'v011-stable-demo'
-          ? planned.map((taskId) => [taskId])
-          : [planned.slice(0, 6), planned.slice(6, 12)]
-      for (const batch of discoveryBatches) {
-        for (const taskId of batch) {
-          const spec: StableEvaluationSpec = {
-            actionId: `eval:baseline:${taskId}`,
-            idempotencyKey: `${config.runId}/baseline/${taskId}/0`,
-            candidate: caps.baseline,
-            taskId,
-            attemptIndex: 0,
-            kind: 'baseline-discovery',
+      events = await readAll(service.journal)
+      let pool = eventPayload<FailurePool>(events, 'failure-pool:frozen')
+      if (pool === undefined) {
+        let evaluated = 0
+        const discoveryBatches =
+          config.profile === 'v011-stable-demo'
+            ? planned.map((taskId) => [taskId])
+            : [planned.slice(0, 6), planned.slice(6, 12)]
+        for (const batch of discoveryBatches) {
+          for (const taskId of batch) {
+            const spec: StableEvaluationSpec = {
+              actionId: `eval:baseline:${taskId}`,
+              idempotencyKey: `${config.runId}/baseline/${taskId}/0`,
+              candidate: caps.baseline,
+              taskId,
+              attemptIndex: 0,
+              kind: 'baseline-discovery',
+            }
+            await evaluate(config, service, caps, spec)
+            evaluated += 1
           }
-          await evaluate(config, service, caps, spec)
-          evaluated += 1
+          events = await readAll(service.journal)
+          const failures = replay(events).observations.filter(isBaselineNonPassingSignal)
+          if (failures.length > 0) break
         }
         events = await readAll(service.journal)
-        const failures = replay(events).observations.filter(isBaselineNonPassingSignal)
-        if (failures.length > 0) break
+        const taskIds = replay(events)
+          .observations.filter(isBaselineNonPassingSignal)
+          .map((row) => row.taskId)
+          .sort()
+        pool = {
+          schemaVersion: 1,
+          runId: config.runId,
+          batchSize: config.profile === 'v011-stable-demo' ? 1 : 6,
+          evaluatedTaskIds: planned.slice(0, evaluated),
+          taskIds,
+          frozenBeforeCandidateRewards: true,
+        }
+        await writeFailurePool(config, pool)
+        await recordOnce(service, 'failure-pool:frozen', 'failure-pool.frozen', pool)
+      } else {
+        const expectedBatchSize = config.profile === 'v011-stable-demo' ? 1 : 6
+        const evaluatedPrefix = planned.slice(0, pool.evaluatedTaskIds.length)
+        const frozenSignals = replay(events)
+          .observations.filter(
+            (row) => isBaselineNonPassingSignal(row) && pool!.evaluatedTaskIds.includes(row.taskId),
+          )
+          .map((row) => row.taskId)
+          .sort()
+        if (
+          pool.schemaVersion !== 1 ||
+          pool.runId !== config.runId ||
+          pool.batchSize !== expectedBatchSize ||
+          pool.frozenBeforeCandidateRewards !== true ||
+          pool.evaluatedTaskIds.length === 0 ||
+          pool.evaluatedTaskIds.length > 12 ||
+          canonicalJson(pool.evaluatedTaskIds) !== canonicalJson(evaluatedPrefix) ||
+          new Set(pool.taskIds).size !== pool.taskIds.length ||
+          canonicalJson(pool.taskIds) !== canonicalJson(frozenSignals)
+        ) {
+          throw new Error('stable engine: invalid frozen failure pool replay')
+        }
+        await writeFailurePool(config, pool)
       }
-      events = await readAll(service.journal)
-      const taskIds = replay(events)
-        .observations.filter(isBaselineNonPassingSignal)
-        .map((row) => row.taskId)
-        .sort()
-      const pool: FailurePool = {
-        schemaVersion: 1,
-        runId: config.runId,
-        batchSize: config.profile === 'v011-stable-demo' ? 1 : 6,
-        evaluatedTaskIds: planned.slice(0, evaluated),
-        taskIds,
-        frozenBeforeCandidateRewards: true,
-      }
-      await writeFailurePool(config, pool)
-      await recordOnce(service, 'failure-pool:frozen', 'failure-pool.frozen', pool)
+      const taskIds = pool.taskIds
       if (taskIds.length === 0) {
         await recordOnce(service, 'run:terminal', 'run.terminal', {
           status: 'NO_REAL_FAILURE_SIGNAL',
