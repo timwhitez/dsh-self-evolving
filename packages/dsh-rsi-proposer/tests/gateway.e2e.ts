@@ -26,7 +26,7 @@ afterEach(async () => {
 const route: ProposalGatewayRoute = {
   provider: 'deepseek-official',
   endpoint: 'https://provider.invalid/v1',
-  model: 'deepseek-v4-flash-free',
+  model: 'deepseek-v4-flash-zen',
   reasoningEffort: 'high',
   maxTokens: 2048,
 }

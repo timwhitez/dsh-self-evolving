@@ -12,7 +12,8 @@ public key, rather than accepting a self-declared signer. The canonical manifest
 
 - reviewed Git commit/tag/tree and provenance identities;
 - self-track solver/proposer routes, request defaults, and the exact
-  `deepseek-v4-flash-free`/`high`/200,000-token context identity;
+  requested `deepseek-v4-flash-zen` / effective `deepseek-v4-flash` / `high` /
+  1,048,576-token context identity;
 - exact Terminal-Bench 2.1 registry/dataset/source/inventory identities;
 - controller, candidate SDK, evaluator, statistics, protocol, and sealed-service hashes;
 - split commitment, search parameters, master-seed commitment, budget limits/reserve; and
@@ -29,10 +30,10 @@ receipt.
 
 ## Current blockers
 
-The authoritative blocker list is preserved in `evidence/formal/STATUS.json`. Gate 4 lacks a real
-provider receipt; Gate 5 lacks formal split/baseline/calibration/budget acceptance; Gate 6 lacks a
-real K=10 pilot; and no tagged, reviewed, signed manifest, current leaderboard snapshot, formal
-budget reservation, or operator-procedure receipt exists.
+The authoritative blocker list is preserved in `evidence/formal/STATUS.json`. Gate 4 now has an
+accepted real-provider status receipt. Gate 5 still lacks formal split/baseline/calibration/budget
+acceptance; Gate 6 lacks a real K=10 pilot; and no tagged, reviewed, signed manifest, current
+leaderboard snapshot, formal budget reservation, or operator-procedure receipt exists.
 
 Starting a paid 80-candidate search in this state would violate gate ordering. No run directory was
 created and no sealed assignment or outcome was accessed.

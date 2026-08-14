@@ -1,4 +1,5 @@
 /** Gate 4: real DSH proposer composition runs inside Bubblewrap via Unix gateway. */
+import { createHash } from 'node:crypto'
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -7,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildCandidate, packCapsule } from '@dsh-rsi/candidate-sdk'
 import { runProposalSandbox, type ProposalSandboxMounts } from '@dsh-rsi/core'
 import {
-  TrustedResponsesAdapter,
+  TrustedChatCompletionsAdapter,
   createProposalGatewayLlmHandler,
   startProposalGateway,
   type ProposalGatewayRoute,
@@ -29,18 +30,19 @@ const sourceFiles = [
 const route: ProposalGatewayRoute = {
   provider: 'deepseek',
   endpoint: 'https://provider.invalid/v1',
-  model: 'deepseek-v4-flash-free',
+  model: 'deepseek-v4-flash-zen',
   reasoningEffort: 'high',
   maxTokens: 2048,
 }
 const realApiKey = process.env['RSI_PROVIDER_API_KEY'] ?? ''
 const realBaseUrl = process.env['RSI_PROVIDER_BASE_URL'] ?? ''
+const realReceiptPath = process.env['RSI_GATE4_RECEIPT_PATH'] ?? ''
 const realRoute: ProposalGatewayRoute = {
   provider: 'deepseek',
   endpoint: realBaseUrl,
-  model: 'deepseek-v4-flash-free',
+  model: 'deepseek-v4-flash-zen',
   reasoningEffort: 'high',
-  maxTokens: 4096,
+  maxTokens: 32_768,
 }
 
 let root: string | undefined
@@ -180,22 +182,25 @@ describe('Gate 4 — sandboxed real DSH proposal topology', () => {
 })
 
 describe.skipIf(!realApiKey || !realBaseUrl)(
-  'Gate 4 — sandboxed real provider successor (deepseek-v4-flash-free, 200k)',
+  'Gate 4 — sandboxed real provider successor (deepseek-v4-flash-zen, 1m)',
   () => {
     it(
       'generates an admitted child through the exact networkless DSH + trusted gateway topology',
-      { timeout: 240_000 },
+      { timeout: 660_000 },
       async () => {
         const { mounts, capsuleDir } = await prepareTopology(realRoute)
-        const adapter = new TrustedResponsesAdapter({
+        const adapter = new TrustedChatCompletionsAdapter({
           route: realRoute,
           apiKeyEnv: 'RSI_PROVIDER_API_KEY',
-          contextWindow: 200_000,
+          expectedResponseModel: 'deepseek-v4-flash',
+          contextWindow: 1_048_576,
           requestMaxRetries: 12,
+          reasoningContinuationMaxTurns: 0,
         })
         const handler = createProposalGatewayLlmHandler(adapter, realRoute)
         let providerFailure: string | null = null
         let providerRequestShape: Record<string, number> | null = null
+        let trustedChunks: Array<Record<string, unknown>> = []
         const gateway = await startProposalGateway({
           socketPath: join(root!, 'gateway', 'proposal.sock'),
           route: realRoute,
@@ -209,7 +214,9 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
                 toolCount: Array.isArray(record['tools']) ? record['tools'].length : 0,
                 maxTokens: typeof record['maxTokens'] === 'number' ? record['maxTokens'] : 0,
               }
-              return await handler(payload)
+              const response = await handler(payload)
+              trustedChunks = response.chunks as Array<Record<string, unknown>>
+              return response
             } catch (error) {
               providerFailure = error instanceof Error ? error.message : 'unknown provider failure'
               throw error
@@ -222,7 +229,7 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
             runtimeRoot: join(capsuleDir, 'runtime'),
             command: '/runtime/node',
             args: ['/runtime/node_modules/@dsh-rsi/proposer/lib/sandbox-worker.js'],
-            timeoutMs: 210_000,
+            timeoutMs: 600_000,
             maxOutputBytes: 2 * 1024 * 1024,
             gatewaySocket: gateway.socketPath,
           })
@@ -233,7 +240,7 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
             transcript: { eventCount: number; modelRoute: { model: string }; assistantText: string }
             parsed: { accepted: unknown[]; rejected: Array<{ reason: string }> }
           }
-          expect(output.transcript.modelRoute.model).toBe('deepseek-v4-flash-free')
+          expect(output.transcript.modelRoute.model).toBe('deepseek-v4-flash-zen')
           expect(output.transcript.eventCount).toBeGreaterThan(0)
           expect(
             output.parsed.accepted.length,
@@ -245,7 +252,53 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
               providerRequestShape,
             }),
           ).toBeGreaterThanOrEqual(1)
-          expect(gateway.receipts()).toHaveLength(1)
+          const gatewayReceipts = gateway.receipts()
+          expect(gatewayReceipts).toHaveLength(1)
+          const usage = trustedChunks.find((chunk) => chunk['type'] === 'usage')?.['usage']
+          const replayState = trustedChunks.find((chunk) => chunk['type'] === 'finish')?.[
+            'replayState'
+          ] as Record<string, unknown> | undefined
+          expect(usage).toBeDefined()
+          expect(replayState?.['requestedModel']).toBe('deepseek-v4-flash-zen')
+          expect(replayState?.['effectiveModel']).toBe('deepseek-v4-flash')
+          if (realReceiptPath) {
+            await mkdir(dirname(realReceiptPath), { recursive: true })
+            await writeFile(
+              realReceiptPath,
+              JSON.stringify(
+                {
+                  schemaVersion: 1,
+                  status: 'GATE_4_ACCEPTED',
+                  recordedAt: new Date().toISOString(),
+                  route: {
+                    provider: 'deepseek',
+                    requestedModel: 'deepseek-v4-flash-zen',
+                    effectiveModel: 'deepseek-v4-flash',
+                    reasoningEffort: 'high',
+                    contextWindowTokens: 1_048_576,
+                    maxOutputTokensPerTurn: 32_768,
+                    reasoningContinuationMaxTurns: 0,
+                    wireApi: 'chat-completions',
+                  },
+                  topology: {
+                    sandboxIpNetwork: false,
+                    credentialVisibleInSandbox: false,
+                    admittedCandidates: output.parsed.accepted.length,
+                    eventCount: output.transcript.eventCount,
+                  },
+                  usage,
+                  costUsd: null,
+                  costNote: 'provider catalog has no verified price; token usage is retained',
+                  gatewayReceipt: gatewayReceipts[0],
+                  assistantTextSha256: `sha256:${createHash('sha256').update(output.transcript.assistantText).digest('hex')}`,
+                  sensitiveContentPersisted: false,
+                },
+                null,
+                2,
+              ) + '\n',
+              { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+            )
+          }
         } finally {
           await gateway.close()
         }

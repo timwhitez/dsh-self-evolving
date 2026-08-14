@@ -1,6 +1,6 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTANCE_FAILED`; `GATE_5_NOT_ACCEPTED`; `GATE_6_NOT_ACCEPTED`; `GATE_7_BLOCKED_NOT_STARTED`; `GATE_8_BLOCKED_NOT_STARTED`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_NOT_ACCEPTED`; `GATE_6_NOT_ACCEPTED`; `GATE_7_BLOCKED_NOT_STARTED`; `GATE_8_BLOCKED_NOT_STARTED`**
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 最终 gate/commit/identity/test/blocker 对账见
@@ -17,7 +17,7 @@ command、unload quiescence 和生成式 replay property tests 同时通过。
 完整证据见
 [`docs/audits/2026-08-14-gate3-successor.md`](docs/audits/2026-08-14-gate3-successor.md)。
 
-### Gate 4 successor 进行中（未验收）
+### Gate 4 Zen compatible successor（已验收）
 
 已完成 DEV-only archive catalog 非干扰、immutable label binding、action-scoped read-only raw
 export，以及 Bubblewrap 外层 proposal process sandbox（只读 inputs、唯一 child write root、空环境、
@@ -27,15 +27,15 @@ export，以及 Bubblewrap 外层 proposal process sandbox（只读 inputs、唯
 credential，可信宿主 handler 锁 provider/endpoint/model/reasoning/maxTokens，拒绝 headers 等额外
 transport 字段，并按 request hash 幂等返回、记录 content-free receipt。
 
-该集成点的 model-free 路径现已闭合：immutable runtime 中的真实 Cordis agent-spine、baseline
-propose-mode candidate、GatewayAdapter、session loop 和 proposal parser 已在 Bubblewrap 内通过固定
-Unix gateway 生成 1 个 admitted child；sandbox 仍无 IP network、无 credential。Gate 4 唯一剩余
-验收项是把 trusted handler 换成真实 provider adapter 后复验同一拓扑。现已按用户授权从 root-only
-Codex auth store 向可信宿主进程注入 `deepseek-v4-flash-free` credential，并冻结 200k context；两次
-strict-TLS Responses smoke 返回 200。但完整 sandbox successor 的 12 次有界尝试均返回 429
-(`model_cooldown` / `FreeUsageLimitError`)，没有 assistant message 或 admitted child。因此 Gate 4 继续
-`GATE_4_ACCEPTANCE_FAILED`。详见
-[`docs/audits/2026-08-14-gate4-free-provider-attempt.md`](docs/audits/2026-08-14-gate4-free-provider-attempt.md)。
+真实 successor 已按用户授权从 root-only Codex auth store 注入 credential，并冻结 requested
+`deepseek-v4-flash-zen`、effective `deepseek-v4-flash`、`high`、1,048,576 context。远端只读审计确认
+CPA 的 Responses 合成层把 Chat `finish_reason=length` 错标为 completed；CPA 未修改。项目改走
+compatible `/chat/completions`，以单轮 32,768 output budget 在同一 Bubblewrap + fixed gateway 拓扑
+生成 1 个 admitted child；sandbox 仍无 IP network、无 credential。content-free receipt 保存用量与
+请求/响应/route hash，不保存 reasoning 或模型正文。Gate 4 因而为 `GATE_4_ACCEPTED`。详见
+[`docs/audits/2026-08-14-gate4-zen-compatible-successor.md`](docs/audits/2026-08-14-gate4-zen-compatible-successor.md)。
+
+旧 free route 的 429 失败审计继续保留为 predecessor，不被本次 successor 改写。
 
 ## Gate 5/6 历史证据隔离
 
@@ -109,7 +109,7 @@ GATE_0_ACCEPTED
 GATE_1_ACCEPTED
 GATE_2_ACCEPTED
 GATE_3_ACCEPTED
-GATE_4_ACCEPTANCE_FAILED
+GATE_4_ACCEPTED
 GATE_5_NOT_ACCEPTED
 GATE_6_NOT_ACCEPTED
 GATE_7_BLOCKED_NOT_STARTED
@@ -356,8 +356,7 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 
 ## 尚未完成（真实运行与外部依赖）
 
-- Gate 4：等待 `deepseek-v4-flash-free` 免费额度/cooldown 恢复，在同一 Bubblewrap + fixed gateway
-  topology 中取得真实 provider successor receipt。
+- Gate 4：Zen/high/1m compatible successor 已验收；CPA 保持未修改。
 - Gate 5：正式独立 principal/volume split ceremony、60×≥2 real baseline、real 3-candidate
   calibration 与 accepted budget。
 - Gate 6：新的 real K=10 pilot、真实 crash/reconcile、raw evidence 与成本误差审计。
@@ -369,6 +368,6 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 
 ## 下一个可执行验收门
 
-等待 `deepseek-v4-flash-free` cooldown/免费额度恢复后，复验 Gate 4 同一 sandbox/gateway topology；
-随后才可部署正式 sealed-service principal 并 mint successor split。不得因 429 替换模型或跳到 Gate 5
-付费基线、Gate 7 formal search、Gate 8 reveal。逐项清单见 `docs/phase-todolist.md`。
+下一验收门是部署正式 sealed-service principal/volume 并 mint successor split；之后才可运行 Gate 5
+付费基线与 calibration。不得跳到 Gate 7 formal search 或 Gate 8 reveal。逐项清单见
+`docs/phase-todolist.md`。

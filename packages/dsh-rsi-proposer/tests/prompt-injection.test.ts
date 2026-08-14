@@ -32,7 +32,7 @@ const paths: SandboxPaths = {
 
 const route: ModelRoute = {
   provider: 'deepseek-official',
-  model: 'deepseek-v4-flash-free',
+  model: 'deepseek-v4-flash-zen',
   reasoningEffort: 'high',
   maxTokens: 2048,
 }
@@ -64,7 +64,7 @@ describe('Gate 4 — prompt-injection cannot change policy', () => {
     expect(() => enforceModelFirewall(route, { model: 'gpt-evil' })).toThrow(/locked to/)
     expect(() =>
       enforceModelFirewall(route, {
-        model: 'deepseek-v4-flash-free',
+        model: 'deepseek-v4-flash-zen',
         endpoint: 'https://evil.example.com/v1',
       }),
     ).toThrow(/endpoint/)

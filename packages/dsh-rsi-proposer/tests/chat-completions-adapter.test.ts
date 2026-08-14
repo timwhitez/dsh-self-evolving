@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { TrustedResponsesAdapter, type ProposalGatewayRoute } from '../src/index.js'
+import { TrustedChatCompletionsAdapter, type ProposalGatewayRoute } from '../src/index.js'
 
 const route: ProposalGatewayRoute = {
   provider: 'deepseek',
   endpoint: 'https://provider.example/v1',
   model: 'deepseek-v4-flash-zen',
   reasoningEffort: 'high',
-  maxTokens: 2048,
+  maxTokens: 10_000,
 }
 
 const originalCredential = process.env['RSI_PROVIDER_API_KEY']
@@ -17,46 +17,54 @@ afterEach(() => {
   else process.env['RSI_PROVIDER_API_KEY'] = originalCredential
 })
 
-describe('trusted Responses proposal adapter', () => {
-  it('locks the Zen 1m route, retries transport failure, and emits DSH chunks', async () => {
+describe('trusted compatible Chat Completions proposal adapter', () => {
+  it('continues a high-reasoning length stop without exposing reasoning', async () => {
     process.env['RSI_PROVIDER_API_KEY'] = 'x'
-    let wireBody: Record<string, unknown> | undefined
+    const wireBodies: Array<Record<string, unknown>> = []
     let fetchCalls = 0
-    const adapter = new TrustedResponsesAdapter({
+    const adapter = new TrustedChatCompletionsAdapter({
       route,
       expectedResponseModel: 'deepseek-v4-flash',
       contextWindow: 1_048_576,
       requestMaxRetries: 1,
+      reasoningContinuationMaxTurns: 1,
       async fetchImpl(input, init) {
         fetchCalls += 1
-        expect(String(input)).toBe('https://provider.example/v1/responses')
+        expect(String(input)).toBe('https://provider.example/v1/chat/completions')
         expect(new Headers(init?.headers).get('authorization')).toBe('Bearer x')
-        wireBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        wireBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
         if (fetchCalls === 1) {
           return new Response('', { status: 429, headers: { 'retry-after': '0' } })
         }
-        return new Response(
-          JSON.stringify({
-            id: 'response-1',
+        if (fetchCalls === 2) {
+          return Response.json({
+            id: 'chat-reasoning-only',
             model: 'deepseek-v4-flash',
-            status: 'completed',
-            output: [
-              { type: 'message', content: [{ type: 'output_text', text: '{"proposalId":"p1"}' }] },
+            choices: [
+              {
+                finish_reason: 'length',
+                message: { content: '', reasoning_content: 'private completed reasoning' },
+              },
             ],
-            usage: {
-              input_tokens: 110,
-              output_tokens: 20,
-              input_tokens_details: { cached_tokens: 10 },
-              output_tokens_details: { reasoning_tokens: 5 },
-            },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        )
+            usage: { prompt_tokens: 110, completion_tokens: 2048 },
+          })
+        }
+        return Response.json({
+          id: 'chat-final',
+          model: 'deepseek-v4-flash',
+          choices: [{ finish_reason: 'stop', message: { content: '{"proposalId":"p1"}' } }],
+          usage: {
+            prompt_tokens: 210,
+            completion_tokens: 20,
+            prompt_tokens_details: { cached_tokens: 10 },
+            completion_tokens_details: { reasoning_tokens: 5 },
+          },
+        })
       },
     })
     await expect(adapter.resolveModel(route.provider, route.model)).resolves.toMatchObject({
       context: { contextWindow: 1_048_576 },
-      defaultMaxTokens: 2048,
+      defaultMaxTokens: 10_000,
     })
     const chunks: StreamChunk[] = []
     for await (const chunk of adapter.stream({
@@ -74,25 +82,34 @@ describe('trusted Responses proposal adapter', () => {
     })) {
       chunks.push(chunk)
     }
-    expect(wireBody).toMatchObject({
+    expect(fetchCalls).toBe(3)
+    expect(wireBodies[0]).toMatchObject({
       model: 'deepseek-v4-flash-zen',
-      reasoning: { effort: 'high' },
-      max_output_tokens: 2048,
+      reasoning_effort: 'high',
+      max_tokens: 10_000,
+      stream: false,
     })
-    expect(fetchCalls).toBe(2)
-    expect(String(wireBody?.['input'])).toContain('system policy')
-    expect(String(wireBody?.['input'])).toContain('proposal input')
+    expect(wireBodies[2]?.['messages']).toEqual(
+      expect.arrayContaining([
+        { role: 'assistant', content: '', reasoning_content: 'private completed reasoning' },
+      ]),
+    )
     expect(chunks).toContainEqual({
       type: 'usage',
-      usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, reasoningTokens: 5 },
+      usage: { inputTokens: 310, outputTokens: 2068, cacheReadTokens: 10, reasoningTokens: 5 },
     })
-    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(chunks.at(-1)).toMatchObject({
+      type: 'finish',
+      reason: { kind: 'stop' },
+      replayState: { wireApi: 'chat-completions' },
+    })
+    expect(JSON.stringify(chunks)).not.toContain('private completed reasoning')
     expect(JSON.stringify(chunks)).not.toContain('authorization')
   })
 
-  it('rejects route overrides, model tools, and missing trusted-host credentials', async () => {
+  it('rejects route overrides, model tools, and missing credentials', async () => {
     delete process.env['RSI_PROVIDER_API_KEY']
-    const adapter = new TrustedResponsesAdapter({
+    const adapter = new TrustedChatCompletionsAdapter({
       route,
       expectedResponseModel: 'deepseek-v4-flash',
       contextWindow: 1_048_576,
@@ -107,17 +124,17 @@ describe('trusted Responses proposal adapter', () => {
       ],
     }
     await expect(async () => {
-      for await (const _chunk of adapter.stream({ ...base, model: 'override' })) void _chunk
+      for await (const chunk of adapter.stream({ ...base, model: 'override' })) void chunk
     }).rejects.toThrow(/locked route/)
     await expect(async () => {
-      for await (const _chunk of adapter.stream({
+      for await (const chunk of adapter.stream({
         ...base,
         tools: [{ name: 'forbidden', description: 'forbidden', parameters: {} }],
       }))
-        void _chunk
+        void chunk
     }).rejects.toThrow(/does not permit model tool calls/)
     await expect(async () => {
-      for await (const _chunk of adapter.stream(base)) void _chunk
+      for await (const chunk of adapter.stream(base)) void chunk
     }).rejects.toThrow(/credential env RSI_PROVIDER_API_KEY is unavailable/)
   })
 })

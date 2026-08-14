@@ -4,8 +4,10 @@
   "formalRunId": null,
   "runDirectoryCreated": false,
   "sealedAccessCount": 0,
+  "acceptedPrerequisites": {
+    "gate4StatusReceiptSha256": "e1e3165022a6a6a3ce067b72eec3b237f3110f8ed0ac731d4af789d1bc05a832"
+  },
   "blockers": [
-    "Gate 4 has no real-provider receipt for the sandboxed fixed-route topology.",
     "Gate 5 has no accepted separate-principal formal split, real 60x2 baseline, real 3-candidate calibration, or feasible accepted budget.",
     "Gate 6 has no accepted real K=10 pilot, process-crash receipt, raw-evidence audit, or measured cost-error receipt.",
     "No reviewed tagged commit and trusted-key-signed formal self-track run manifest have been frozen.",

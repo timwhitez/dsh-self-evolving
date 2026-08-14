@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "status": "GATE_4_ACCEPTED",
+  "recordedAt": "2026-08-14T07:02:39.696Z",
+  "route": {
+    "provider": "deepseek",
+    "requestedModel": "deepseek-v4-flash-zen",
+    "effectiveModel": "deepseek-v4-flash",
+    "reasoningEffort": "high",
+    "contextWindowTokens": 1048576,
+    "maxOutputTokensPerTurn": 32768,
+    "reasoningContinuationMaxTurns": 0,
+    "wireApi": "chat-completions"
+  },
+  "topology": {
+    "sandboxIpNetwork": false,
+    "credentialVisibleInSandbox": false,
+    "admittedCandidates": 1,
+    "eventCount": 16
+  },
+  "usage": {
+    "inputTokens": 1,
+    "outputTokens": 25560,
+    "cacheReadTokens": 1254
+  },
+  "costUsd": null,
+  "costNote": "provider catalog has no verified price; token usage is retained",
+  "gatewayReceipt": {
+    "requestId": "llm-9f4f652e5281570c3c0f038ab1786a8940c631250866f8e036d352bde3300578",
+    "requestHash": "sha256:fc751c6df603cdeb39cc5b20c0d73ba47eb1e193a712bce5a7fa2fec6609b91c",
+    "responseHash": "sha256:3a2102f3e716c9020ce4dab2409b45b8378a1d07e55066e3793295319b11640f",
+    "routeHash": "sha256:01198e9b4bbcc7c78d1296d3c71a6e146809aad16677d5fe394a13ac07c74cc2"
+  },
+  "assistantTextSha256": "sha256:e6a1f8e574b15039b0d8b5c45ae826d72f66c97eac77a844137c75b7dd1a1f0f",
+  "sensitiveContentPersisted": false
+}

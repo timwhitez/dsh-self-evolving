@@ -106,22 +106,22 @@
 > canary leak 检出；model firewall 拒 route override）。注：archive catalog 导出（统计只从 DEV_OBSERVED 派生）
 > 随 Gate 5 搜索/统计层实现；evidence export 的 label 过滤已就位。
 >
-> **successor 工程进展（2026-08-14，未验收）**：catalog 对 GUARDED/SEALED observation 满足逐字节
+> **successor 历史工程进展（已由下述 Zen 验收取代）**：catalog 对 GUARDED/SEALED observation 满足逐字节
 > 非干扰；raw object export 固定为 PUBLIC_SPEC+DEV_OBSERVED、action-scoped、只读且 label/media
 > 与 digest 不可变。Bubblewrap E2E 强制只读 inputs、唯一 child write root、空 credential 环境、
-> 独立 PID/network namespace、timeout drain 与 symlink 拒绝。剩余：将真实 DSH model turn 接到该
-> sandbox 的 brokered Unix gateway；当前无 provider credential，Gate 4 仍 fail closed。
+> 独立 PID/network namespace、timeout drain 与 symlink 拒绝，并接到 sandbox 的 brokered Unix
+> gateway。
 > Unix gateway 与 `ProposalGatewayAdapter` 现已通过 4 个 E2E：networkless sandbox 可达固定 socket、
 > 同 request 只调用 provider 一次、route override/额外 headers 在 provider 前拒绝、sandbox 无 key。
-> 尚缺真实 DSH composition 在 Bubblewrap 内经此 adapter 的有凭据复验，故验收状态不变。
-> 随后 model-free 集成 E2E 已使 immutable runtime 内的真实 agent-spine、baseline propose candidate、
-> session loop、GatewayAdapter 与 parser 在 Bubblewrap 内生成 1 个 admitted child。仅剩将 trusted
-> handler 接真实 provider adapter 的同拓扑复验；无 credential 时继续 fail closed。
+> model-free 集成 E2E 使 immutable runtime 内的真实 agent-spine、baseline propose candidate、
+> session loop、GatewayAdapter 与 parser 在 Bubblewrap 内生成 1 个 admitted child；当时尚缺的真实
+> provider 同拓扑复验已由下述 Zen successor 完成。
 >
-> **provider 注入更新**：已从 root-only Codex auth store 向可信宿主进程注入精确
-> `deepseek-v4-flash-free` route（200k context）。strict-TLS smoke=HTTP 200；完整 sandbox successor
-> 因 `model_cooldown` / `FreeUsageLimitError` 在 12 次有界 retry 后仍为 HTTP 429，故仍未验收，且不
-> 替换模型。
+> **Zen compatible successor（已验收）**：从 root-only Codex auth store 仅向可信宿主注入
+> credential；冻结 requested Zen / effective Flash / high / 1,048,576 context。项目绕过 CPA 有缺陷的
+> Responses 合成层，直接使用 compatible Chat Completions 与单轮 32,768 output budget；同一
+> networkless Bubblewrap + fixed gateway 拓扑生成 1 个 admitted child。CPA 未修改，reasoning/模型正文
+> 未持久化。旧 free route 的 429 审计保留为 predecessor。
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 

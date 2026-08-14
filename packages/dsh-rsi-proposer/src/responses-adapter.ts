@@ -10,6 +10,7 @@ import type { ProposalGatewayRoute } from './gateway.js'
 
 export interface TrustedResponsesAdapterConfig {
   route: ProposalGatewayRoute
+  expectedResponseModel?: string
   apiKeyEnv?: string
   contextWindow: number
   requestMaxRetries?: number
@@ -93,6 +94,7 @@ function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
 
 export class TrustedResponsesAdapter extends LlmAdapter {
   private readonly apiKeyEnv: string
+  private readonly expectedResponseModel: string
   private readonly fetchImpl: typeof fetch
 
   constructor(private readonly config: TrustedResponsesAdapterConfig) {
@@ -109,6 +111,10 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       throw new Error('responses adapter: requestMaxRetries must be an integer from 0 through 12')
     }
     this.apiKeyEnv = config.apiKeyEnv ?? 'RSI_PROVIDER_API_KEY'
+    this.expectedResponseModel = config.expectedResponseModel ?? config.route.model
+    if (!this.expectedResponseModel) {
+      throw new Error('responses adapter: expected response model must be non-empty')
+    }
     this.fetchImpl = config.fetchImpl ?? fetch
   }
 
@@ -161,27 +167,49 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     }
-    const maxRetries = this.config.requestMaxRetries ?? 0
-    let response: Response | undefined
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
-      const retryable = response.status === 408 || response.status === 429 || response.status >= 500
-      if (response.ok || !retryable || attempt === maxRetries) break
-      await response.body?.cancel()
-      await waitForRetry(retryDelayMs(response, attempt), options.signal)
+    const fetchResponse = async (): Promise<Response> => {
+      const maxRetries = this.config.requestMaxRetries ?? 0
+      let response: Response | undefined
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
+        const retryable =
+          response.status === 408 || response.status === 429 || response.status >= 500
+        if (response.ok || !retryable || attempt === maxRetries) break
+        await response.body?.cancel()
+        await waitForRetry(retryDelayMs(response, attempt), options.signal)
+      }
+      if (response === undefined) throw new Error('responses adapter: provider response missing')
+      if (!response.ok) {
+        throw new Error(`responses adapter: provider returned HTTP ${response.status}`)
+      }
+      return response
     }
-    if (response === undefined) throw new Error('responses adapter: provider response missing')
-    if (!response.ok) {
-      throw new Error(`responses adapter: provider returned HTTP ${response.status}`)
+    const body = (await (await fetchResponse()).json()) as ResponsesBody
+    if (body.model !== this.expectedResponseModel) {
+      throw new Error('responses adapter: provider model mismatch')
     }
-    const body = (await response.json()) as ResponsesBody
-    if (body.model !== route.model) throw new Error('responses adapter: provider model mismatch')
     const text = (body.output ?? [])
       .flatMap((item) => item.content ?? [])
       .filter((content) => content.type === 'output_text' && typeof content.text === 'string')
       .map((content) => content.text as string)
       .join('')
-    if (!text) throw new Error('responses adapter: provider response has no output text')
+    if (!text) {
+      throw new Error(
+        `responses adapter: provider response has no output text (${JSON.stringify({
+          status: typeof body.status === 'string' ? body.status : null,
+          incompleteReason:
+            typeof body.incomplete_details?.reason === 'string'
+              ? body.incomplete_details.reason
+              : null,
+          outputTypes: (body.output ?? []).map((item) =>
+            typeof item.type === 'string' ? item.type : null,
+          ),
+          inputTokens: finiteCount(body.usage?.input_tokens) ?? null,
+          outputTokens: finiteCount(body.usage?.output_tokens) ?? null,
+          reasoningTokens: finiteCount(body.usage?.output_tokens_details?.reasoning_tokens) ?? null,
+        })})`,
+      )
+    }
 
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
@@ -209,7 +237,8 @@ export class TrustedResponsesAdapter extends LlmAdapter {
           : { kind: 'stop' },
       replayState: {
         responseId: typeof body.id === 'string' ? body.id : null,
-        model: route.model,
+        requestedModel: route.model,
+        effectiveModel: this.expectedResponseModel,
       },
     }
   }

@@ -1,31 +1,40 @@
 {
   "schemaVersion": 1,
-  "status": "PROVIDER_RATE_LIMITED_NOT_ACCEPTED",
+  "status": "GATE_4_ACCEPTED",
   "provider": "deepseek",
-  "model": "deepseek-v4-flash-free",
-  "contextWindowTokens": 200000,
+  "requestedModel": "deepseek-v4-flash-zen",
+  "effectiveModel": "deepseek-v4-flash",
+  "contextWindowTokens": 1048576,
   "reasoningEffort": "high",
+  "wireApi": "chat-completions-compatible",
+  "maxOutputTokensPerTurn": 32768,
+  "reasoningContinuationMaxTurns": 0,
   "credentialSource": "root-only external Codex auth store",
   "credentialPersistedInRepository": false,
-  "responsesSmoke": {
+  "compatibleSmoke": {
     "status": "PASSED",
     "httpStatus": 200,
-    "exactModelEcho": true
+    "requestedModel": "deepseek-v4-flash-zen",
+    "effectiveModel": "deepseek-v4-flash"
   },
   "sandboxedSuccessor": {
-    "status": "FAILED_PROVIDER_RATE_LIMIT",
-    "httpStatus": 429,
-    "providerCodes": [
-      "model_cooldown",
-      "FreeUsageLimitError"
-    ],
-    "admittedCandidates": 0,
+    "status": "PASSED",
+    "admittedCandidates": 1,
+    "eventCount": 16,
     "credentialVisibleInSandbox": false
+  },
+  "receipt": {
+    "path": "evidence/gate4/zen-1m-successor-receipt.json",
+    "sha256": "e1e3165022a6a6a3ce067b72eec3b237f3110f8ed0ac731d4af789d1bc05a832",
+    "sensitiveContentPersisted": false
+  },
+  "predecessor": {
+    "status": "PROVIDER_RATE_LIMITED_NOT_ACCEPTED",
+    "audit": "docs/audits/2026-08-14-gate4-free-provider-attempt.md"
   },
   "sealedAccessCount": 0,
   "claimBoundary": [
-    "ROUTE_AND_CREDENTIAL_SMOKE_ONLY",
-    "GATE_4_ACCEPTANCE_FAILED",
+    "GATE_4_ACCEPTED",
     "NO_CANDIDATE_CAPABILITY_CLAIM",
     "FORMAL_SEARCH_NOT_STARTED"
   ]

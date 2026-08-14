@@ -23,6 +23,7 @@ export interface FormalRunManifest {
     provider: string
     endpointHash: string
     model: string
+    effectiveModel: string
     reasoningEffort: string
     contextWindowTokens: number
     requestDefaultsHash: string
@@ -31,6 +32,7 @@ export interface FormalRunManifest {
     provider: string
     endpointHash: string
     model: string
+    effectiveModel: string
     reasoningEffort: string
     contextWindowTokens: number
     requestDefaultsHash: string
@@ -204,11 +206,12 @@ export function verifyFormalPreflight(
   }
   if (
     manifest.solverRoute.provider !== 'deepseek' ||
-    manifest.solverRoute.model !== 'deepseek-v4-flash-free' ||
+    manifest.solverRoute.model !== 'deepseek-v4-flash-zen' ||
+    manifest.solverRoute.effectiveModel !== 'deepseek-v4-flash' ||
     manifest.solverRoute.reasoningEffort !== 'high' ||
-    manifest.solverRoute.contextWindowTokens !== 200_000
+    manifest.solverRoute.contextWindowTokens !== 1_048_576
   ) {
-    reasons.push('solver route is not the frozen deepseek-v4-flash-free/high/200k identity')
+    reasons.push('solver route is not the frozen Zen-request/Flash-effective/high/1m identity')
   }
   if (routeIdentity(manifest.solverRoute) !== routeIdentity(manifest.proposerRoute)) {
     reasons.push('self track proposer and solver routes differ')

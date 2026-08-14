@@ -28,3 +28,7 @@ export {
   type ProposalGatewayAdapterConfig,
 } from './gateway-adapter.js'
 export { TrustedResponsesAdapter, type TrustedResponsesAdapterConfig } from './responses-adapter.js'
+export {
+  TrustedChatCompletionsAdapter,
+  type TrustedChatCompletionsAdapterConfig,
+} from './chat-completions-adapter.js'

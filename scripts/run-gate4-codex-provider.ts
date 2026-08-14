@@ -8,8 +8,11 @@ import { join } from 'node:path'
 const codexDir = join(homedir(), '.codex')
 const authPath = join(codexDir, 'auth.json')
 const configPath = join(codexDir, 'config.toml')
-const targetModel = 'deepseek-v4-flash-free'
-const targetContext = 200_000
+const targetModel = 'deepseek-v4-flash-zen'
+const targetContext = 1_048_576
+const targetReasoningEffort = 'high'
+const targetMaxOutputTokens = 32_768
+const receiptPath = join(process.cwd(), 'evidence', 'gate4', 'zen-1m-successor-receipt.json')
 
 async function assertPrivate(path: string): Promise<void> {
   const info = await stat(path)
@@ -58,18 +61,29 @@ async function main(): Promise<void> {
   const baseUrl = section.match(/^base_url\s*=\s*"([^"]+)"/m)?.[1]
   const wireApi = section.match(/^wire_api\s*=\s*"([^"]+)"/m)?.[1]
   if (baseUrl === undefined || !baseUrl.startsWith('https://') || wireApi !== 'responses') {
-    throw new Error('provider launcher: deepseek must use an HTTPS Responses endpoint')
+    throw new Error('provider launcher: Codex DeepSeek provider configuration is invalid')
   }
   const catalogPath = config.match(/^model_catalog_json\s*=\s*"([^"]+)"/m)?.[1]
   if (catalogPath === undefined) throw new Error('provider launcher: model catalog path missing')
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as unknown
   const model = findModel(catalog)
-  if (model === null || model['context_window'] !== targetContext) {
+  const supportedReasoning = model?.['supported_reasoning_levels']
+  if (
+    model === null ||
+    model['context_window'] !== targetContext ||
+    !Array.isArray(supportedReasoning) ||
+    !supportedReasoning.some(
+      (entry) =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        (entry as Record<string, unknown>)['effort'] === targetReasoningEffort,
+    )
+  ) {
     throw new Error(`provider launcher: ${targetModel} must have ${targetContext} context tokens`)
   }
 
   process.stdout.write(
-    `Gate 4 trusted host: provider=deepseek model=${targetModel} context=${targetContext} wire=responses\n`,
+    `Gate 4 trusted host: provider=deepseek model=${targetModel} reasoning=${targetReasoningEffort} context=${targetContext} max_output=${targetMaxOutputTokens} wire=chat-completions-compatible\n`,
   )
   if (process.argv.includes('--check')) return
   const child = spawn(
@@ -90,6 +104,7 @@ async function main(): Promise<void> {
         ...process.env,
         RSI_PROVIDER_API_KEY: auth.OPENAI_API_KEY,
         RSI_PROVIDER_BASE_URL: baseUrl,
+        RSI_GATE4_RECEIPT_PATH: receiptPath,
       },
       stdio: 'inherit',
     },
