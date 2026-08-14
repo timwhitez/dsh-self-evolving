@@ -58,12 +58,14 @@ describe('policy scanner — rejection fixtures', () => {
   })
 
   it('rejects an api-key-shaped secret', () => {
-    const hits = scanSource('a.ts', 'const apiKey = "sk-AbCdEfGhIjKlMnOpQrStUv1234"')
+    const syntheticSecret = ['sk-', 'AbCdEfGhIjKlMnOpQrStUv1234'].join('')
+    const hits = scanSource('a.ts', `const apiKey = "${syntheticSecret}"`)
     expect(hits.some((h) => h.rule === 'secret-api-key')).toBe(true)
   })
 
   it('rejects a private key block', () => {
-    const hits = scanSource('a.ts', 'const pk = "-----BEGIN RSA PRIVATE KEY-----"')
+    const syntheticHeader = ['-----BEGIN RSA ', 'PRIVATE KEY-----'].join('')
+    const hits = scanSource('a.ts', `const pk = "${syntheticHeader}"`)
     expect(hits.some((h) => h.rule === 'secret-private-key')).toBe(true)
   })
 

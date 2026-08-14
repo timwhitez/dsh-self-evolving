@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildSpdxSbom } from '../build-release.js'
+import { assertTrackedTextSafe, buildSpdxSbom } from '../build-release.js'
 
 describe('release SBOM builder', () => {
+  it('scans the tracked release tree without treating synthetic rejection fixtures as secrets', async () => {
+    await expect(assertTrackedTextSafe()).resolves.toMatchObject({
+      trackedFiles: expect.any(Number),
+    })
+  })
+
   it('emits deterministic SPDX package identities from the license inventory', () => {
     const sbom = buildSpdxSbom('a'.repeat(40), {
       MIT: [{ name: 'z-lib', versions: ['2.0.0'], license: 'MIT' }],

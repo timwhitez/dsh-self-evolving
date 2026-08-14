@@ -74,7 +74,7 @@ async function sha256File(path: string): Promise<string> {
     .digest('hex')
 }
 
-async function assertTrackedTextSafe(): Promise<{ trackedFiles: number }> {
+export async function assertTrackedTextSafe(): Promise<{ trackedFiles: number }> {
   const { stdout } = await exec('/usr/bin/git', ['ls-files', '-z'])
   const files = stdout.split('\0').filter(Boolean)
   const decoder = new TextDecoder('utf-8', { fatal: true })

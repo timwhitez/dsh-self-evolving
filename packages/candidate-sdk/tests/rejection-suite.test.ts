@@ -259,9 +259,10 @@ describe('rejection fixture suite (Gate 1)', () => {
 
   it('REJECTS a secret literal', async () => {
     // Inject a real secret assignment the scanner's pattern matches: apiKey = "sk-..."
+    const syntheticSecret = ['sk-', 'LIVEKEY1234567890abcdef'].join('')
     const src = CLEAN_SRC.replace(
       'export function apply',
-      "const apiKey = 'sk-LIVEKEY1234567890abcdef'\nexport function apply",
+      `const apiKey = '${syntheticSecret}'\nexport function apply`,
     )
     const dir = await makeFixture('secret', src)
     await expect(
