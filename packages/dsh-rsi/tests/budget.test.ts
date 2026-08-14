@@ -88,6 +88,34 @@ describe('budget ledger', () => {
     expect(totals.unpricedUsage).toBe(true)
   })
 
+  it('settles the same action receipt idempotently and rejects a conflicting replay', async () => {
+    const l = ledger()
+    await reserve(l, 'a-idempotent', 'usd', 3)
+    const first = await spend(l, 'a-idempotent', 'usd', 2)
+    const replayed = await spend(l, 'a-idempotent', 'usd', 2)
+    expect(replayed.entryHash).toBe(first.entryHash)
+    await expect(spend(l, 'a-idempotent', 'usd', 1)).rejects.toThrow(/conflicting/)
+    const { totals } = await computeTotals(l)
+    expect(totals.spent.usd).toBe(2)
+  })
+
+  it('serializes concurrent reservations so the hard limit cannot be oversold', async () => {
+    const l = ledger()
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, index) => reserve(l, `concurrent-${index}`, 'usd', 2)),
+    )
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(5)
+    const { totals } = await computeTotals(l)
+    expect(worstCaseCommitted(totals).usd).toBe(10)
+  })
+
+  it('rejects spend or release beyond the action reservation', async () => {
+    const l = ledger()
+    await reserve(l, 'bounded', 'usd', 2)
+    await expect(spend(l, 'bounded', 'usd', 3)).rejects.toThrow(/reservation/)
+    await expect(release(l, 'bounded', 'usd', 3)).rejects.toThrow(/reservation/)
+  })
+
   it('computeTotals fails closed on a broken budget chain', async () => {
     const l = ledger()
     await reserve(l, 'a7', 'usd', 1)

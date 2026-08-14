@@ -1,7 +1,20 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTANCE_FAILED`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTANCE_FAILED`**
 **更新时间：2026-08-14（Asia/Tokyo）**
+
+## Gate 3 successor（已验收）
+
+`@dsh-rsi/core` 现为标准 DSH/Cordis bundle，只暴露生命周期归属的 `ctx.rsi` service；journal
+与 budget 写入原子、fsync、并发串行且 receipt-idempotent。真实 provider saga 按 intent → inspect/
+launch → collect → cost settle/release → commit 恢复。4 个独立 Node controller 分别在四个边界后
+遭真实 `SIGKILL`，successor 均只产生一次 launch/score/cost，并保留 stale-lock 证据。只读 status
+command、unload quiescence 和生成式 replay property tests 同时通过。
+
+完整证据见
+[`docs/audits/2026-08-14-gate3-successor.md`](docs/audits/2026-08-14-gate3-successor.md)。
+当前最早失败门推进为 Gate 4：archive catalog 尚未证明只从 `DEV_OBSERVED` 派生，已有纯函数
+filesystem/network policy 也未构成真实 proposer 进程的 OS sandbox 验收。
 
 ## Gate 2 successor（已验收）
 
@@ -45,7 +58,8 @@ initialize/session/prompt。验收同时在独立 network namespace 与 fresh `F
 GATE_0_ACCEPTED
 GATE_1_ACCEPTED
 GATE_2_ACCEPTED
-GATE_3_ACCEPTANCE_FAILED
+GATE_3_ACCEPTED
+GATE_4_ACCEPTANCE_FAILED
 FORMAL_SEARCH_NOT_STARTED
 SEALED_NOT_ACCESSED
 NO_PERFORMANCE_CLAIM

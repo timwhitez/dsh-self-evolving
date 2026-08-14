@@ -92,6 +92,19 @@ describe('journal hash chain', () => {
     await h2.release()
   })
 
+  it('atomically grants exactly one writer under concurrent acquisition', async () => {
+    const j = journal()
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 32 }, (_, index) => acquireLock(j, `writer-${index}`)),
+    )
+    const acquired = attempts.filter(
+      (attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireLock>>> =>
+        attempt.status === 'fulfilled',
+    )
+    expect(acquired).toHaveLength(1)
+    await acquired[0]!.value.release()
+  })
+
   it('readAll fails closed on a broken hash chain (EVIDENCE_CORRUPT)', async () => {
     const j = journal()
     await appendEvent(j, 'run.preflight', {})
@@ -107,9 +120,71 @@ describe('journal hash chain', () => {
     await writeFile(segPath, lines.join('\n') + '\n')
     await expect(readAll(j)).rejects.toThrow(/EVIDENCE_CORRUPT/)
   })
+
+  it('readAll fails closed when HEAD does not match the durable chain tail', async () => {
+    const j = journal()
+    await appendEvent(j, 'run.preflight', {})
+    await writeFile(
+      join(j.journalDir, 'HEAD'),
+      JSON.stringify({
+        seq: 2,
+        eventHash: `sha256:${'0'.repeat(64)}`,
+        segment: 'events-000001.jsonl',
+      }) + '\n',
+    )
+    await expect(readAll(j)).rejects.toThrow(/EVIDENCE_CORRUPT.*HEAD/)
+  })
 })
 
 describe('reducer + snapshot', () => {
+  it('property: arbitrary generated valid event sequences replay purely and deterministically', () => {
+    for (let seed = 1; seed <= 64; seed += 1) {
+      let randomState = seed >>> 0
+      const next = () => {
+        randomState = (Math.imul(randomState, 1_664_525) + 1_013_904_223) >>> 0
+        return randomState
+      }
+      const events: JournalEvent[] = []
+      let previousHash: string | null = null
+      const push = (type: string, payload: Record<string, unknown>) => {
+        const seq = events.length + 1
+        const partial: Omit<JournalEvent, 'eventHash'> = {
+          schemaVersion: 1,
+          runId: `property-${seed}`,
+          seq,
+          eventId: `property-${seed}-${seq}`,
+          occurredAt: '2026-08-14T00:00:00.000Z',
+          type,
+          causationId: null,
+          correlationId: `wave-${seed}`,
+          actor: 'property-test',
+          payload,
+          previousHash,
+        }
+        const eventHash = computeEventHash(partial)
+        events.push({ ...partial, eventHash })
+        previousHash = eventHash
+      }
+      push('run.preflight', {})
+      const count = (next() % 12) + 1
+      for (let index = 0; index < count; index += 1) {
+        const candidateId = `c_${seed}_${index}`
+        push('candidate.admitted', { candidateId, canonicalParent: null })
+        push('evaluation.observed', {
+          candidateId,
+          taskId: `task-${next() % 7}`,
+          attemptIndex: next() % 3,
+          status: next() % 2 === 0 ? 'pass' : 'fail',
+          reward: next() % 2,
+        })
+      }
+      const original = JSON.stringify(events)
+      expect(stateHash(replay(events))).toBe(stateHash(replay(events)))
+      expect(JSON.stringify(events)).toBe(original)
+      expect(replay(events).lastSeq).toBe(events.length)
+    }
+  })
+
   it('full replay yields the same canonical state hash as snapshot resume', async () => {
     const j = journal()
     await appendEvent(j, 'run.preflight', {})

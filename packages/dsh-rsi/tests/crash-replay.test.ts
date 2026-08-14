@@ -129,7 +129,7 @@ describe('crash/replay fault-injection', () => {
     expect(final.spent.usd).toBe(7)
     expect(final.reserved.usd).toBe(3)
     // No double charge: settled exactly once.
-    await spend(l, 'act3', 'usd', 0) // a second (no-op) settle doesn't change spent
+    await spend(l, 'act3', 'usd', 7) // exact receipt replay returns the existing entry
     const { totals: afterResettle } = await computeTotals(l)
     expect(afterResettle.spent.usd).toBe(7)
   })

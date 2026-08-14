@@ -14,8 +14,8 @@
  * A second writer fails fast rather than corrupting the chain.
  */
 import { createHash } from 'node:crypto'
-import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 export interface JournalEvent<P = Record<string, unknown>> {
   schemaVersion: 1
@@ -145,7 +145,14 @@ export async function append<P>(
   const eventHash = computeEventHash(eventWithoutHash)
   const event: JournalEvent<P> = { ...eventWithoutHash, eventHash }
   const line = canonicalJson(event) + '\n'
-  await appendFile(segmentPath(j, seq), line, { encoding: 'utf8' })
+  const segmentFile = await open(segmentPath(j, seq), 'a', 0o600)
+  try {
+    await segmentFile.writeFile(line, { encoding: 'utf8' })
+    // The chain event must reach durable storage before HEAD can point at it.
+    await segmentFile.sync()
+  } finally {
+    await segmentFile.close()
+  }
   await writeHead(j, { seq, eventHash, segment: segmentName(seq) })
   return event
 }
@@ -190,6 +197,15 @@ export async function readAll(j: Journal): Promise<JournalEvent[]> {
       expectedSeq = ev.seq + 1
     }
   }
+  const tail = events.at(-1)
+  if (
+    tail === undefined ||
+    head.seq !== tail.seq ||
+    head.eventHash !== tail.eventHash ||
+    head.segment !== segmentName(tail.seq)
+  ) {
+    throw new Error('EVIDENCE_CORRUPT: HEAD does not match the durable journal chain tail')
+  }
   return events
 }
 
@@ -201,23 +217,118 @@ export interface LockHandle {
   release: () => Promise<void>
 }
 
+interface LockRecord {
+  owner: string
+  pid: number
+  processStartTicks: string
+  acquiredAt: string
+}
+
+async function processStartTicks(pid: number): Promise<string | null> {
+  try {
+    const raw = await readFile(`/proc/${pid}/stat`, 'utf8')
+    const close = raw.lastIndexOf(') ')
+    if (close === -1) throw new Error(`journal: malformed /proc/${pid}/stat`)
+    const fieldsAfterComm = raw
+      .slice(close + 2)
+      .trim()
+      .split(/\s+/)
+    // /proc stat field 22 is starttime; fieldsAfterComm starts at field 3.
+    const start = fieldsAfterComm[19]
+    if (start === undefined || !/^\d+$/.test(start)) {
+      throw new Error(`journal: missing process start identity for pid ${pid}`)
+    }
+    return start
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+async function preserveAndRemoveStaleLock(lockPath: string, raw: string): Promise<void> {
+  const parsed = JSON.parse(raw) as Partial<LockRecord>
+  if (
+    typeof parsed.pid !== 'number' ||
+    !Number.isInteger(parsed.pid) ||
+    parsed.pid <= 0 ||
+    typeof parsed.processStartTicks !== 'string'
+  ) {
+    throw new Error('journal: existing lock has no verifiable owner identity')
+  }
+  const currentStart = await processStartTicks(parsed.pid)
+  if (currentStart === parsed.processStartTicks) {
+    throw new Error(`journal: already locked by ${raw}`)
+  }
+
+  const fingerprint = createHash('sha256').update(raw).digest('hex').slice(0, 16)
+  const stalePath = join(dirname(lockPath), `lock.stale-${parsed.pid}-${fingerprint}.json`)
+  try {
+    await link(lockPath, stalePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const preserved = await readFile(stalePath, 'utf8')
+    if (preserved !== raw) {
+      throw new Error('journal: stale lock evidence collision', { cause: error })
+    }
+  }
+  const current = await readFile(lockPath, 'utf8').catch(() => null)
+  if (current !== raw) throw new Error('journal: lock changed during stale-owner recovery')
+  await rm(lockPath)
+}
+
 export async function acquireLock(j: Journal, owner: string): Promise<LockHandle> {
   const lockPath = join(j.journalDir, 'lock.json')
   await mkdir(j.journalDir, { recursive: true })
-  const existing = await readFile(lockPath, 'utf8').catch(() => null)
-  if (existing !== null) {
-    // Stale-lock reaping is the operator's job; we fail closed.
-    throw new Error(`journal: already locked by ${existing}`)
+  const startTicks = await processStartTicks(process.pid)
+  if (startTicks === null) throw new Error('journal: cannot verify current process identity')
+  const lockRecord =
+    JSON.stringify({
+      owner,
+      pid: process.pid,
+      processStartTicks: startTicks,
+      acquiredAt: new Date().toISOString(),
+    }) + '\n'
+  let lockFile
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      // O_EXCL is the arbitration primitive. A read-then-write sequence permits
+      // multiple contenders to observe an absent file and all become writers.
+      lockFile = await open(lockPath, 'wx', 0o600)
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const existing = await readFile(lockPath, 'utf8').catch(() => null)
+      if (existing === null) continue
+      try {
+        await preserveAndRemoveStaleLock(lockPath, existing)
+      } catch (recoveryError) {
+        throw new Error(`journal: already locked by ${existing}`, { cause: recoveryError })
+      }
+    }
   }
-  const lockRecord = JSON.stringify({
-    owner,
-    pid: process.pid,
-    acquiredAt: new Date().toISOString(),
-  })
-  await writeFile(lockPath, lockRecord + '\n')
+  if (lockFile === undefined) throw new Error('journal: lock acquisition race did not converge')
+  try {
+    await lockFile.writeFile(lockRecord)
+    await lockFile.sync()
+  } catch (error) {
+    await lockFile.close().catch(() => {})
+    await rm(lockPath, { force: true })
+    throw error
+  }
+  await lockFile.close()
+  const dirFh = await open(j.journalDir, 'r')
+  await dirFh.sync().catch(() => {})
+  await dirFh.close()
+  let released = false
   return {
     async release() {
+      if (released) return
+      const current = await readFile(lockPath, 'utf8').catch(() => null)
+      if (current !== lockRecord) {
+        throw new Error('journal: lock ownership changed before release')
+      }
       await rm(lockPath, { force: true })
+      released = true
     },
   }
 }

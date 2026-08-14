@@ -1,7 +1,7 @@
 # Gate 2 successor acceptance — 2026-08-14
 
 **Predecessor audit:** `docs/audits/2026-08-14-gate-acceptance-audit.md`
-**Status:** `GATE_2_ACCEPTED`; Gate 3 is the earliest failed gate
+**Status at acceptance:** `GATE_2_ACCEPTED`; later superseded by the Gate 3 successor
 **Sealed access:** none
 **Capability claim:** none; the deterministic mock trial received reward 0
 

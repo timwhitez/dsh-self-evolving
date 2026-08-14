@@ -81,11 +81,11 @@
 
 **退出证据**：crash/replay 全套通过；controller unload 后无残留 worker/handle。
 
-> **已完成（2026-08-14）**：`packages/dsh-rsi/` controller core（object store / journal / reducer+snapshot /
-> budget ledger）。证据：object store 7 绿、journal+reducer 7 绿（含 full-replay==snapshot-resume hash
-> 相等、event-order permutation canonical 相等）、budget 6 绿、crash/replay fault-injection 4 绿（launch/
-> collect/commit 边界 resume 不重复 external effect/score/cost）。共 24 controller 测试。注：`ctx.rsi`
-> Cordis service 绑定与 DSH bundle 包装留给后续 Gate 集成阶段（当前为纯 TS 库，crash-safety 已被独立证明）。
+> **successor 验收（2026-08-14）**：`@dsh-rsi/core` 已成为 namespace-form DSH bundle，并由
+> Cordis lifecycle 持有唯一 `ctx.rsi` service、atomic writer lock、journal flush 和 provider saga。
+> 4 个真实 Node controller 在 intent/launch/collect/commit 后分别遭 `SIGKILL`，恢复后均只有一次
+> external launch、observation、cost settlement 和 commit；stale owner identity 被核验并保留证据。
+> 另有只读 status CLI、并发写/预算不超卖、64 组生成序列 property、unload 无 handle 验收。
 
 ## Phase 4 — Agentic proposal 垂直切片（Gate 4，4–7 天）
 
