@@ -11,6 +11,12 @@ export interface LicensePackage {
   license?: string
 }
 
+export function normalizeGitCommit(stdout: string): string {
+  const commit = stdout.trim()
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error('release: invalid Git commit identity')
+  return commit
+}
+
 export function buildSpdxSbom(
   commit: string,
   licenses: Record<string, LicensePackage[]>,
@@ -104,7 +110,7 @@ async function main(): Promise<void> {
     throw new Error('release: output directory exists')
   const status = (await exec('/usr/bin/git', ['status', '--porcelain'])).stdout
   if (status.length !== 0) throw new Error('release: worktree must be clean')
-  const commit = (await exec('/usr/bin/git', ['rev-parse', 'HEAD'])).stdout
+  const commit = normalizeGitCommit((await exec('/usr/bin/git', ['rev-parse', 'HEAD'])).stdout)
   const safety = await assertTrackedTextSafe()
   await mkdir(outDir, { recursive: false, mode: 0o755 })
 

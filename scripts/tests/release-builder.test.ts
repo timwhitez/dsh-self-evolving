@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { assertTrackedTextSafe, buildSpdxSbom } from '../build-release.js'
+import { assertTrackedTextSafe, buildSpdxSbom, normalizeGitCommit } from '../build-release.js'
 
 describe('release SBOM builder', () => {
+  it('normalizes the newline emitted by git rev-parse', () => {
+    expect(normalizeGitCommit(`${'a'.repeat(40)}\n`)).toBe('a'.repeat(40))
+    expect(() => normalizeGitCommit('not-a-commit\n')).toThrow(/invalid Git commit identity/)
+  })
+
   it('scans the tracked release tree without treating synthetic rejection fixtures as secrets', async () => {
     await expect(assertTrackedTextSafe()).resolves.toMatchObject({
       trackedFiles: expect.any(Number),
