@@ -253,11 +253,10 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/dsh-rsi-search:
-    dependencies:
+    devDependencies:
       '@dsh-rsi/core':
         specifier: workspace:*
         version: link:../dsh-rsi
-    devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1

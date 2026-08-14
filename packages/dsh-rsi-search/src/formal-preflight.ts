@@ -1,5 +1,22 @@
 import { createHash, createPublicKey, verify } from 'node:crypto'
-import { canonicalJson } from '@dsh-rsi/core'
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortKeys(value))
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys)
+  if (value !== null && typeof value === 'object') {
+    const object = value as Record<string, unknown>
+    return Object.keys(object)
+      .sort()
+      .reduce<Record<string, unknown>>((sorted, key) => {
+        sorted[key] = sortKeys(object[key])
+        return sorted
+      }, {})
+  }
+  return value
+}
 
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/
 const gitCommitPattern = /^[0-9a-f]{40}$/

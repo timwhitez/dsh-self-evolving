@@ -9,16 +9,22 @@
     ".": {
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./split": {
+      "types": "./lib/split.d.ts",
+      "default": "./lib/split.js"
+    },
+    "./calibration": {
+      "types": "./lib/calibration.d.ts",
+      "default": "./lib/calibration.js"
     }
   },
   "scripts": {
     "build": "tsc -b",
     "clean": "rm -rf lib .tsbuildinfo"
   },
-  "dependencies": {
-    "@dsh-rsi/core": "workspace:*"
-  },
   "devDependencies": {
+    "@dsh-rsi/core": "workspace:*",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

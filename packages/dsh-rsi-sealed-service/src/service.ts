@@ -4,11 +4,10 @@ import { dirname, join, resolve } from 'node:path'
 import {
   SPLIT_SIZES,
   commitSplit,
-  deterministicSplit,
   type SplitAssignment,
   type SplitCommitment,
-  type TaskMeta,
-} from '@dsh-rsi/search'
+} from '@dsh-rsi/search/split'
+import { deterministicSplit, type TaskMeta } from '@dsh-rsi/search/calibration'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 

@@ -52,6 +52,13 @@ dump/reveal 操作。该验证未部署正式 service account/volume、未 mint 
 `ENGINEERING_PREFLIGHT_PASSED`，Gate 5 仍未验收。证据见
 [`docs/audits/2026-08-14-gate5-sealed-service-preflight.md`](docs/audits/2026-08-14-gate5-sealed-service-preflight.md)。
 
+Gate 5 sealed deployment successor 已通过窄 runtime exports 去除生产闭包中的 core/Cordis，部署为
+root-owned immutable `/opt` release，并以独立 `dsh-rsi-sealed` UID 和 mode-0700 `/var/lib` store
+完成 restart、权限、并发锁、tamper/no-replace smoke。新的 TB 2.1 concealed 48/12/29 split 已 mint，
+controller 只获得 observed IDs、guard handles 与 Merkle root，seed/assignment 未暴露且 sealed access
+仍为 0。Gate 5 仍因缺少真实 60x2 baseline、三候选分层 calibration 与冻结预算而未验收。详见
+[`docs/audits/2026-08-14-gate5-sealed-deployment-successor.md`](docs/audits/2026-08-14-gate5-sealed-deployment-successor.md)。
+
 ## Gate 7 formal preflight
 
 新增 detached-Ed25519、外部 trusted key 验证的 formal manifest/pre-start verifier，绑定 Git tag/commit、
