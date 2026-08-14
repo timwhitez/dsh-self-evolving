@@ -18,6 +18,9 @@ evidence/*
 !evidence/calibration/**
 !evidence/pilot/
 !evidence/pilot/**
+!evidence/formal/
+evidence/formal/*
+!evidence/formal/STATUS.json
 runs/
 
 # Editor / OS noise.

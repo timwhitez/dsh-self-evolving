@@ -51,6 +51,15 @@ dump/reveal 操作。该验证未部署正式 service account/volume、未 mint 
 `ENGINEERING_PREFLIGHT_PASSED`，Gate 5 仍未验收。证据见
 [`docs/audits/2026-08-14-gate5-sealed-service-preflight.md`](docs/audits/2026-08-14-gate5-sealed-service-preflight.md)。
 
+## Gate 7 formal preflight
+
+新增 detached-Ed25519、外部 trusted key 验证的 formal manifest/pre-start verifier，绑定 Git tag/commit、
+self-track route、TB 2.1 identity、TCB/protocol/split/search/budget/leaderboard identities，并独立要求
+Gate 4/5/6 receipts、real exact-identity baseline、provider smoke、budget reservation 与 operator procedure
+receipts。当前所有缺口 fail closed 为 `BLOCKED_NOT_STARTED`；未创建 formal run directory，未启动
+80-candidate search，sealed access 为 0。详见
+[`docs/audits/2026-08-14-gate7-preflight.md`](docs/audits/2026-08-14-gate7-preflight.md)。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP

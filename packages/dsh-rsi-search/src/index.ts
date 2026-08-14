@@ -43,6 +43,13 @@ export {
   type Gate5AcceptanceVerdict,
 } from './acceptance.js'
 export {
+  formalSignerKeyId,
+  verifyFormalPreflight,
+  type FormalPreflightEvidence,
+  type FormalPreflightVerdict,
+  type FormalRunManifest,
+} from './formal-preflight.js'
+export {
   buildBudgetModel,
   DEFAULT_TARGETS,
   type CalibrationSample,

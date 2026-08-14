@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "status": "BLOCKED_NOT_STARTED",
+  "formalRunId": null,
+  "runDirectoryCreated": false,
+  "sealedAccessCount": 0,
+  "blockers": [
+    "Gate 4 has no real-provider receipt for the sandboxed fixed-route topology.",
+    "Gate 5 has no accepted separate-principal formal split, real 60x2 baseline, real 3-candidate calibration, or feasible accepted budget.",
+    "Gate 6 has no accepted real K=10 pilot, process-crash receipt, raw-evidence audit, or measured cost-error receipt.",
+    "No reviewed tagged commit and trusted-key-signed formal self-track run manifest have been frozen.",
+    "No immutable current leaderboard snapshot/target row or published pre-reveal statistics receipt has been frozen.",
+    "No formal budget reservation or tested operator stop/incident/secret-rotation/backup-restore receipt exists."
+  ],
+  "claimBoundary": [
+    "FORMAL_SEARCH_NOT_STARTED",
+    "NO_80_CANDIDATE_RUN",
+    "NO_DEVELOPMENT_CHAMPION",
+    "SEALED_NOT_ACCESSED"
+  ]
+}

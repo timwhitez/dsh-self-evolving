@@ -173,6 +173,11 @@
 
 ## Phase 7 — 正式 80-candidate evolution（Gate 7，runtime ≤16h + audit）
 
+> **preflight verifier 已完成（2026-08-14）**：signed manifest、trusted signer、Git tag/clean、
+> Gate 4/5/6 receipts、real baseline、provider smoke、split concealment、budget reservation、leaderboard、
+> stats publication 与 operator procedures 均为硬门。当前 verdict=`BLOCKED_NOT_STARTED`，没有创建
+> run directory 或启动付费搜索；证据见 `evidence/formal/STATUS.json`。
+
 - [ ] pre-start checklist：tag clean commit、签名 run manifest（track=`self`）、split commitment、leaderboard snapshot、预算含 sealed + 20% reserve、揭盲前发布统计协议
 - [ ] fresh 60-task baseline 或 exact-identity 复用验证
 - [ ] controller 自治运行至 terminal state；operator 只做安全/成本/基础设施干预，不按分数 steer
