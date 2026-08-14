@@ -372,7 +372,7 @@ describe.skipIf(!realApiKey || !realBaseUrl)('v0.1.1 real-provider tool loop', (
         expectedResponseModel: 'deepseek-v4-flash',
         contextWindow: 1_048_576,
         requestMaxRetries: 12,
-        reasoningContinuationMaxTurns: 0,
+        reasoningContinuationMaxTurns: 1,
       })
       const gateway = await startProposalGateway({
         socketPath: join(root!, 'gateway', 'proposal.sock'),
@@ -385,7 +385,7 @@ describe.skipIf(!realApiKey || !realBaseUrl)('v0.1.1 real-provider tool loop', (
           runtimeRoot,
           command: '/runtime/node',
           args: ['/runtime/node_modules/@dsh-rsi/proposer/lib/v011-sandbox-worker.js'],
-          timeoutMs: 840_000,
+          timeoutMs: 1_800_000,
           maxOutputBytes: 4 * 1024 * 1024,
           gatewaySocket: gateway.socketPath,
         })

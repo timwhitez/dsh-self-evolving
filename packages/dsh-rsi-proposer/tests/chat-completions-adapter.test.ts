@@ -97,7 +97,11 @@ describe('trusted compatible Chat Completions proposal adapter', () => {
     })
     expect(wireBodies[2]?.['messages']).toEqual(
       expect.arrayContaining([
-        { role: 'assistant', content: '', reasoning_content: 'private completed reasoning' },
+        {
+          role: 'assistant',
+          content: 'Continuation requested by the trusted adapter.',
+          reasoning_content: 'private completed reasoning',
+        },
       ]),
     )
     expect(chunks).toContainEqual({

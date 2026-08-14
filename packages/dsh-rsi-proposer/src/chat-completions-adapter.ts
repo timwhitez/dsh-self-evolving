@@ -297,11 +297,17 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
       if (turn === maxTurns) {
         throw new Error('chat adapter: reasoning continuation budget exhausted')
       }
-      messages.push({ role: 'assistant', content: '', reasoning_content: reasoning })
+      messages.push({
+        role: 'assistant',
+        content: 'Continuation requested by the trusted adapter.',
+        reasoning_content: reasoning,
+      })
       messages.push({
         role: 'user',
         content:
-          'Continue from the completed reasoning. Emit only the required final JSON object now.',
+          options.tools !== undefined && options.tools.length > 0
+            ? 'Continue from the completed reasoning. Call one or more provided tools now; do not repeat the analysis.'
+            : 'Continue from the completed reasoning. Emit only the required final response now.',
       })
     }
     if (!body || (!text && toolCalls.length === 0)) {

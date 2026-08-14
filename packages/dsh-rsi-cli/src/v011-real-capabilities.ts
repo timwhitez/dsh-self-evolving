@@ -598,13 +598,24 @@ async function realV011Proposal(
       expectedResponseModel: config.model.effective,
       contextWindow: config.model.contextWindow,
       requestMaxRetries: 12,
-      reasoningContinuationMaxTurns: 0,
+      reasoningContinuationMaxTurns: 1,
     })
+    let providerFailure: string | null = null
+    const handler = createProposalGatewayLlmHandler(adapter, lockedRoute)
     const gateway = await startProposalGateway({
       socketPath: join(action, 'gateway', 'proposal.sock'),
       route: lockedRoute,
-      handle: createProposalGatewayLlmHandler(adapter, lockedRoute),
+      async handle(payload) {
+        try {
+          return await handler(payload)
+        } catch (error) {
+          providerFailure = error instanceof Error ? error.message : 'unknown provider failure'
+          throw error
+        }
+      },
     })
+    let sandboxResult:
+      { exitCode: number | null; signal: string | null; stderr: string } | undefined
     try {
       const result = await runProposalSandbox({
         mounts: {
@@ -617,16 +628,37 @@ async function realV011Proposal(
         runtimeRoot,
         command: '/runtime/node',
         args: ['/runtime/node_modules/@dsh-rsi/proposer/lib/v011-sandbox-worker.js'],
-        timeoutMs: 900_000,
+        timeoutMs: 1_800_000,
         maxOutputBytes: 4 * 1024 * 1024,
         gatewaySocket: gateway.socketPath,
       })
+      sandboxResult = result
       if (result.exitCode !== 0) throw new Error(`v0.1.1 real proposer failed: ${result.stderr}`)
+    } finally {
       await writeExclusive(
         join(action, 'gateway-receipts.json'),
         JSON.stringify(gateway.receipts(), null, 2) + '\n',
       )
-    } finally {
+      await writeExclusive(
+        join(action, 'proposal-diagnostic.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            providerFailure,
+            gatewayReceiptCount: gateway.receipts().length,
+            sandbox:
+              sandboxResult === undefined
+                ? null
+                : {
+                    exitCode: sandboxResult.exitCode,
+                    signal: sandboxResult.signal,
+                    stderrSha256: sha(sandboxResult.stderr),
+                  },
+          },
+          null,
+          2,
+        ) + '\n',
+      )
       await gateway.close()
       if (previousKey === undefined) delete process.env['RSI_PROVIDER_API_KEY']
       else process.env['RSI_PROVIDER_API_KEY'] = previousKey

@@ -203,6 +203,21 @@ describe('stable-demo engine', () => {
     expect(counters.builds).toBe(3)
   })
 
+  it('terminates deterministically when all three proposal attempts are rejected', async () => {
+    const { config, counters, capabilities } = await fixture()
+    capabilities.propose = async () => {
+      counters.proposals += 1
+      throw new Error('fixture deterministic protocol rejection')
+    }
+    const result = await runStableDemo(config, capabilities)
+    expect(result.status).toBe('NO_ADMISSIBLE_CHILD')
+    expect(result.admittedChildren).toBe(0)
+    expect(counters.proposals).toBe(3)
+    const replay = await runStableDemo(config, capabilities)
+    expect(replay).toEqual(result)
+    expect(counters.proposals).toBe(3)
+  })
+
   it('fails before any external effect when preflight is not ready', async () => {
     const { config, counters, capabilities } = await fixture()
     capabilities.preflight = async () => ({

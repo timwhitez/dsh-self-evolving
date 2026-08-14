@@ -90,7 +90,7 @@ export interface StableDemoCapabilities {
 }
 
 export interface StableDemoResult {
-  status: 'STABLE_ITERATION_VERIFIED' | 'NO_REAL_FAILURE_SIGNAL'
+  status: 'STABLE_ITERATION_VERIFIED' | 'NO_REAL_FAILURE_SIGNAL' | 'NO_ADMISSIBLE_CHILD'
   runId: string
   baselineTrials: number
   candidateTrials: number
@@ -334,6 +334,7 @@ export async function runStableDemo(
         })
       } else {
         let parent = caps.baseline
+        let noAdmissibleChild = false
         for (let generation = 1; generation <= 3; generation += 1) {
           events = await readAll(service.journal)
           const evidenceRefs = events
@@ -425,7 +426,13 @@ export async function runStableDemo(
             }
           }
           if (child === undefined) {
-            throw new Error(`stable engine: generation ${generation} exhausted 3 build attempts`)
+            await recordOnce(service, 'run:terminal', 'run.terminal', {
+              status: 'NO_ADMISSIBLE_CHILD',
+              generation,
+              attempts: 3,
+            })
+            noAdmissibleChild = true
+            break
           }
           await recordOnce(service, `candidate:${child.candidateId}`, 'candidate.admitted', {
             candidateId: child.candidateId,
@@ -470,9 +477,11 @@ export async function runStableDemo(
           )
           parent = child
         }
-        await recordOnce(service, 'run:terminal', 'run.terminal', {
-          status: 'STABLE_ITERATION_VERIFIED',
-        })
+        if (!noAdmissibleChild) {
+          await recordOnce(service, 'run:terminal', 'run.terminal', {
+            status: 'STABLE_ITERATION_VERIFIED',
+          })
+        }
       }
     }
 
