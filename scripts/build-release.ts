@@ -117,16 +117,8 @@ async function main(): Promise<void> {
     join(outDir, sourceName),
     'HEAD',
   ])
-  await exec(join(repoRoot, 'node_modules', '.bin', 'pnpm'), [
-    '--filter',
-    '@dsh-rsi/cli',
-    'pack',
-    '--pack-destination',
-    outDir,
-  ])
-  const licensesRaw = (
-    await exec(join(repoRoot, 'node_modules', '.bin', 'pnpm'), ['licenses', 'list', '--json'])
-  ).stdout
+  await exec('pnpm', ['--filter', '@dsh-rsi/cli', 'pack', '--pack-destination', outDir])
+  const licensesRaw = (await exec('pnpm', ['licenses', 'list', '--json'])).stdout
   const licenses = JSON.parse(licensesRaw) as Record<string, LicensePackage[]>
   const sbom = buildSpdxSbom(commit, licenses)
   await writeFile(join(outDir, 'sbom.spdx.json'), JSON.stringify(sbom, null, 2) + '\n')
