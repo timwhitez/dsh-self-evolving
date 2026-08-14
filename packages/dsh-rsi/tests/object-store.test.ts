@@ -39,6 +39,17 @@ describe('object store', () => {
     expect(a.digest).toBe(b.digest)
   })
 
+  it('binds label and media type immutably to the digest', async () => {
+    const bytes = new TextEncoder().encode('label-bound-content')
+    await publishBytes(store(), bytes, 'text/plain', 'DEV_OBSERVED')
+    await expect(publishBytes(store(), bytes, 'text/plain', 'SEALED')).rejects.toThrow(
+      /EVIDENCE_CORRUPT.*metadata/,
+    )
+    await expect(
+      publishBytes(store(), bytes, 'application/octet-stream', 'DEV_OBSERVED'),
+    ).rejects.toThrow(/EVIDENCE_CORRUPT.*metadata/)
+  })
+
   it('readBytes verifies integrity on read', async () => {
     const bytes = new TextEncoder().encode('integrity check')
     const ref = await publishBytes(store(), bytes, 'text/plain', 'DEV_OBSERVED')
@@ -73,6 +84,33 @@ describe('object store', () => {
     await writeFile(path, 'corrupted-bytes')
     const corrupt = await scrub(store())
     expect(corrupt).toContain(ref.digest)
+  })
+
+  it('read and scrub fail closed on tampered label metadata', async () => {
+    const ref = await publishBytes(
+      store(),
+      new TextEncoder().encode('metadata-clean'),
+      'text/plain',
+      'DEV_OBSERVED',
+    )
+    const metadataPath = join(
+      root!,
+      'objects',
+      'sha256',
+      ref.digest.slice(0, 2),
+      `${ref.digest}.meta.json`,
+    )
+    await writeFile(
+      metadataPath,
+      JSON.stringify({
+        digest: ref.digest,
+        size: ref.size,
+        mediaType: 'text/plain',
+        label: 'SEALED',
+      }),
+    )
+    await expect(readBytes(store(), ref.digest)).rejects.toThrow(/EVIDENCE_CORRUPT.*metadata/)
+    expect(await scrub(store())).toContain(ref.digest)
   })
 
   it('no-clobber: republishing different bytes under a colliding path is detected', async () => {

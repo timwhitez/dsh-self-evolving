@@ -11,7 +11,14 @@
  * filtered export.
  */
 import { createHash } from 'node:crypto'
-import type { ObjectRef, DataLabel } from '../object-store/index.js'
+import { chmod, mkdir, mkdtemp, open, rename, rm, stat } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import {
+  readRefBytes,
+  type ObjectStore,
+  type ObjectRef,
+  type DataLabel,
+} from '../object-store/index.js'
 
 export interface ExportEntry {
   digest: string
@@ -123,4 +130,72 @@ export function scanForCanaryLeaks(
     if (text.includes(c.token)) leaked.push(c.id)
   }
   return leaked
+}
+
+export interface MaterializeProposerExportInput {
+  store: ObjectStore
+  outDir: string
+  exportId: string
+  principal: `proposer:${string}`
+  objects: ObjectRef[]
+  createdFromStateHash: string | null
+}
+
+/**
+ * Materialize one atomic, read-only proposer view. Label policy is fixed here,
+ * not supplied by the proposer. Full immutable refs are checked against the
+ * store before any bytes are published into the view.
+ */
+export async function materializeProposerExport(
+  input: MaterializeProposerExportInput,
+): Promise<ExportManifest> {
+  if (!input.principal.startsWith('proposer:') || input.principal.length <= 'proposer:'.length) {
+    throw new Error('proposal export: action-scoped proposer principal required')
+  }
+  const output = resolve(input.outDir)
+  if ((await stat(output).catch(() => null)) !== null) {
+    throw new Error(`proposal export: destination already exists: ${output}`)
+  }
+  await mkdir(dirname(output), { recursive: true, mode: 0o700 })
+  const staging = await mkdtemp(join(dirname(output), '.proposal-export-'))
+  try {
+    const manifest = buildExport({
+      exportId: input.exportId,
+      principal: input.principal,
+      purpose: 'candidate-expansion',
+      allowedLabels: ['PUBLIC_SPEC', 'DEV_OBSERVED'],
+      objects: input.objects,
+      createdFromStateHash: input.createdFromStateHash,
+    })
+    const objectDir = join(staging, 'objects')
+    await mkdir(objectDir, { mode: 0o700 })
+    const refs = new Map(input.objects.map((ref) => [ref.digest, ref]))
+    for (const entry of manifest.objects) {
+      const ref = refs.get(entry.digest)
+      if (ref === undefined) throw new Error(`proposal export: missing ref ${entry.digest}`)
+      const bytes = await readRefBytes(input.store, ref)
+      const file = await open(join(objectDir, entry.digest), 'wx', 0o400)
+      try {
+        await file.writeFile(bytes)
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+    }
+    const manifestFile = await open(join(staging, 'manifest.json'), 'wx', 0o400)
+    try {
+      await manifestFile.writeFile(JSON.stringify(manifest, null, 2) + '\n')
+      await manifestFile.sync()
+    } finally {
+      await manifestFile.close()
+    }
+    await chmod(objectDir, 0o500)
+    await chmod(staging, 0o500)
+    await rename(staging, output)
+    return manifest
+  } catch (error) {
+    await chmod(staging, 0o700).catch(() => {})
+    await rm(staging, { recursive: true, force: true })
+    throw error
+  }
 }

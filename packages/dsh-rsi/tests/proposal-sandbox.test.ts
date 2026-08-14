@@ -13,6 +13,9 @@
  * Crucially, the policy decisions are pure functions — a prompt-injected trace
  * cannot change them.
  */
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   decideFsAccess,
@@ -20,6 +23,9 @@ import {
   enforceModelFirewall,
   canary,
   buildExport,
+  buildArchiveCatalog,
+  materializeProposerExport,
+  publishBytes,
   verifyExport,
   scanForCanaryLeaks,
   validateProposalBatch,
@@ -172,6 +178,102 @@ describe('label-filtered evidence export', () => {
     expect(scanForCanaryLeaks(leakedTranscript, [sealedCanary, guardCanary])).toEqual([
       'sealed-task-identity',
     ])
+  })
+
+  it('materializes an atomic read-only proposer view with only allowed object bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-export-'))
+    try {
+      const store = { root: join(root, 'store') }
+      const publicRef = await publishBytes(
+        store,
+        new TextEncoder().encode('public-bytes'),
+        'text/plain',
+        'PUBLIC_SPEC',
+      )
+      const devRef = await publishBytes(
+        store,
+        new TextEncoder().encode('dev-bytes'),
+        'text/plain',
+        'DEV_OBSERVED',
+      )
+      const sealedRef = await publishBytes(
+        store,
+        new TextEncoder().encode('sealed-canary-bytes'),
+        'text/plain',
+        'SEALED',
+      )
+      const outDir = join(root, 'exports', 'action-1')
+      const manifest = await materializeProposerExport({
+        store,
+        outDir,
+        exportId: 'export-action-1',
+        principal: 'proposer:action-1',
+        objects: [sealedRef, devRef, publicRef],
+        createdFromStateHash: 'sha256:state',
+      })
+      expect((await readdir(join(outDir, 'objects'))).sort()).toEqual(
+        [devRef.digest, publicRef.digest].sort(),
+      )
+      expect(JSON.stringify(manifest)).not.toContain(sealedRef.digest)
+      expect(await readFile(join(outDir, 'objects', devRef.digest), 'utf8')).toBe('dev-bytes')
+      expect((await stat(outDir)).mode & 0o222).toBe(0)
+      expect((await stat(join(outDir, 'manifest.json'))).mode & 0o222).toBe(0)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('DEV_OBSERVED-only archive catalog', () => {
+  const candidates = [
+    {
+      candidateId: 'c_parent',
+      canonicalParent: null,
+      donorCandidates: [],
+      status: 'DEV_OBSERVED' as const,
+    },
+  ]
+  const development = [
+    {
+      label: 'DEV_OBSERVED' as const,
+      candidateId: 'c_parent',
+      taskId: 'dev-task',
+      attemptIndex: 0,
+      reward: 0,
+      evidenceDigest: '1'.repeat(64),
+    },
+  ]
+
+  it('is noninterfering with guarded/sealed observations and exposes only dev raw refs', () => {
+    const clean = buildArchiveCatalog({ candidates, observations: development })
+    const contaminatedInput = buildArchiveCatalog({
+      candidates,
+      observations: [
+        ...development,
+        {
+          label: 'GUARDED',
+          candidateId: 'c_parent',
+          taskId: 'guard-canary-task',
+          attemptIndex: 0,
+          reward: 1,
+          evidenceDigest: '2'.repeat(64),
+        },
+        {
+          label: 'SEALED',
+          candidateId: 'c_parent',
+          taskId: 'sealed-canary-task',
+          attemptIndex: 0,
+          reward: 1,
+          evidenceDigest: '3'.repeat(64),
+        },
+      ],
+    })
+    expect(contaminatedInput).toEqual(clean)
+    expect(JSON.stringify(clean)).not.toContain('guard-canary')
+    expect(JSON.stringify(clean)).not.toContain('sealed-canary')
+    expect(clean.candidates[0]!.rawEvidenceDigests).toEqual(['1'.repeat(64)])
+    expect(clean.candidates[0]!.successes).toBe(0)
+    expect(clean.candidates[0]!.failures).toBe(1)
   })
 })
 

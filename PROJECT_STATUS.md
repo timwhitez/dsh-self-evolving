@@ -16,6 +16,15 @@ command、unload quiescence 和生成式 replay property tests 同时通过。
 当前最早失败门推进为 Gate 4：archive catalog 尚未证明只从 `DEV_OBSERVED` 派生，已有纯函数
 filesystem/network policy 也未构成真实 proposer 进程的 OS sandbox 验收。
 
+### Gate 4 successor 进行中（未验收）
+
+已完成 DEV-only archive catalog 非干扰、immutable label binding、action-scoped read-only raw
+export，以及 Bubblewrap 外层 proposal process sandbox（只读 inputs、唯一 child write root、空环境、
+无 network、PID namespace timeout drain、symlink 拒绝）。这些关闭了静态 catalog 与独立 OS
+sandbox 的工程缺口，但现有 `runProposalTurn` 尚未改为通过该外层 sandbox + brokered model gateway
+运行；本进程也没有 provider credential 进行真实模型 successor 复验。因此 Gate 4 继续
+`GATE_4_ACCEPTANCE_FAILED`，不得把两个分离测试拼接成已通过的生产路径。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP

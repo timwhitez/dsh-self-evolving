@@ -34,10 +34,94 @@ export interface ObjectStore {
   root: string
 }
 
+interface StoredObjectMetadata {
+  schemaVersion: 1
+  digest: string
+  size: number
+  mediaType: string
+  label: DataLabel
+  metadataHash: string
+}
+
 /** Two-level sharded path for a digest: objects/sha256/<aa>/<digest>. */
 function digestPath(root: string, digest: string): string {
   if (!/^[0-9a-f]{64}$/.test(digest)) throw new Error(`object-store: bad digest ${digest}`)
   return join(root, 'objects', 'sha256', digest.slice(0, 2), digest)
+}
+
+function metadataPath(root: string, digest: string): string {
+  return `${digestPath(root, digest)}.meta.json`
+}
+
+function metadataBody(
+  ref: Pick<ObjectRef, 'digest' | 'size' | 'mediaType' | 'label'>,
+): Omit<StoredObjectMetadata, 'metadataHash'> {
+  return {
+    schemaVersion: 1,
+    digest: ref.digest,
+    size: ref.size,
+    mediaType: ref.mediaType,
+    label: ref.label,
+  }
+}
+
+function createMetadata(ref: ObjectRef): StoredObjectMetadata {
+  const body = metadataBody(ref)
+  return {
+    ...body,
+    metadataHash: createHash('sha256').update(JSON.stringify(body)).digest('hex'),
+  }
+}
+
+async function readMetadata(store: ObjectStore, digest: string): Promise<StoredObjectMetadata> {
+  const { readFile } = await import('node:fs/promises')
+  let parsed: StoredObjectMetadata
+  try {
+    parsed = JSON.parse(
+      await readFile(metadataPath(store.root, digest), 'utf8'),
+    ) as StoredObjectMetadata
+  } catch (error) {
+    throw new Error(`EVIDENCE_CORRUPT: metadata missing or invalid for object ${digest}`, {
+      cause: error,
+    })
+  }
+  const validLabels: DataLabel[] = ['PUBLIC_SPEC', 'DEV_OBSERVED', 'GUARDED', 'SEALED']
+  const body = metadataBody(parsed)
+  const recomputed = createHash('sha256').update(JSON.stringify(body)).digest('hex')
+  if (
+    parsed.schemaVersion !== 1 ||
+    parsed.digest !== digest ||
+    !Number.isSafeInteger(parsed.size) ||
+    parsed.size < 0 ||
+    typeof parsed.mediaType !== 'string' ||
+    !validLabels.includes(parsed.label) ||
+    parsed.metadataHash !== recomputed
+  ) {
+    throw new Error(`EVIDENCE_CORRUPT: metadata mismatch for object ${digest}`)
+  }
+  return parsed
+}
+
+async function publishMetadata(store: ObjectStore, ref: ObjectRef): Promise<void> {
+  const path = metadataPath(store.root, ref.digest)
+  const expected = createMetadata(ref)
+  const bytes = JSON.stringify(expected) + '\n'
+  let file
+  try {
+    file = await open(path, 'wx', 0o600)
+    await file.writeFile(bytes)
+    await file.sync()
+    await file.close()
+  } catch (error) {
+    await file?.close().catch(() => {})
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const existing = await readMetadata(store, ref.digest)
+    if (JSON.stringify(existing) !== JSON.stringify(expected)) {
+      throw new Error(`EVIDENCE_CORRUPT: immutable metadata conflict for object ${ref.digest}`, {
+        cause: error,
+      })
+    }
+  }
 }
 
 /**
@@ -51,6 +135,7 @@ export async function publishBytes(
   label: DataLabel,
 ): Promise<ObjectRef> {
   const digest = createHash('sha256').update(bytes).digest('hex')
+  const ref: ObjectRef = { algorithm: 'sha256', digest, size: bytes.length, mediaType, label }
   const finalPath = digestPath(store.root, digest)
   const existing = await stat(finalPath).catch(() => null)
   if (existing) {
@@ -58,7 +143,14 @@ export async function publishBytes(
     if (existing.size !== bytes.length) {
       throw new Error(`EVIDENCE_CORRUPT: size mismatch for existing object ${digest}`)
     }
-    return { algorithm: 'sha256', digest, size: bytes.length, mediaType, label }
+    const existingMetadata = await readMetadata(store, digest)
+    if (JSON.stringify(existingMetadata) !== JSON.stringify(createMetadata(ref))) {
+      throw new Error(`EVIDENCE_CORRUPT: immutable metadata conflict for object ${digest}`)
+    }
+    if (!(await verifyEqualityBytes(bytes, finalPath))) {
+      throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`)
+    }
+    return ref
   }
   // Stage → fsync → rename (no-clobber via link).
   const stagingDir = join(store.root, 'objects', 'sha256', '.staging')
@@ -72,6 +164,10 @@ export async function publishBytes(
     await fh.close()
   }
   await mkdir(join(finalPath, '..'), { recursive: true })
+  // The immutable label/media binding wins before bytes become addressable.
+  // A crash between these steps leaves a detectable/retryable metadata-only
+  // record; it can never publish the same digest under a different label.
+  await publishMetadata(store, ref)
   // no-clobber: link first (atomic on same fs); if it exists, verify.
   try {
     await link(stagingPath, finalPath)
@@ -91,7 +187,17 @@ export async function publishBytes(
   await rm(stagingPath, { force: true })
   // fsync the parent directory so the rename/link survives a crash.
   await fsyncDir(join(finalPath, '..'))
-  return { algorithm: 'sha256', digest, size: bytes.length, mediaType, label }
+  return ref
+}
+
+async function verifyEqualityBytes(bytes: Uint8Array, path: string): Promise<boolean> {
+  const { readFile } = await import('node:fs/promises')
+  const existing = await readFile(path)
+  return (
+    existing.byteLength === bytes.byteLength &&
+    createHash('sha256').update(existing).digest('hex') ===
+      createHash('sha256').update(bytes).digest('hex')
+  )
 }
 
 async function verifyEquality(a: string, b: string): Promise<boolean> {
@@ -126,12 +232,26 @@ async function fsyncDir(dir: string): Promise<void> {
 export async function readBytes(store: ObjectStore, digest: string): Promise<Uint8Array> {
   const { readFile } = await import('node:fs/promises')
   const data = await readFile(digestPath(store.root, digest))
+  const metadata = await readMetadata(store, digest)
   // Integrity check on read.
   const actual = createHash('sha256').update(data).digest('hex')
   if (actual !== digest) {
     throw new Error(`EVIDENCE_CORRUPT: object ${digest} hashes to ${actual}`)
   }
+  if (metadata.size !== data.byteLength) {
+    throw new Error(`EVIDENCE_CORRUPT: metadata size mismatch for object ${digest}`)
+  }
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+}
+
+/** Read bytes and verify the caller's full immutable reference metadata. */
+export async function readRefBytes(store: ObjectStore, ref: ObjectRef): Promise<Uint8Array> {
+  if (ref.algorithm !== 'sha256') throw new Error('object-store: unsupported reference algorithm')
+  const metadata = await readMetadata(store, ref.digest)
+  if (JSON.stringify(metadata) !== JSON.stringify(createMetadata(ref))) {
+    throw new Error(`EVIDENCE_CORRUPT: reference metadata mismatch for object ${ref.digest}`)
+  }
+  return readBytes(store, ref.digest)
 }
 
 /**
@@ -139,7 +259,7 @@ export async function readBytes(store: ObjectStore, digest: string): Promise<Uin
  * digests (empty = healthy). A non-empty result means EVIDENCE_CORRUPT.
  */
 export async function scrub(store: ObjectStore): Promise<string[]> {
-  const corrupt: string[] = []
+  const corrupt = new Set<string>()
   const { readFile } = await import('node:fs/promises')
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true })
@@ -149,14 +269,25 @@ export async function scrub(store: ObjectStore): Promise<string[]> {
       else if (e.isFile() && /^[0-9a-f]{64}$/.test(e.name)) {
         const data = await readFile(abs)
         const actual = createHash('sha256').update(data).digest('hex')
-        if (actual !== e.name) corrupt.push(e.name)
+        if (actual !== e.name) corrupt.add(e.name)
+        try {
+          const metadata = await readMetadata(store, e.name)
+          if (metadata.size !== data.byteLength) corrupt.add(e.name)
+        } catch {
+          corrupt.add(e.name)
+        }
+      } else if (e.isFile() && /^[0-9a-f]{64}\.meta\.json$/.test(e.name)) {
+        const digest = e.name.slice(0, 64)
+        if ((await stat(digestPath(store.root, digest)).catch(() => null)) === null) {
+          corrupt.add(digest)
+        }
       }
     }
   }
   const objectsRoot = join(store.root, 'objects', 'sha256')
   await mkdir(objectsRoot, { recursive: true })
   await walk(objectsRoot)
-  return corrupt
+  return [...corrupt].sort()
 }
 
 /** Check whether a digest exists in the store. */

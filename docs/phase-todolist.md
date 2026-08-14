@@ -92,7 +92,7 @@
 - [x] proposal sandbox：filesystem/network/model gateway policy（parent/evidence 只读，仅 child root 可写）
 - [x] parent candidate 以 `propose` mode 经真实 Loader 装载，proposer 用 `ctx.agents.create({ setup })`
 - [x] label-filtered evidence export（manifest + Merkle root + guard/sealed canary absence receipt）
-- [ ] archive catalog 导出：统计只从 `DEV_OBSERVED` 派生，无 guard/sealed 衍生数字
+- [x] archive catalog 导出：统计只从 `DEV_OBSERVED` 派生，无 guard/sealed 衍生数字
 - [x] proposal 输出协议：width=3、hypothesis 去重、donor provenance、no-change/test-only 拒绝
 - [x] builder handoff + rejected proposal 证据保留
 - [x] 安全测试：proposer 读不到 controller/canary/credentials/sibling；trace prompt-injection fixture 不能改变 policy
@@ -105,6 +105,12 @@
 > `real-model-propose.e2e.ts` 绿。parse+protocol 8 绿；prompt-injection 安全 5 绿（policy 纯函数不被注入改变；
 > canary leak 检出；model firewall 拒 route override）。注：archive catalog 导出（统计只从 DEV_OBSERVED 派生）
 > 随 Gate 5 搜索/统计层实现；evidence export 的 label 过滤已就位。
+>
+> **successor 工程进展（2026-08-14，未验收）**：catalog 对 GUARDED/SEALED observation 满足逐字节
+> 非干扰；raw object export 固定为 PUBLIC_SPEC+DEV_OBSERVED、action-scoped、只读且 label/media
+> 与 digest 不可变。Bubblewrap E2E 强制只读 inputs、唯一 child write root、空 credential 环境、
+> 独立 PID/network namespace、timeout drain 与 symlink 拒绝。剩余：将真实 DSH model turn 接到该
+> sandbox 的 brokered Unix gateway；当前无 provider credential，Gate 4 仍 fail closed。
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 

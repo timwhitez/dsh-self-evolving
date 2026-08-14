@@ -1,6 +1,7 @@
 export {
   publishBytes,
   readBytes,
+  readRefBytes,
   scrub,
   exists,
   atomicRenameWithDirSync,
