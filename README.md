@@ -66,9 +66,7 @@ Terminal-Bench K=10/K=80 搜索、29-task sealed confirmation、89×≥5 full-se
 完整步骤见 [`docs/quickstart.md`](docs/quickstart.md)。最短命令面：
 
 ```bash
-pnpm bootstrap:upstreams
-pnpm install --frozen-lockfile
-pnpm build
+pnpm setup:source
 pnpm dsh-rsi init --run-id demo-1 --state-dir /var/lib/dsh-rsi-controller/demo-1 --repo-root "$PWD"
 pnpm dsh-rsi doctor --state-dir /var/lib/dsh-rsi-controller/demo-1
 pnpm dsh-rsi run --state-dir /var/lib/dsh-rsi-controller/demo-1

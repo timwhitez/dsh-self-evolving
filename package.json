@@ -21,6 +21,7 @@
     "upstream:check": "tsx scripts/check-upstream-clean.ts",
     "byteequal:check": "tsx scripts/check-byte-equal.ts",
     "bootstrap:upstreams": "node scripts/bootstrap-upstreams.mjs",
+    "setup:source": "node scripts/setup-source.mjs",
     "dsh-rsi": "node packages/dsh-rsi-cli/lib/cli.js",
     "release:build": "tsx scripts/build-release.ts",
     "release:check": "tsx scripts/check-release-readiness.ts"

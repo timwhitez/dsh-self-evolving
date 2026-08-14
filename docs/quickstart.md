@@ -19,14 +19,12 @@ pinned DSH and local workspace closure bootstrapped below.
 
 ```bash
 corepack enable
-pnpm bootstrap:upstreams
-pnpm install --frozen-lockfile
-pnpm build
-pnpm provenance:check
+pnpm setup:source
 ```
 
-`bootstrap:upstreams` clones the three public upstream repositories at the commits in `provenance.lock.json`. It
-refuses an existing checkout with a different remote or dirty worktree.
+`setup:source` clones the three public upstream repositories at the commits in `provenance.lock.json`, installs and
+builds DSH, creates the pinned Harbor environment, installs and builds the local workspace, then checks provenance.
+It refuses an existing upstream checkout with a different remote or dirty worktree.
 
 ## Create and inspect a stable demo
 
