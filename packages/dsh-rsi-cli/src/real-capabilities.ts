@@ -123,13 +123,19 @@ async function realProposal(
   config: StableDemoConfig,
   input: StableProposalInput,
 ): Promise<StableProposal> {
-  const artifactDir = join(config.stateDir, 'artifacts', `proposal-${input.generation}`)
+  const artifactDir = join(
+    config.stateDir,
+    'artifacts',
+    `proposal-${input.generation}-${input.attempt}`,
+  )
   const outputPath = join(artifactDir, 'proposal.json')
   const existing = await readFile(outputPath, 'utf8').catch(() => null)
   if (existing !== null) return JSON.parse(existing) as StableProposal
   await mkdir(artifactDir, { recursive: true, mode: 0o700 })
   const runtimeRoot = await prepareProposalRuntime(config)
-  const scratch = await mkdtemp(join(config.stateDir, `.proposal-${input.generation}-`))
+  const scratch = await mkdtemp(
+    join(config.stateDir, `.proposal-${input.generation}-${input.attempt}-`),
+  )
   const route = await loadTrustedRoute()
   const lockedRoute: ProposalGatewayRoute = {
     provider: 'deepseek',
@@ -245,7 +251,10 @@ async function realBuild(
   if ((await stat(candidateRoot).catch(() => null)) !== null) {
     throw new Error(`real builder: incomplete prior candidate directory ${candidateRoot}`)
   }
-  const stagingRoot = `${candidateRoot}.staging`
+  const stagingRoot = `${candidateRoot}.attempt-${input.attempt}.staging`
+  if ((await stat(stagingRoot).catch(() => null)) !== null) {
+    throw new Error(`real builder: incomplete prior staging directory ${stagingRoot}`)
+  }
   await mkdir(join(stagingRoot, 'src'), { recursive: true, mode: 0o700 })
   for (const relative of SOURCE_FILES) {
     if (relative === 'src/index.ts' || relative === 'tsconfig.json') continue

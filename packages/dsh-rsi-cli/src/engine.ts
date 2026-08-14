@@ -1,4 +1,5 @@
 import { open, readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import * as RsiBundle from '@dsh-rsi/core'
@@ -34,6 +35,7 @@ export interface StableProposal {
 
 export interface StableProposalInput {
   generation: number
+  attempt: number
   parent: BuiltCandidate
   evidenceRefs: string[]
   idempotencyKey: string
@@ -41,6 +43,7 @@ export interface StableProposalInput {
 
 export interface StableBuildInput {
   generation: number
+  attempt: number
   parent: BuiltCandidate
   proposal: StableProposal
   idempotencyKey: string
@@ -314,35 +317,55 @@ export async function runStableDemo(
                 : []
               return [...rawRefs.map((value) => `object:${value}`), `journal:${event.eventHash}`]
             })
-          const proposalEventId = `proposal:${generation}:completed`
-          let proposal = eventPayload<StableProposal>(events, proposalEventId)
-          if (proposal === undefined) {
-            proposal = await caps.propose({
-              generation,
-              parent,
-              evidenceRefs,
-              idempotencyKey: `${config.runId}/proposal/${generation}/${parent.candidateId}`,
-            })
-            if (
-              proposal.parentCandidateId !== parent.candidateId ||
-              proposal.evidenceRefs.length === 0
-            ) {
-              throw new Error('stable engine: proposer did not bind parent and raw evidence')
+          let child: BuiltCandidate | undefined
+          for (let attempt = 1; attempt <= 3 && child === undefined; attempt += 1) {
+            const proposalEventId = `proposal:${generation}:${attempt}:completed`
+            events = await readAll(service.journal)
+            let proposal = eventPayload<StableProposal>(events, proposalEventId)
+            if (proposal === undefined) {
+              proposal = await caps.propose({
+                generation,
+                attempt,
+                parent,
+                evidenceRefs,
+                idempotencyKey: `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`,
+              })
+              if (
+                proposal.parentCandidateId !== parent.candidateId ||
+                proposal.evidenceRefs.length === 0
+              ) {
+                throw new Error('stable engine: proposer did not bind parent and raw evidence')
+              }
+              await recordOnce(service, proposalEventId, 'proposal.completed', proposal)
             }
-            await recordOnce(service, proposalEventId, 'proposal.completed', proposal)
+            const buildEventId = `build:${generation}:${attempt}:completed`
+            events = await readAll(service.journal)
+            child = eventPayload<BuiltCandidate>(events, buildEventId)
+            if (child !== undefined) continue
+            const rejectionId = `build:${generation}:${attempt}:rejected`
+            if (eventPayload(events, rejectionId) !== undefined) continue
+            try {
+              child = await caps.build({
+                generation,
+                attempt,
+                parent,
+                proposal,
+                idempotencyKey: `${config.runId}/build/${generation}/${attempt}/${proposal.artifactDigest}`,
+              })
+              assertCandidate(child)
+              await recordOnce(service, buildEventId, 'build.completed', child)
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'unknown build rejection'
+              await recordOnce(service, rejectionId, 'build.rejected', {
+                generation,
+                attempt,
+                proposalId: proposal.proposalId,
+                errorDigest: `sha256:${createHash('sha256').update(message).digest('hex')}`,
+              })
+            }
           }
-          const buildEventId = `build:${generation}:completed`
-          events = await readAll(service.journal)
-          let child = eventPayload<BuiltCandidate>(events, buildEventId)
           if (child === undefined) {
-            child = await caps.build({
-              generation,
-              parent,
-              proposal,
-              idempotencyKey: `${config.runId}/build/${generation}/${proposal.artifactDigest}`,
-            })
-            assertCandidate(child)
-            await recordOnce(service, buildEventId, 'build.completed', child)
+            throw new Error(`stable engine: generation ${generation} exhausted 3 build attempts`)
           }
           await recordOnce(service, `candidate:${child.candidateId}`, 'candidate.admitted', {
             candidateId: child.candidateId,

@@ -141,3 +141,16 @@ self-modification. Run `stable-demo-20260814-v2` was stopped before candidate ge
 
 **Consequence:** incomplete staging directories fail closed, and every successor candidate's source digest covers the
 actual model-proposed production patch.
+
+## ADR-014 — Bounded replacement after build rejection
+
+**Decision:** stable-demo config schema v4 allows at most three proposal/build attempts per generation. Every rejected
+build records its proposal identity and a content-only error digest; the next attempt receives the same frozen raw
+evidence and canonical parent. A successful build ends the generation's replacement loop.
+
+**Why:** v3 could preserve a deterministic compile rejection but resume would request the same proposal forever.
+That is auditable but not live. Run `stable-demo-20260814-v3` was stopped during baseline and marked
+`QUARANTINED_BUILD_REJECT_LIVENESS_GAP`; no evidence is reused.
+
+**Consequence:** at most nine proposer calls can produce the three admitted children, while the paid solver envelope
+remains unchanged at 15 trials. Exhausting three build attempts fails closed and requires a successor.

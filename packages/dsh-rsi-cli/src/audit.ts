@@ -98,7 +98,8 @@ export async function auditStableRun(config: StableDemoConfig): Promise<StableAu
   }
   const proposals = events.filter((event) => event.type === 'proposal.completed')
   if (
-    proposals.length !== 3 ||
+    proposals.length < 3 ||
+    proposals.length > 9 ||
     proposals.some((event) => {
       const refs = (event.payload as { evidenceRefs?: unknown }).evidenceRefs
       return (

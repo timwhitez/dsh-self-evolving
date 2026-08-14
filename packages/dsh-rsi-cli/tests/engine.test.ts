@@ -53,12 +53,12 @@ async function fixture(): Promise<{
     async propose(input): Promise<StableProposal> {
       counters.proposals += 1
       return {
-        proposalId: `proposal-${input.generation}`,
+        proposalId: `proposal-${input.generation}-${input.attempt}`,
         parentCandidateId: input.parent.candidateId,
         hypothesis: `generation ${input.generation} bounded recovery mechanism`,
         sourceDiff: `@@ generation ${input.generation}`,
         evidenceRefs: input.evidenceRefs,
-        artifactDigest: digest(`proposal-${input.generation}`),
+        artifactDigest: digest(`proposal-${input.generation}-${input.attempt}`),
       }
     },
     async build(input): Promise<BuiltCandidate> {
@@ -151,6 +151,24 @@ describe('stable-demo engine', () => {
     expect(result.solverTrials).toBe(12)
     expect(counters.proposals).toBe(0)
     expect(counters.builds).toBe(0)
+  })
+
+  it('records a build reject and admits a bounded replacement proposal', async () => {
+    const { config, counters, capabilities } = await fixture()
+    const originalBuild = capabilities.build
+    let rejected = false
+    capabilities.build = async (input) => {
+      if (!rejected) {
+        rejected = true
+        counters.builds += 1
+        throw new Error('fixture compile reject')
+      }
+      return originalBuild(input)
+    }
+    const result = await runStableDemo(config, capabilities)
+    expect(result.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(counters.proposals).toBe(4)
+    expect(counters.builds).toBe(4)
   })
 
   it('fails before any external effect when preflight is not ready', async () => {
