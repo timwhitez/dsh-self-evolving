@@ -367,6 +367,33 @@ export function mapNormalizedStatus(status: unknown): 'pass' | 'fail' | 'invalid
   throw new Error(`real evaluator: unknown normalized status ${JSON.stringify(status)}`)
 }
 
+export function selectEfficientObservedTasks(
+  observedTaskIds: string[],
+  inventory: Array<{ taskId: string; agentTimeoutSec: number }>,
+): string[] {
+  if (new Set(observedTaskIds).size !== observedTaskIds.length) {
+    throw new Error('real capabilities: duplicate observed task id')
+  }
+  const byId = new Map(inventory.map((task) => [task.taskId, task]))
+  const tasks = observedTaskIds.map((taskId) => {
+    const task = byId.get(taskId)
+    if (
+      task === undefined ||
+      !Number.isSafeInteger(task.agentTimeoutSec) ||
+      task.agentTimeoutSec <= 0
+    ) {
+      throw new Error(`real capabilities: invalid inventory task ${taskId}`)
+    }
+    return task
+  })
+  return tasks
+    .sort(
+      (left, right) =>
+        left.agentTimeoutSec - right.agentTimeoutSec || left.taskId.localeCompare(right.taskId),
+    )
+    .map((task) => task.taskId)
+}
+
 function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec) {
   const runId = evaluatorRunId(config, spec)
   return {
@@ -454,16 +481,23 @@ export async function createRealCapabilities(
       evidenceRefs: [],
     },
     async observedTaskIds() {
-      const split = JSON.parse(await readFile(config.splitCommitmentPath, 'utf8')) as {
-        observedTaskIds?: unknown
-      }
+      const [split, inventory] = (await Promise.all([
+        readFile(config.splitCommitmentPath, 'utf8').then((raw) => JSON.parse(raw)),
+        readFile(config.inventoryPath, 'utf8').then((raw) => JSON.parse(raw)),
+      ])) as [{ observedTaskIds?: unknown }, { tasks?: unknown }]
       if (
         !Array.isArray(split.observedTaskIds) ||
         split.observedTaskIds.some((id) => typeof id !== 'string')
       ) {
         throw new Error('real capabilities: observed split is invalid')
       }
-      return split.observedTaskIds as string[]
+      if (!Array.isArray(inventory.tasks)) {
+        throw new Error('real capabilities: task inventory is invalid')
+      }
+      return selectEfficientObservedTasks(
+        split.observedTaskIds as string[],
+        inventory.tasks as Array<{ taskId: string; agentTimeoutSec: number }>,
+      )
     },
     propose: (input) => realProposal(config, input),
     build: (input) => realBuild(config, input),

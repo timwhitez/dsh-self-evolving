@@ -167,3 +167,16 @@ marked `QUARANTINED_NORMALIZER_STATUS_CASE_MISMATCH`; its results are not reused
 
 **Consequence:** a real one-task adapter smoke must compare raw summary, collected observation and journal projection
 before another multi-task successor starts.
+
+## ADR-016 — Outcome-blind low-wall-time observed panel
+
+**Decision:** stable-demo config schema v6 orders only the published `DEV_OBSERVED` inventory by
+`agentTimeoutSec ASC, taskId ASC` before taking fixed batches of six. Timeout metadata is frozen before all outcomes;
+guard/sealed tasks can never enter the sort input.
+
+**Why:** v5 reached an observed task with a 3600-second allowance while many published observed tasks had 600–900
+second limits. Split-file order was deterministic but unnecessarily expensive for an engineering proof. Run
+`stable-demo-20260814-v5` was stopped and marked `QUARANTINED_INEFFICIENT_TASK_PANEL`; its results are not reused.
+
+**Consequence:** selection remains outcome-blind and preregistered while reducing worst-case first-batch wall time.
+The solver-trial ceiling and model token settings do not change.

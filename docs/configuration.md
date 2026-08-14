@@ -1,6 +1,6 @@
 # Configuration
 
-`dsh-rsi init` writes a private, no-replace `config.json` with schema version 5. The file contains no credential.
+`dsh-rsi init` writes a private, no-replace `config.json` with schema version 6. The file contains no credential.
 Changing an identity or limit requires a new state directory and run ID.
 
 | Field                      | Stable-demo value                       |
@@ -8,6 +8,7 @@ Changing an identity or limit requires a new state directory and run ID.
 | profile                    | `stable-demo`                           |
 | admitted children          | 3                                       |
 | baseline failure discovery | at most 12, in fixed batches of 6       |
+| observed task order        | shortest timeout, then task ID          |
 | candidate trials           | 3                                       |
 | total solver trials        | at most 15                              |
 | evaluator concurrency      | 1                                       |
