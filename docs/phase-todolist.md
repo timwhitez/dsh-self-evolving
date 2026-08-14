@@ -188,6 +188,11 @@
 
 ## Phase 8 — Sealed 确认、full-set 评测与发布（Gate 8，2–5 天 + runtime/review）
 
+> **evidence verifier 已完成（2026-08-14）**：完整 29×k paired identity/matrix、single reveal、
+> 100k bootstrap、promotion state、89×≥5 fixed-capsule full set 与 release receipts 均为硬门。
+> 当前 `BLOCKED_NOT_STARTED`：candidate lock=null、reveal=0、sealed/full trials=0，未产生 promotion
+> 或 release claim；证据见 `evidence/gate8/STATUS.json`。
+
 - [ ] 验证 split commitment + candidate lock；baseline/candidate 29×`k_sealed` 配对交错运行，无中间适应
 - [ ] 冻结分析容器计算 `Delta`/95% CI/regression 表；准确赋予 `SEALED_PROMOTED`/`PROMISING_NOT_CONFIRMED`/`SEALED_REJECTED`
 - [ ] 自动 100% trial 审计 + 预注册人工轨迹审查（sealed 全部 PASS + regressions + 20% 抽样）

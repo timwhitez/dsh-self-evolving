@@ -33,6 +33,12 @@ export interface CandidateLockIdentity {
   sourceDigest: string
   capsuleDigest: string
   runManifestDigest: string
+  baselineCandidateId: string
+  baselineCapsuleDigest: string
+  modelRouteHash: string
+  protocolHash: string
+  sealedPlanHash: string
+  analysisContainerHash: string
 }
 
 export interface LockRequest {
@@ -415,6 +421,12 @@ function validateIdentity(identity: CandidateLockIdentity): void {
     'sourceDigest',
     'capsuleDigest',
     'runManifestDigest',
+    'baselineCandidateId',
+    'baselineCapsuleDigest',
+    'modelRouteHash',
+    'protocolHash',
+    'sealedPlanHash',
+    'analysisContainerHash',
   ] as const) {
     validateDigest(identity[field], field)
   }

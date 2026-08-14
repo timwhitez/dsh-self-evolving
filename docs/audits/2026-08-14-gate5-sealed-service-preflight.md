@@ -21,7 +21,8 @@ The controller view contains 48 observed task IDs, 12 opaque guard handles, a se
 the Merkle commitment, input/splitter hashes, and worker/process/store identity. It contains neither
 the seed nor the guard/sealed mapping.
 
-Candidate lock atomically binds run, candidate, source, capsule, run-manifest, ceremony, and split
+Candidate lock atomically binds run, candidate, source, capsule, run-manifest, baseline candidate/
+capsule, model route, evaluation protocol, sealed plan, analysis container, ceremony, and split
 Merkle identities. Repeating the same lock is idempotent; a different identity is rejected. Once
 the private lock is durable, all subsequent proposer/selector authorization requests are rejected.
 Missing public receipts are reconstructed from private state; conflicting public bytes and symlinks

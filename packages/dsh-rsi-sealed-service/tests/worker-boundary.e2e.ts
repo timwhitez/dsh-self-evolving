@@ -67,6 +67,12 @@ describe('sealed worker OS/process boundary', () => {
       sourceDigest: digest('source-e2e'),
       capsuleDigest: digest('capsule-e2e'),
       runManifestDigest: digest('manifest-e2e'),
+      baselineCandidateId: digest('baseline-candidate-e2e'),
+      baselineCapsuleDigest: digest('baseline-capsule-e2e'),
+      modelRouteHash: digest('model-route-e2e'),
+      protocolHash: digest('protocol-e2e'),
+      sealedPlanHash: digest('sealed-plan-e2e'),
+      analysisContainerHash: digest('analysis-container-e2e'),
     }
     await invokeSealedWorker(workerPath, {
       operation: 'lock',

@@ -55,6 +55,12 @@ function lockIdentity(): CandidateLockIdentity {
     sourceDigest: digest('source'),
     capsuleDigest: digest('capsule'),
     runManifestDigest: digest('manifest'),
+    baselineCandidateId: digest('baseline-candidate'),
+    baselineCapsuleDigest: digest('baseline-capsule'),
+    modelRouteHash: digest('model-route'),
+    protocolHash: digest('protocol'),
+    sealedPlanHash: digest('sealed-plan'),
+    analysisContainerHash: digest('analysis-container'),
   }
 }
 

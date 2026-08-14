@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "status": "BLOCKED_NOT_STARTED",
+  "candidateLock": null,
+  "revealCount": 0,
+  "preLockSealedAccessCount": 0,
+  "sealedTrialCount": 0,
+  "fullSetTrialCount": 0,
+  "promotionState": "NOT_EVALUATED",
+  "release": null,
+  "blockers": [
+    "Gate 7 formal search was not authorized or started and has no SEARCH_COMPLETE receipt.",
+    "No positive development champion or fully bound signed candidate lock exists.",
+    "No single-reveal receipt, 29 x k paired sealed evidence, frozen analysis result, or audit exists."
+  ],
+  "claimBoundary": [
+    "SEALED_NOT_ACCESSED",
+    "NO_PROMOTION_DECISION",
+    "FULL_SET_NOT_STARTED",
+    "NO_RELEASE"
+  ]
+}

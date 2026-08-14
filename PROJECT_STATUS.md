@@ -60,6 +60,15 @@ receipts。当前所有缺口 fail closed 为 `BLOCKED_NOT_STARTED`；未创建 
 80-candidate search，sealed access 为 0。详见
 [`docs/audits/2026-08-14-gate7-preflight.md`](docs/audits/2026-08-14-gate7-preflight.md)。
 
+## Gate 8 evidence verifier
+
+新增 sealed/full/release fail-closed verifier：重建完整 29×k paired matrix，固定至少 100,000 次
+task-cluster bootstrap 与 5pp/CI 门槛；candidate lock 绑定 baseline/model/protocol/plan/analysis/split；
+只有 `SEALED_PROMOTED` 才允许固定 capsule 的 89×≥5 full set，并要求 fresh-profile、Loader、SBOM、
+provenance、rollback 与 public leak-scan receipts。当前权威状态仍是 `BLOCKED_NOT_STARTED`：无正式
+candidate lock、reveal count=0、sealed/full trials=0、无 promotion/release。详见
+[`docs/audits/2026-08-14-gate8-verifier.md`](docs/audits/2026-08-14-gate8-verifier.md)。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP

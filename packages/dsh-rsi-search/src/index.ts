@@ -50,6 +50,13 @@ export {
   type FormalRunManifest,
 } from './formal-preflight.js'
 export {
+  verifyGate8Evidence,
+  type FullSetTrialEvidence,
+  type Gate8EvidenceInput,
+  type Gate8EvidenceVerdict,
+  type SealedTrialEvidence,
+} from './gate8-acceptance.js'
+export {
   buildBudgetModel,
   DEFAULT_TARGETS,
   type CalibrationSample,
