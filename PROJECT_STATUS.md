@@ -1,7 +1,10 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTANCE_FAILED`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTANCE_FAILED`; `GATE_5_NOT_ACCEPTED`; `GATE_6_NOT_ACCEPTED`; `GATE_7_BLOCKED_NOT_STARTED`; `GATE_8_BLOCKED_NOT_STARTED`**
 **更新时间：2026-08-14（Asia/Tokyo）**
+
+最终 gate/commit/identity/test/blocker 对账见
+[`docs/audits/2026-08-14-final-disposition.md`](docs/audits/2026-08-14-final-disposition.md)。
 
 ## Gate 3 successor（已验收）
 
@@ -13,22 +16,16 @@ command、unload quiescence 和生成式 replay property tests 同时通过。
 
 完整证据见
 [`docs/audits/2026-08-14-gate3-successor.md`](docs/audits/2026-08-14-gate3-successor.md)。
-当前最早失败门推进为 Gate 4：archive catalog 尚未证明只从 `DEV_OBSERVED` 派生，已有纯函数
-filesystem/network policy 也未构成真实 proposer 进程的 OS sandbox 验收。
 
 ### Gate 4 successor 进行中（未验收）
 
 已完成 DEV-only archive catalog 非干扰、immutable label binding、action-scoped read-only raw
 export，以及 Bubblewrap 外层 proposal process sandbox（只读 inputs、唯一 child write root、空环境、
-无 network、PID namespace timeout drain、symlink 拒绝）。这些关闭了静态 catalog 与独立 OS
-sandbox 的工程缺口，但现有 `runProposalTurn` 尚未改为通过该外层 sandbox + brokered model gateway
-运行；本进程也没有 provider credential 进行真实模型 successor 复验。因此 Gate 4 继续
-`GATE_4_ACCEPTANCE_FAILED`，不得把两个分离测试拼接成已通过的生产路径。
+无 network、PID namespace timeout drain、symlink 拒绝）。
 
 固定 route 的 Unix-socket gateway 与 DSH `LlmAdapter` 已实现：sandbox 保持无 IP network/无
 credential，可信宿主 handler 锁 provider/endpoint/model/reasoning/maxTokens，拒绝 headers 等额外
-transport 字段，并按 request hash 幂等返回、记录 content-free receipt。剩余集成点进一步收窄为：
-在 Bubblewrap 内启动真实 DSH proposer composition，并通过该 adapter 完成有凭据 successor turn。
+transport 字段，并按 request hash 幂等返回、记录 content-free receipt。
 
 该集成点的 model-free 路径现已闭合：immutable runtime 中的真实 Cordis agent-spine、baseline
 propose-mode candidate、GatewayAdapter、session loop 和 proposal parser 已在 Bubblewrap 内通过固定
@@ -79,8 +76,6 @@ initialize/prompt/verifier，生成原生 `agent/trajectory.json`、`acp-events.
 
 完整证据见
 [`docs/audits/2026-08-14-gate2-successor.md`](docs/audits/2026-08-14-gate2-successor.md)。
-当前最早失败门推进为 Gate 3：controller 尚非 DSH bundle/`ctx.rsi` service，已有 crash 测试
-仍是内存级边界模拟，且 journal lock 的检查与创建不是原子的。
 
 ## Gate 1 successor（已验收）
 
@@ -91,8 +86,6 @@ initialize/session/prompt。验收同时在独立 network namespace 与 fresh `F
 
 完整证据见
 [`docs/audits/2026-08-14-gate1-successor.md`](docs/audits/2026-08-14-gate1-successor.md)。
-当前最早失败门推进为 Gate 2：既有 Harbor smoke 仍是脚本 agent，不是真实 packed DSH candidate
-经 Harbor ACP client 的运行。
 
 ## 2026-08-14 独立验收审计
 
@@ -113,6 +106,10 @@ GATE_1_ACCEPTED
 GATE_2_ACCEPTED
 GATE_3_ACCEPTED
 GATE_4_ACCEPTANCE_FAILED
+GATE_5_NOT_ACCEPTED
+GATE_6_NOT_ACCEPTED
+GATE_7_BLOCKED_NOT_STARTED
+GATE_8_BLOCKED_NOT_STARTED
 FORMAL_SEARCH_NOT_STARTED
 SEALED_NOT_ACCESSED
 NO_PERFORMANCE_CLAIM
@@ -349,19 +346,25 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 - **pilot evidence + crash/resume（2 绿）**：pilot-result.json 自洽（10 admitted）；
   crash/resume determinism（同 seed → 同 lineage）。
 
-> 注：pilot 用 deterministic stub capabilities（real proposal shapes + builder digests + seeded
-> rewards）证明 loop 端到端跑到 terminal state。real-model-driven pilot（proposer + Harbor per trial）
-> 是正式 run 路径（Gate 7），loop 逻辑在此已验证。pilot 结果与 formal Archive 隔离。
+> 更正：该历史 artifact 使用 synthetic stub capabilities 与 `Math.random` reward，只证明旧 loop
+> 到达 terminal state；它不是 deterministic evidence，也不是 Gate 6。real proposer/builder/Harbor
+> successor 必须先完成 Gate 6，且结果与 formal Archive 隔离。
 
-## 尚未完成（后续 Gate）
+## 尚未完成（真实运行与外部依赖）
 
-- Gate 7：formal 80-candidate evolution（≤16h runtime，real model + Harbor per trial）。
-- Gate 8：sealed/full evaluation。最终 `$500/16h/5pp/95%CI>0` 判据在 Gate 8 揭盲后确定。
+- Gate 4：在同一 Bubblewrap + fixed gateway topology 中注入当前 provider credential，取得真实
+  provider successor receipt。
+- Gate 5：正式独立 principal/volume split ceremony、60×≥2 real baseline、real 3-candidate
+  calibration 与 accepted budget。
+- Gate 6：新的 real K=10 pilot、真实 crash/reconcile、raw evidence 与成本误差审计。
+- Gate 7/8：只有上述 receipts 齐全后才可签名启动 formal 80-candidate run，再决定是否 single reveal、
+  29×k sealed、89×≥5 full set 与 release。
 
 因此当前不能声称：formal 80-candidate search 已运行、sealed 揭盲已确认分数提升、可提交 leaderboard
 或达到 SOTA——这些需 Gate 7-8 的真实付费运行。
 
-## 下一个验收门
+## 下一个可执行验收门
 
-执行 `specs/07-implementation-plan.md` 的 Gate 7（formal 80-candidate evolution，≤16h runtime）。
-逐项执行清单见 `docs/phase-todolist.md`。
+提供当前 provider credential 后，复验 Gate 4 同一 sandbox/gateway topology；随后才可部署正式
+sealed-service principal 并 mint successor split。未获得 credential 时不得跳到 Gate 5 付费基线、
+Gate 7 formal search 或 Gate 8 reveal。逐项清单见 `docs/phase-todolist.md`。
