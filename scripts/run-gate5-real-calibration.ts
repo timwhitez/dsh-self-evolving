@@ -16,6 +16,7 @@ import {
   normalizeTrial,
   packAcpBinaryArchive,
 } from '../benchmark-adapters/terminal-bench/src/index.js'
+import { combinePemTrustBundle } from './artifact-trust.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
@@ -174,7 +175,7 @@ async function loadTrustedRoute(): Promise<{ apiKey: string; baseUrl: string }> 
 async function startArtifactServer(
   archivePath: string,
   trustDir: string,
-): Promise<{ server: Server; url: string; caPath: string }> {
+): Promise<{ server: Server; url: string; caBundlePath: string }> {
   const gateway = (
     await execResult('/usr/bin/docker', [
       'network',
@@ -208,11 +209,17 @@ async function startArtifactServer(
   ])
   await chmod(keyPath, 0o600)
   await chmod(caPath, 0o644)
-  const [key, cert, archive] = await Promise.all([
+  const [key, cert, archive, publicRoots] = await Promise.all([
     readFile(keyPath),
     readFile(caPath),
     readFile(archivePath),
+    readFile('/etc/ssl/certs/ca-certificates.crt'),
   ])
+  const caBundlePath = join(trustDir, 'artifact-ca-bundle.crt')
+  await writeFile(caBundlePath, combinePemTrustBundle(publicRoots, cert), {
+    mode: 0o644,
+    flag: 'wx',
+  })
   const server = createServer({ key, cert }, (request, response) => {
     if (request.method !== 'GET' || request.url !== '/dsh-rsi-acp.tar.gz') {
       response.writeHead(404).end()
@@ -230,7 +237,11 @@ async function startArtifactServer(
     server.listen(0, '0.0.0.0', done)
   })
   const address = server.address() as AddressInfo
-  return { server, url: `https://${gateway}:${address.port}/dsh-rsi-acp.tar.gz`, caPath }
+  return {
+    server,
+    url: `https://${gateway}:${address.port}/dsh-rsi-acp.tar.gz`,
+    caBundlePath,
+  }
 }
 
 async function buildBaselineRuntime(workDir: string, baseUrl: string) {
@@ -549,12 +560,12 @@ async function main(): Promise<void> {
       idempotencyKey: `gate5/${runId}/${receipt.candidateId}`,
       jobsDir: join(runDir, 'jobs'),
       environment: {
-        env: { CURL_CA_BUNDLE: '/run/dsh-rsi/artifact-ca.crt' },
+        env: { CURL_CA_BUNDLE: '/run/dsh-rsi/artifact-ca-bundle.crt' },
         mounts: [
           {
             type: 'bind',
-            source: artifact.caPath,
-            target: '/run/dsh-rsi/artifact-ca.crt',
+            source: artifact.caBundlePath,
+            target: '/run/dsh-rsi/artifact-ca-bundle.crt',
             read_only: true,
           },
           {
