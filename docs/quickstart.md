@@ -45,6 +45,9 @@ pnpm dsh-rsi run \
 The development profile evaluates at most 12 baseline tasks in two fixed batches, then at most three candidates.
 It never accesses the sealed split. Run `resume` after an interruption; do not run `run` again on existing state.
 
+For the v0.1.1 multi-file successor, add `--profile v011-stable-demo` to `init`. It requires a fresh state directory
+and run ID; schema-10 state is never upgraded in place.
+
 ```bash
 pnpm dsh-rsi resume --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1
 pnpm dsh-rsi status --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1

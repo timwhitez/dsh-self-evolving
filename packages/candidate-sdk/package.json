@@ -33,6 +33,9 @@
     "ajv-formats": "^3.0.1"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/cordis-plugin-loader": "link:../../deepseek-harness/vendor/loader",
+    "@deepseek-ai/dsh-system-prompt": "link:../../deepseek-harness/packages/core/system-prompt",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

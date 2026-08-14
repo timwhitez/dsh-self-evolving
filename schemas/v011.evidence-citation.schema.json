@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-rsi/v011.evidence-citation.schema.json",
+  "title": "v0.1.1 resolvable evidence citation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["objectDigest", "mediaType", "locator", "observation"],
+  "properties": {
+    "objectDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "mediaType": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "locator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "json-pointer" },
+            "value": { "type": "string", "pattern": "^(|/.*)$", "maxLength": 2048 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "startLine", "endLine"],
+          "properties": {
+            "kind": { "const": "jsonl-lines" },
+            "startLine": { "type": "integer", "minimum": 1 },
+            "endLine": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "observation": { "type": "string", "minLength": 1, "maxLength": 4096 }
+  }
+}

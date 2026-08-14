@@ -24,10 +24,11 @@ export interface ValidationResult {
   errors: string[]
 }
 
-export type ManifestKind = 'candidate' | 'build' | 'capsule'
+export type ManifestKind = 'candidate' | 'v011-candidate-intent' | 'build' | 'capsule'
 
 const SCHEMA_FILES: Record<ManifestKind, string> = {
   candidate: 'candidate.manifest.schema.json',
+  'v011-candidate-intent': 'v011.candidate-intent.schema.json',
   build: 'build.manifest.schema.json',
   capsule: 'capsule.manifest.schema.json',
 }

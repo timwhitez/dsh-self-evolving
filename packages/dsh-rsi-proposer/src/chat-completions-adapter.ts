@@ -1,5 +1,6 @@
 /** Trusted-host OpenAI-compatible Chat Completions adapter for the Zen route. */
 import {
+  CallId,
   LlmAdapter,
   attributionHeaders,
   type GenerateOptions,
@@ -22,6 +23,14 @@ interface ChatMessage {
   role: string
   content: string
   reasoning_content?: string
+  tool_call_id?: string
+  tool_calls?: ChatToolCall[]
+}
+
+interface ChatToolCall {
+  id: string
+  type: 'function'
+  function: { name: string; arguments: string }
 }
 
 interface ChatCompletionsBody {
@@ -29,7 +38,7 @@ interface ChatCompletionsBody {
   model?: unknown
   choices?: Array<{
     finish_reason?: unknown
-    message?: { content?: unknown; reasoning_content?: unknown }
+    message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown }
   }>
   usage?: {
     prompt_tokens?: unknown
@@ -54,12 +63,73 @@ function textOf(value: unknown): string {
     .join('\n')
 }
 
-function messagesOf(options: GenerateOptions): ChatMessage[] {
+function toolCallsOf(value: unknown): ChatToolCall[] {
+  if (!Array.isArray(value)) return []
+  return value.map((entry) => {
+    if (entry === null || typeof entry !== 'object') {
+      throw new Error('chat adapter: malformed provider tool call')
+    }
+    const record = entry as Record<string, unknown>
+    const fn = record['function']
+    if (
+      typeof record['id'] !== 'string' ||
+      fn === null ||
+      typeof fn !== 'object' ||
+      typeof (fn as Record<string, unknown>)['name'] !== 'string' ||
+      typeof (fn as Record<string, unknown>)['arguments'] !== 'string'
+    ) {
+      throw new Error('chat adapter: malformed provider tool call')
+    }
+    return {
+      id: record['id'],
+      type: 'function',
+      function: {
+        name: (fn as Record<string, unknown>)['name'] as string,
+        arguments: (fn as Record<string, unknown>)['arguments'] as string,
+      },
+    }
+  })
+}
+
+function messagesOf(
+  options: GenerateOptions,
+  reasoningByCallId: ReadonlyMap<string, string>,
+): ChatMessage[] {
   const messages: ChatMessage[] = []
   if (options.system) messages.push({ role: 'system', content: options.system })
   for (const message of options.messages) {
-    const content = textOf(message.content)
-    if (content) messages.push({ role: message.role, content })
+    const content = message.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+    if (message.role === 'assistant') {
+      const toolCalls = message.content
+        .filter((block) => block.type === 'tool-call')
+        .map((block) => ({
+          id: String(block.id),
+          type: 'function' as const,
+          function: { name: block.name, arguments: block.arguments },
+        }))
+      const reasoning = toolCalls
+        .map((call) => reasoningByCallId.get(call.id))
+        .find((value): value is string => typeof value === 'string' && value.length > 0)
+      messages.push({
+        role: 'assistant',
+        content,
+        ...(reasoning === undefined ? {} : { reasoning_content: reasoning }),
+        ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+      })
+      continue
+    }
+    const results = message.content.filter((block) => block.type === 'tool-result')
+    if (content.length > 0 || results.length === 0) messages.push({ role: message.role, content })
+    for (const result of results) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: String(result.toolCallId),
+        content: textOf(result.content) || '(no output)',
+      })
+    }
   }
   return messages
 }
@@ -101,6 +171,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
   private readonly apiKeyEnv: string
   private readonly expectedResponseModel: string
   private readonly fetchImpl: typeof fetch
+  private readonly reasoningByCallId = new Map<string, string>()
 
   constructor(private readonly config: TrustedChatCompletionsAdapterConfig) {
     super()
@@ -152,12 +223,9 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
     ) {
       throw new Error('chat adapter: request does not match locked route')
     }
-    if (options.tools !== undefined && options.tools.length > 0) {
-      throw new Error('chat adapter: proposal route does not permit model tool calls')
-    }
     const apiKey = process.env[this.apiKeyEnv]?.trim()
     if (!apiKey) throw new Error(`chat adapter: credential env ${this.apiKeyEnv} is unavailable`)
-    const messages = messagesOf(options)
+    const messages = messagesOf(options, this.reasoningByCallId)
     if (messages.length === 0) throw new Error('chat adapter: request has no model input')
 
     const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0 }
@@ -165,6 +233,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
     const responseIds: string[] = []
     let body: ChatCompletionsBody | undefined
     let text = ''
+    let toolCalls: ChatToolCall[] = []
     const maxTurns = this.config.reasoningContinuationMaxTurns ?? 0
 
     for (let turn = 0; turn <= maxTurns; turn++) {
@@ -175,6 +244,18 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
           reasoning_effort: route.reasoningEffort,
           max_tokens: route.maxTokens,
           stream: false,
+          ...(options.tools === undefined || options.tools.length === 0
+            ? {}
+            : {
+                tools: options.tools.map((tool) => ({
+                  type: 'function',
+                  function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                  },
+                })),
+              }),
         },
         options.signal,
       )
@@ -185,6 +266,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
       const choice = body.choices?.[0]
       const finishReason = typeof choice?.finish_reason === 'string' ? choice.finish_reason : null
       text = typeof choice?.message?.content === 'string' ? choice.message.content : ''
+      toolCalls = toolCallsOf(choice?.message?.tool_calls)
       const reasoning =
         typeof choice?.message?.reasoning_content === 'string'
           ? choice.message.reasoning_content
@@ -197,8 +279,8 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
         usage.reasoningTokens += reasoningTokens
         sawReasoningUsage = true
       }
-      if (text && finishReason !== 'length') break
-      if (text && finishReason === 'length') {
+      if ((text || toolCalls.length > 0) && finishReason !== 'length') break
+      if ((text || toolCalls.length > 0) && finishReason === 'length') {
         throw new Error('chat adapter: provider truncated visible output')
       }
       if (finishReason !== 'length' || !reasoning) {
@@ -222,11 +304,52 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
           'Continue from the completed reasoning. Emit only the required final JSON object now.',
       })
     }
-    if (!body || !text) throw new Error('chat adapter: provider body missing final text')
+    if (!body || (!text && toolCalls.length === 0)) {
+      throw new Error('chat adapter: provider body missing final output')
+    }
 
-    yield { type: 'block-start', index: 0, blockType: 'text' }
-    yield { type: 'text-delta', index: 0, text }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    const finalReasoning =
+      typeof body.choices?.[0]?.message?.reasoning_content === 'string'
+        ? body.choices[0].message.reasoning_content
+        : ''
+    for (const call of toolCalls) {
+      if (finalReasoning.length > 0) this.reasoningByCallId.set(call.id, finalReasoning)
+    }
+    while (this.reasoningByCallId.size > 256) {
+      const oldest = this.reasoningByCallId.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.reasoningByCallId.delete(oldest)
+    }
+
+    let index = 0
+    if (text) {
+      yield { type: 'block-start', index, blockType: 'text' }
+      yield { type: 'text-delta', index, text }
+      yield { type: 'block-end', index, block: { type: 'text', text } }
+      index += 1
+    }
+    for (const call of toolCalls) {
+      const id = CallId(call.id)
+      yield { type: 'block-start', index, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index,
+        id,
+        name: call.function.name,
+        argumentsDelta: call.function.arguments,
+      }
+      yield {
+        type: 'block-end',
+        index,
+        block: {
+          type: 'tool-call',
+          id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+        },
+      }
+      index += 1
+    }
     yield {
       type: 'usage',
       usage: {
@@ -238,7 +361,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
     }
     yield {
       type: 'finish',
-      reason: { kind: 'stop' },
+      reason: toolCalls.length > 0 ? { kind: 'tool-calls' } : { kind: 'stop' },
       replayState: {
         responseIds,
         requestedModel: route.model,

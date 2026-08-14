@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-rsi/v011.migration-receipt.schema.json",
+  "title": "v0.1 to v0.1.1 baseline migration receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocol",
+    "v01ReleaseCommit",
+    "v01SourceDigest",
+    "v011SourceDigest",
+    "mapping",
+    "inheritedResultsPolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "dsh-rsi-candidate-tree-v2" },
+    "v01ReleaseCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "v01SourceDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "v011SourceDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "mapping": { "const": "BEHAVIOR_BYTES_PRESERVED_IDENTITY_FIELDS_REMOVED" },
+    "inheritedResultsPolicy": { "const": "none" }
+  }
+}

@@ -4,14 +4,18 @@ import { resolve } from 'node:path'
 import { auditStableRun } from './audit.js'
 import {
   createStableDemoConfig,
+  createV011DemoConfig,
   initializeState,
-  loadConfig,
+  loadProjectConfig,
+  V011_STABLE_DEMO_PROFILE,
   type InitConfigInput,
 } from './config.js'
 import { runDoctor } from './doctor.js'
 import { readControllerStatus } from '@dsh-rsi/core'
 import { runStableDemo } from './engine.js'
 import { createRealCapabilities } from './real-capabilities.js'
+import { createV011RealCapabilities } from './v011-real-capabilities.js'
+import { auditV011Run } from './v011-audit.js'
 import {
   finalizeCrashResumeReceipt,
   readCrashInjectionRequest,
@@ -60,7 +64,10 @@ async function main(): Promise<void> {
         ? {}
         : { budgetUsd: Number(option('--budget-usd')) }),
     }
-    const config = createStableDemoConfig(input)
+    const config =
+      option('--profile') === V011_STABLE_DEMO_PROFILE
+        ? createV011DemoConfig(input)
+        : createStableDemoConfig(input)
     const path = await initializeState(config)
     process.stdout.write(
       JSON.stringify({ command, status: 'INITIALIZED', configPath: path }) + '\n',
@@ -70,7 +77,7 @@ async function main(): Promise<void> {
   if (!['run', 'resume', 'status', 'audit', 'doctor'].includes(command ?? '')) {
     throw new Error('usage: dsh-rsi <init|run|resume|status|audit|doctor> --state-dir <path>')
   }
-  const config = await loadConfig(resolve(required('--state-dir')))
+  const config = await loadProjectConfig(resolve(required('--state-dir')))
   if (command === 'doctor') {
     const report = await runDoctor(config)
     process.stdout.write(JSON.stringify(report, null, 2) + '\n')
@@ -82,7 +89,10 @@ async function main(): Promise<void> {
     return
   }
   if (command === 'audit') {
-    const report = await auditStableRun(config)
+    const report =
+      config.profile === V011_STABLE_DEMO_PROFILE
+        ? await auditV011Run(config)
+        : await auditStableRun(config)
     process.stdout.write(JSON.stringify(report, null, 2) + '\n')
     if (!report.accepted) process.exitCode = 2
     return
@@ -100,7 +110,10 @@ async function main(): Promise<void> {
     process.exitCode = 2
     return
   }
-  const caps = await createRealCapabilities(config)
+  const caps =
+    config.profile === V011_STABLE_DEMO_PROFILE
+      ? await createV011RealCapabilities(config)
+      : await createRealCapabilities(config)
   if (command === 'run' && process.argv.includes('--inject-crash-after-first-candidate')) {
     await requestCrashInjection(config, {
       schemaVersion: 1,
@@ -118,7 +131,11 @@ async function main(): Promise<void> {
   }
   const result = await runStableDemo(config, caps)
   if (command === 'resume') await finalizeCrashResumeReceipt(config)
-  process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+  const output =
+    config.profile === V011_STABLE_DEMO_PROFILE
+      ? { ...result, capabilityStatus: (await auditV011Run(config)).status }
+      : result
+  process.stdout.write(JSON.stringify(output, null, 2) + '\n')
 }
 
 await main()

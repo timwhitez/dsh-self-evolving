@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 export const CONFIG_SCHEMA_VERSION = 10 as const
 export const STABLE_DEMO_PROFILE = 'stable-demo' as const
+export const V011_CONFIG_SCHEMA_VERSION = 11 as const
+export const V011_STABLE_DEMO_PROFILE = 'v011-stable-demo' as const
 
 export interface StableDemoConfig {
   schemaVersion: typeof CONFIG_SCHEMA_VERSION
@@ -32,6 +34,14 @@ export interface StableDemoConfig {
   inventoryPath: string
   terminalBenchRoot: string
 }
+
+export interface V011DemoConfig extends Omit<StableDemoConfig, 'schemaVersion' | 'profile'> {
+  schemaVersion: typeof V011_CONFIG_SCHEMA_VERSION
+  profile: typeof V011_STABLE_DEMO_PROFILE
+  protocol: 'dsh-rsi-candidate-tree-v2'
+}
+
+export type ProjectConfig = StableDemoConfig | V011DemoConfig
 
 export interface InitConfigInput {
   runId: string
@@ -88,6 +98,16 @@ export function createStableDemoConfig(input: InitConfigInput): StableDemoConfig
   }
 }
 
+export function createV011DemoConfig(input: InitConfigInput): V011DemoConfig {
+  const predecessor = createStableDemoConfig(input)
+  return {
+    ...predecessor,
+    schemaVersion: V011_CONFIG_SCHEMA_VERSION,
+    profile: V011_STABLE_DEMO_PROFILE,
+    protocol: 'dsh-rsi-candidate-tree-v2',
+  }
+}
+
 export function validateStableDemoConfig(value: unknown): StableDemoConfig {
   const c = value as Partial<StableDemoConfig> | null
   if (c === null || c.schemaVersion !== 10 || c.profile !== STABLE_DEMO_PROFILE) {
@@ -132,7 +152,30 @@ export function validateStableDemoConfig(value: unknown): StableDemoConfig {
   return c as StableDemoConfig
 }
 
-export async function initializeState(config: StableDemoConfig): Promise<string> {
+export function validateV011DemoConfig(value: unknown): V011DemoConfig {
+  const candidate = value as Partial<V011DemoConfig> | null
+  if (
+    candidate === null ||
+    candidate.schemaVersion !== V011_CONFIG_SCHEMA_VERSION ||
+    candidate.profile !== V011_STABLE_DEMO_PROFILE ||
+    candidate.protocol !== 'dsh-rsi-candidate-tree-v2'
+  ) {
+    throw new Error('config: unsupported v0.1.1 schema/profile')
+  }
+  const predecessor = validateStableDemoConfig({
+    ...candidate,
+    schemaVersion: CONFIG_SCHEMA_VERSION,
+    profile: STABLE_DEMO_PROFILE,
+  })
+  return {
+    ...predecessor,
+    schemaVersion: V011_CONFIG_SCHEMA_VERSION,
+    profile: V011_STABLE_DEMO_PROFILE,
+    protocol: 'dsh-rsi-candidate-tree-v2',
+  }
+}
+
+export async function initializeState(config: ProjectConfig): Promise<string> {
   const path = configPath(config.stateDir)
   await mkdir(config.stateDir, { recursive: true, mode: 0o700 })
   await chmod(config.stateDir, 0o700)
@@ -159,6 +202,36 @@ export async function loadConfig(stateDir: string): Promise<StableDemoConfig> {
     throw new Error('config: config.json must be a private regular file')
   }
   const config = validateStableDemoConfig(JSON.parse(await readFile(path, 'utf8')))
+  if ((await realpath(config.stateDir)) !== (await realpath(resolve(stateDir)))) {
+    throw new Error('config: stateDir identity mismatch')
+  }
+  return config
+}
+
+async function loadPrivateConfigValue(stateDir: string): Promise<unknown> {
+  const path = configPath(stateDir)
+  const info = await stat(path)
+  if (!info.isFile() || (info.mode & 0o077) !== 0) {
+    throw new Error('config: config.json must be a private regular file')
+  }
+  return JSON.parse(await readFile(path, 'utf8')) as unknown
+}
+
+export async function loadV011Config(stateDir: string): Promise<V011DemoConfig> {
+  const config = validateV011DemoConfig(await loadPrivateConfigValue(stateDir))
+  if ((await realpath(config.stateDir)) !== (await realpath(resolve(stateDir)))) {
+    throw new Error('config: stateDir identity mismatch')
+  }
+  return config
+}
+
+export async function loadProjectConfig(stateDir: string): Promise<ProjectConfig> {
+  const value = await loadPrivateConfigValue(stateDir)
+  const header = value as { profile?: unknown }
+  const config =
+    header.profile === V011_STABLE_DEMO_PROFILE
+      ? validateV011DemoConfig(value)
+      : validateStableDemoConfig(value)
   if ((await realpath(config.stateDir)) !== (await realpath(resolve(stateDir)))) {
     throw new Error('config: stateDir identity mismatch')
   }

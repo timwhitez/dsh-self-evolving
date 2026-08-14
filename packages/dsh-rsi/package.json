@@ -45,6 +45,9 @@
     "build": "tsc -b",
     "clean": "rm -rf lib .tsbuildinfo"
   },
+  "dependencies": {
+    "@dsh-rsi/candidate-sdk": "workspace:*"
+  },
   "devDependencies": {
     "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
     "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",

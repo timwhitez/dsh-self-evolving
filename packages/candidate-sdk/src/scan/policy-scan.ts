@@ -13,6 +13,7 @@
  * exempt a candidate by its own score.
  */
 import { readFile } from 'node:fs/promises'
+import { dirname, resolve, sep } from 'node:path'
 
 export interface ScanHit {
   rule: string
@@ -56,10 +57,8 @@ const REJECT_PATTERNS: { rule: string; re: RegExp }[] = [
     re: /\bfrom\s+['"]node:child_process['"]|require\s*\(\s*['"]node:child_process['"]/,
   },
   { rule: 'native-addon', re: /\.node['"]|node-addon|koffi|ffi-napi/ },
-  // path-traversal: flag `..` only inside string-literal module specifiers or
-  // join/resolve arguments, not inside comments or generic prose. We match the
-  // common dangerous forms: '../...' or "..\\..." used as a path segment.
-  { rule: 'path-traversal', re: /['"]\.\.[\\/]|require\s*\(\s*['"]\.\./ },
+  { rule: 'process-global', re: /\bprocess\s*\./ },
+  { rule: 'global-this', re: /\bglobalThis\b/ },
   // default-export: only a real `export default` STATEMENT at line start (after
   // optional whitespace). This avoids matching the phrase inside comments/doc
   // strings that merely discuss the defect (e.g. the baseline's own warning).
@@ -225,6 +224,27 @@ export async function scanPaths(
   opts: ScanOptions = {},
 ): Promise<ScanResult> {
   const files: { path: string; content: string }[] = []
-  for (const p of paths) files.push({ path: p.path, content: await readFile(p.absPath, 'utf8') })
-  return scanFiles(files, opts)
+  const containmentHits: ScanHit[] = []
+  for (const p of paths) {
+    const content = await readFile(p.absPath, 'utf8')
+    files.push({ path: p.path, content })
+    let root = resolve(p.absPath)
+    for (const _segment of p.path.split('/')) root = dirname(root)
+    for (const imported of extractImports(content)) {
+      if (!imported.specifier.startsWith('.')) continue
+      const target = resolve(dirname(p.absPath), imported.specifier)
+      if (target !== root && !target.startsWith(root + sep)) {
+        containmentHits.push({
+          rule: 'path-traversal',
+          severity: 'reject',
+          path: p.path,
+          line: imported.line,
+          snippet: imported.specifier,
+        })
+      }
+    }
+  }
+  const scanned = scanFiles(files, opts)
+  const hits = [...scanned.hits, ...containmentHits]
+  return { hits, passed: !hits.some((hit) => hit.severity === 'reject') }
 }

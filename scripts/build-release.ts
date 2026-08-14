@@ -11,6 +11,9 @@ export interface LicensePackage {
   license?: string
 }
 
+export const RELEASE_VERSION = '0.1.1'
+export const RELEASE_SLUG = `dsh-rsi-v${RELEASE_VERSION}`
+
 export function normalizeGitCommit(stdout: string): string {
   const commit = stdout.trim()
   if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error('release: invalid Git commit identity')
@@ -43,7 +46,7 @@ export function buildSpdxSbom(
     spdxVersion: 'SPDX-2.3',
     dataLicense: 'CC0-1.0',
     SPDXID: 'SPDXRef-DOCUMENT',
-    name: `dsh-rsi-v0.1.0-rc.1-${commit.slice(0, 12)}`,
+    name: `${RELEASE_SLUG}-${commit.slice(0, 12)}`,
     documentNamespace: `https://dsh-rsi.invalid/spdx/${commit}`,
     creationInfo: {
       created: new Date().toISOString(),
@@ -54,7 +57,7 @@ export function buildSpdxSbom(
       {
         SPDXID: 'SPDXRef-Package-dsh-rsi',
         name: 'dsh-rsi',
-        versionInfo: '0.1.0-rc.1',
+        versionInfo: RELEASE_VERSION,
         downloadLocation: 'NOASSERTION',
         filesAnalyzed: false,
         licenseConcluded: 'Apache-2.0',
@@ -154,8 +157,8 @@ async function main(): Promise<void> {
   const sourceIdentity = await buildSourceArchiveIdentity(commit)
   await mkdir(outDir, { recursive: false, mode: 0o755 })
 
-  const sourceName = 'dsh-rsi-v0.1.0-rc.1-source.tar.gz'
-  const sourcePrefix = 'dsh-rsi-v0.1.0-rc.1/'
+  const sourceName = `${RELEASE_SLUG}-source.tar.gz`
+  const sourcePrefix = `${RELEASE_SLUG}/`
   await exec('/usr/bin/git', [
     'archive',
     '--format=tar.gz',
@@ -181,7 +184,7 @@ async function main(): Promise<void> {
     .sort()
   const receipt = {
     schemaVersion: 1,
-    status: 'OPEN_SOURCE_V0_1_RELEASE_CANDIDATE',
+    status: 'OPEN_SOURCE_V0_1_1_RELEASE_CANDIDATE',
     commit,
     artifacts: [...primaryArtifacts, 'release-receipt.json', 'SHA256SUMS'],
     trackedUtf8AndSecretScan: { ...safety, passed: true },

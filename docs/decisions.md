@@ -230,3 +230,33 @@ retained as recovery/build-reject evidence and marked `QUARANTINED_REPLACEMENT_F
 
 **Consequence:** replacement prompts explicitly require byte-exact parent context and receive
 `PATCH_DOES_NOT_APPLY` when relevant. Solver-trial selection and frozen task outcomes remain unchanged.
+
+## ADR-021 — v0.1.1 uses canonical child trees and governed capability catalogs
+
+**Decision:** protocol `dsh-rsi-candidate-tree-v2` replaces model-authored unified patches with a trusted,
+preassigned full child tree. The proposer may add, modify, or remove only `src/**/*.ts`,
+`tests/**/*.spec.ts`, `fixtures/**/*.json`, `README.md`, and the behavior-intent JSON pointers in
+`candidate.json`. `package.json`, `cordis.patch.yml`, compiler configuration, identities, dependencies,
+model routing, evidence labels, budgets, and evaluation policy remain builder-owned. The trusted host derives
+the actual operation set, resolves structured citations against one immutable export, and mints a single
+materialization/admission chain. Exact DSH capabilities are frozen in a content-addressed catalog; proposer
+capability requests are data-only and cannot alter the current lineage.
+
+The exact selected parent capsule is loaded in `propose` mode through the real Cordis Loader. Generated
+children are admitted only after candidate-owned tests in a bounded process, policy and import scanning, two
+byte-identical builds, Loader boot/unload in both modes, fixed replay, and offline capsule verification. A
+trusted mechanism-outcome record is derived exactly once from normalized `DEV_OBSERVED` trials and may enter a
+later generation only through a new legal export.
+
+**Why:** v0.1 proved crash-resumable iteration but its one-file patch, baseline-importing proposal worker,
+summary-style evidence input, and scattered build receipts cannot establish autonomous multi-file plugin
+development or cumulative trajectory-grounded iteration.
+
+**Migration:** v0.1 artifacts remain byte-identical historical evidence. v0.1.1 starts from an explicit
+migration receipt, new schemas, a new protocol identity, new evidence exports, a fresh task freeze, and a new
+run lineage. No v0.1 score, failure pool, proposal output, or capability decision is relabeled as v0.1.1.
+
+**Claim boundary:** all V011-A through V011-E receipts are required before
+`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`. Green schemas, one generated child, or a K=3 terminal state alone are
+insufficient. The capability is development-only, requires `sealedAccessCount=0`, and makes no benchmark
+improvement claim.

@@ -1,7 +1,8 @@
 # Configuration
 
-`dsh-rsi init` writes a private, no-replace `config.json` with schema version 10. The file contains no credential.
-Changing an identity or limit requires a new state directory and run ID.
+`dsh-rsi init` writes a private, no-replace `config.json`. `stable-demo` uses schema 10; the v0.1.1 successor
+`v011-stable-demo` uses schema 11 and protocol `dsh-rsi-candidate-tree-v2`. The file contains no credential.
+Changing an identity, profile or limit requires a new state directory and run ID.
 
 | Field                      | Stable-demo value                       |
 | -------------------------- | --------------------------------------- |
@@ -21,6 +22,10 @@ Changing an identity or limit requires a new state directory and run ID.
 | wire API                   | compatible Chat Completions             |
 | candidate feedback         | frozen `DEV_OBSERVED` baseline failures |
 | sealed access              | forbidden; required count is 0          |
+
+`v011-stable-demo` keeps the same K=3/task/budget/model limits while replacing the single-file patch proposal with
+the bounded multi-file candidate-tree protocol, exact-parent Loader proposal mode, raw evidence citations,
+candidate-owned tests, admission receipts and mechanism-outcome feedback.
 
 The provider URL is read from `[model_providers.deepseek]` in private `~/.codex/config.toml`; the bearer is read
 from private `~/.codex/auth.json`. `doctor` fails before a paid request if either file, Docker, Harbor, task material,

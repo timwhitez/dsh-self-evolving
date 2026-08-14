@@ -1,7 +1,7 @@
 import { computeTotals, readAll, readControllerStatus } from '@dsh-rsi/core'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { StableDemoConfig } from './config.js'
+import type { ProjectConfig } from './config.js'
 
 export interface StableAuditReport {
   accepted: boolean
@@ -11,7 +11,7 @@ export interface StableAuditReport {
   eventCount: number
 }
 
-export async function auditStableRun(config: StableDemoConfig): Promise<StableAuditReport> {
+export async function auditStableRun(config: ProjectConfig): Promise<StableAuditReport> {
   const controller = await readControllerStatus(config)
   const events = await readAll({
     journalDir: join(config.stateDir, 'journal'),

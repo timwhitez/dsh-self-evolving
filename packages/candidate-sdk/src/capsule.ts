@@ -102,7 +102,7 @@ async function writeSha256sums(
 /** Materialize the immutable source + compiled bytes frozen in BuildReceipt. */
 async function copyCandidate(receipt: BuildReceipt, dest: string): Promise<void> {
   await mkdir(dest, { recursive: true })
-  for (const file of receipt.sourceFiles) {
+  for (const file of receipt.runtimeSourceFiles ?? receipt.sourceFiles) {
     const destination = join(dest, ...file.path.split('/'))
     await mkdir(dirname(destination), { recursive: true })
     await writeFile(destination, file.bytes)
@@ -404,10 +404,11 @@ async function materializeRuntimeClosure(input: {
 
   // Candidate bytes are duplicated into the runtime's ordinary resolution
   // path. Their canonical copy remains capsule/candidate for audit/release.
-  const runtimeCandidate = join(nodeModules, '@dsh-rsi', 'candidate-baseline')
+  const runtimePackageName = receipt.runtimePackageName ?? '@dsh-rsi/candidate-baseline'
+  const runtimeCandidate = join(nodeModules, ...runtimePackageName.split('/'))
   await copyCandidate(receipt, runtimeCandidate)
   packages.push({
-    name: '@dsh-rsi/candidate-baseline',
+    name: runtimePackageName,
     version: '0.0.0',
     contentHash: await hashDirectory(runtimeCandidate),
   })

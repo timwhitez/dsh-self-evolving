@@ -7,6 +7,9 @@ Terminal-Bench 2.1 为首个验证环境的递归自改进（RSI）项目。
 Harbor ACP、durable controller、真实 Zen proposer、K=3 稳定迭代与 Apache-2.0 source release 已有验收
 证据。尚无 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA 结论。
 
+v0.1.1 的 bounded multi-file successor 已完成代码和工程测试，正在等待 fresh real K=3 验收；在该 run
+完成前不声明 `AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`。
+
 ## 一句话架构
 
 可信的 `dsh-rsi` Cordis service 在 DSH 内维护证据、谱系和搜索状态；它生成的每个候选

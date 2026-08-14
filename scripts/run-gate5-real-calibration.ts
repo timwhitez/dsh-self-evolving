@@ -25,6 +25,9 @@ const dshRoot = join(repoRoot, 'deepseek-harness')
 const candidateRoot = resolve(
   process.env['DSH_RSI_CANDIDATE_ROOT'] ?? join(repoRoot, 'packages', 'candidate-baseline'),
 )
+const prebuiltCapsuleRoot = process.env['DSH_RSI_CAPSULE_ROOT']
+  ? resolve(process.env['DSH_RSI_CAPSULE_ROOT'])
+  : undefined
 const tscBin = join(repoRoot, 'node_modules', '.bin', 'tsc')
 const controllerRoot = resolve(
   process.env['DSH_RSI_EVALUATOR_ROOT'] ?? '/var/lib/dsh-rsi-controller/gate5-real',
@@ -231,6 +234,32 @@ async function startArtifactServer(
 }
 
 async function buildBaselineRuntime(workDir: string, baseUrl: string) {
+  if (prebuiltCapsuleRoot !== undefined) {
+    const [manifestInfo, sumsInfo, launcherInfo] = await Promise.all([
+      stat(join(prebuiltCapsuleRoot, 'capsule.json')).catch(() => null),
+      stat(join(prebuiltCapsuleRoot, 'SHA256SUMS')).catch(() => null),
+      stat(join(prebuiltCapsuleRoot, 'runtime', 'credential-launcher.sh')).catch(() => null),
+    ])
+    if (
+      manifestInfo?.isFile() !== true ||
+      sumsInfo?.isFile() !== true ||
+      launcherInfo?.isFile() !== true ||
+      (launcherInfo.mode & 0o111) === 0
+    ) {
+      throw new Error('gate5 runner: prebuilt v0.1.1 capsule is incomplete')
+    }
+    const manifest = JSON.parse(
+      await readFile(join(prebuiltCapsuleRoot, 'capsule.json'), 'utf8'),
+    ) as { candidateId?: unknown }
+    if (typeof manifest.candidateId !== 'string' || manifest.candidateId.length === 0) {
+      throw new Error('gate5 runner: prebuilt capsule candidate identity missing')
+    }
+    const packed = await packAcpBinaryArchive(
+      join(prebuiltCapsuleRoot, 'runtime'),
+      join(workDir, 'dsh-rsi-acp.tar.gz'),
+    )
+    return { receipt: { candidateId: manifest.candidateId }, packed }
+  }
   const receipt = await buildCandidate({ sourceRoot: candidateRoot, sourceFiles, tscBin })
   const capsuleDir = join(workDir, 'capsule')
   await packCapsule({

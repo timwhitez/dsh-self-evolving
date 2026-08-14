@@ -1,6 +1,6 @@
 {
   "name": "@dsh-rsi/root",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "A bounded, crash-resumable DSH Cordis self-iteration engine with auditable Harbor evaluation.",

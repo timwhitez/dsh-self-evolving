@@ -33,3 +33,10 @@ export {
   TrustedChatCompletionsAdapter,
   type TrustedChatCompletionsAdapterConfig,
 } from './chat-completions-adapter.js'
+export { installV011Tools, type V011ToolRoots, type V011ToolState } from './v011-tools.js'
+export {
+  buildV011ProposalPrompt,
+  runV011ProposalTurn,
+  type V011ProposalTurnInput,
+  type V011ProposalTurnResult,
+} from './v011-runner.js'

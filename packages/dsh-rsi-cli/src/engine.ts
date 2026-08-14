@@ -14,7 +14,7 @@ import {
   type RecordInput,
 } from '@dsh-rsi/core'
 import type { DoctorCheck, DoctorReport } from './doctor.js'
-import type { StableDemoConfig } from './config.js'
+import type { ProjectConfig } from './config.js'
 
 export interface BuiltCandidate {
   candidateId: string
@@ -23,6 +23,12 @@ export interface BuiltCandidate {
   buildManifestDigest: string
   sourceRoot: string
   evidenceRefs: string[]
+  capsuleRoot?: string
+  runtimePackageName?: string
+  proposalDigest?: string
+  analysisDigest?: string
+  targetClusterSlug?: string
+  hypothesis?: string
 }
 
 export interface StableProposal {
@@ -68,6 +74,19 @@ export interface StableDemoCapabilities {
   evaluationProvider(spec: StableEvaluationSpec): EvaluationProvider
   reserveUsd?(spec: StableEvaluationSpec): number
   onEvaluationBoundary?(spec: StableEvaluationSpec, boundary: DurableBoundary): void | Promise<void>
+  afterCandidateEvaluation?(input: {
+    generation: number
+    parent: BuiltCandidate
+    child: BuiltCandidate
+    taskId: string
+    observations: Array<{
+      candidateId: string
+      taskId: string
+      attemptIndex: number
+      status: 'pass' | 'fail' | 'invalid'
+      reward: number | null
+    }>
+  }): Promise<{ outcomeDigest: string; status: string }>
 }
 
 export interface StableDemoResult {
@@ -139,7 +158,7 @@ function eventPayload<T>(events: JournalEvent[], eventId: string): T | undefined
   return events.find((event) => event.eventId === eventId)?.payload as T | undefined
 }
 
-async function writeFailurePool(config: StableDemoConfig, pool: FailurePool): Promise<void> {
+async function writeFailurePool(config: ProjectConfig, pool: FailurePool): Promise<void> {
   const path = join(config.stateDir, 'failure-pool.json')
   const bytes = JSON.stringify(pool, null, 2) + '\n'
   const file = await open(path, 'wx', 0o600).catch(async (error: NodeJS.ErrnoException) => {
@@ -180,7 +199,7 @@ function lineageDepth(events: JournalEvent[]): { children: number; maxDepth: num
 }
 
 async function evaluate(
-  config: StableDemoConfig,
+  config: ProjectConfig,
   service: RsiBundle.RsiService,
   caps: StableDemoCapabilities,
   spec: StableEvaluationSpec,
@@ -226,7 +245,7 @@ function classifyBuildRejection(message: string): string {
 }
 
 export async function runStableDemo(
-  config: StableDemoConfig,
+  config: ProjectConfig,
   caps: StableDemoCapabilities,
 ): Promise<StableDemoResult> {
   assertCandidate(caps.baseline)
@@ -250,7 +269,7 @@ export async function runStableDemo(
         )
       }
       await recordOnce(service, 'run:preflight', 'run.preflight', {
-        profile: 'stable-demo',
+        profile: config.profile,
         solverTrialsMax: 15,
         sealedAccessCount: 0,
       })
@@ -262,7 +281,7 @@ export async function runStableDemo(
         capsuleDigest: caps.baseline.capsuleDigest,
         buildManifestDigest: caps.baseline.buildManifestDigest,
       })
-      await recordOnce(service, 'run:searching', 'run.searching', { profile: 'stable-demo' })
+      await recordOnce(service, 'run:searching', 'run.searching', { profile: config.profile })
 
       const observed = await caps.observedTaskIds()
       if (new Set(observed).size < 12)
@@ -422,6 +441,21 @@ export async function runStableDemo(
             kind: 'candidate',
           }
           await evaluate(config, service, caps, spec)
+          if (caps.afterCandidateEvaluation !== undefined) {
+            const outcome = await caps.afterCandidateEvaluation({
+              generation,
+              parent,
+              child,
+              taskId,
+              observations: replay(await readAll(service.journal)).observations,
+            })
+            await recordOnce(
+              service,
+              `mechanism-outcome:${generation}`,
+              'mechanism-outcome.derived',
+              { generation, candidateId: child.candidateId, ...outcome },
+            )
+          }
           await recordOnce(
             service,
             `candidate:${child.candidateId}:observed`,

@@ -1,7 +1,7 @@
 import { open, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { readAll, replay, stateHash, type DurableBoundary } from '@dsh-rsi/core'
-import type { StableDemoConfig } from './config.js'
+import type { ProjectConfig } from './config.js'
 
 export interface CrashInjectionRequest {
   schemaVersion: 1
@@ -10,7 +10,7 @@ export interface CrashInjectionRequest {
 }
 
 export async function requestCrashInjection(
-  config: StableDemoConfig,
+  config: ProjectConfig,
   request: CrashInjectionRequest,
 ): Promise<void> {
   const file = await open(join(config.stateDir, 'crash-injection-request.json'), 'wx', 0o600)
@@ -23,7 +23,7 @@ export async function requestCrashInjection(
 }
 
 export async function readCrashInjectionRequest(
-  config: StableDemoConfig,
+  config: ProjectConfig,
 ): Promise<CrashInjectionRequest | null> {
   const raw = await readFile(join(config.stateDir, 'crash-injection-request.json'), 'utf8').catch(
     () => null,
@@ -40,7 +40,7 @@ export async function readCrashInjectionRequest(
   return request
 }
 
-export async function finalizeCrashResumeReceipt(config: StableDemoConfig): Promise<string | null> {
+export async function finalizeCrashResumeReceipt(config: ProjectConfig): Promise<string | null> {
   const request = await readCrashInjectionRequest(config)
   if (request === null) return null
   const receiptPath = join(config.stateDir, 'crash-resume-receipt.json')

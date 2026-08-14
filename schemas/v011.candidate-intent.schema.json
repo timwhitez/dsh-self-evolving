@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-rsi/v011.candidate-intent.schema.json",
+  "title": "v0.1.1 candidate behavior intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "proposal", "runtime", "tests"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hypothesis",
+        "targetFailureModes",
+        "expectedBehaviorChange",
+        "regressionRisks",
+        "touchedSurfaces"
+      ],
+      "properties": {
+        "hypothesis": { "type": "string", "minLength": 20, "maxLength": 4096 },
+        "targetFailureModes": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "expectedBehaviorChange": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "regressionRisks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "touchedSurfaces": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredServices", "optionalServices", "newToolNames", "supportsModes"],
+      "properties": {
+        "requiredServices": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "optionalServices": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "newToolNames": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "supportsModes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["solve", "propose"] }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mechanismAssertions", "preservationAssertions"],
+      "properties": {
+        "mechanismAssertions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "preservationAssertions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

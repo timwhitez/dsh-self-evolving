@@ -394,7 +394,7 @@ export function selectEfficientObservedTasks(
     .map((task) => task.taskId)
 }
 
-function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec) {
+export function createRealEvaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec) {
   const runId = evaluatorRunId(config, spec)
   return {
     async inspect() {
@@ -428,6 +428,9 @@ function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec
             GATE5_ATTEMPTS: '1',
             GATE5_CONCURRENCY: '1',
             DSH_RSI_CANDIDATE_ROOT: spec.candidate.sourceRoot,
+            ...(spec.candidate.capsuleRoot === undefined
+              ? {}
+              : { DSH_RSI_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
             DSH_RSI_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
             TB21_DIR: config.terminalBenchRoot,
           },
@@ -450,6 +453,9 @@ function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec
               GATE5_ATTEMPTS: '1',
               GATE5_CONCURRENCY: '1',
               DSH_RSI_CANDIDATE_ROOT: spec.candidate.sourceRoot,
+              ...(spec.candidate.capsuleRoot === undefined
+                ? {}
+                : { DSH_RSI_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
               DSH_RSI_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
               TB21_DIR: config.terminalBenchRoot,
             },
@@ -527,7 +533,7 @@ export async function createRealCapabilities(
     },
     propose: (input) => realProposal(config, input),
     build: (input) => realBuild(config, input),
-    evaluationProvider: (spec) => evaluationProvider(config, spec),
+    evaluationProvider: (spec) => createRealEvaluationProvider(config, spec),
     reserveUsd: () => config.limits.budgetUsd / 15,
   }
 }

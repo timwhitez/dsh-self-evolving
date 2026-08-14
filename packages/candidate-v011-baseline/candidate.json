@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "proposal": {
+    "hypothesis": "The v0.1.1 migration baseline preserves the accepted v0.1 candidate behavior bytes.",
+    "targetFailureModes": [],
+    "expectedBehaviorChange": "None; this is a protocol migration baseline.",
+    "regressionRisks": ["A migration could accidentally alter runtime behavior."],
+    "touchedSurfaces": ["systemPrompt"]
+  },
+  "runtime": {
+    "requiredServices": ["systemPrompt"],
+    "optionalServices": [],
+    "newToolNames": [],
+    "supportsModes": ["solve", "propose"]
+  },
+  "tests": {
+    "mechanismAssertions": ["The exact source entry bytes match the accepted v0.1 baseline."],
+    "preservationAssertions": [
+      "Real Loader solve and propose lifecycles return to baseline on unload."
+    ]
+  }
+}

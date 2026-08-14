@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-rsi/v011.admission-receipt.schema.json",
+  "title": "v0.1.1 final admission receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocol",
+    "candidateDigest",
+    "materializationDigest",
+    "capabilityCatalogDigest",
+    "stageReceipts",
+    "capsuleDigest",
+    "admitted"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "dsh-rsi-candidate-tree-v2" },
+    "candidateDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "materializationDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "capabilityCatalogDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "stageReceipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containment",
+        "schema",
+        "policy",
+        "candidateTests",
+        "doubleBuild",
+        "loaderSolve",
+        "loaderPropose",
+        "fixedReplay",
+        "offlineCapsule"
+      ],
+      "properties": {
+        "containment": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "schema": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "policy": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "candidateTests": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "doubleBuild": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "loaderSolve": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "loaderPropose": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "fixedReplay": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "offlineCapsule": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "capsuleDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "admitted": { "const": true }
+  }
+}

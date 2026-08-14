@@ -1,7 +1,7 @@
 # Project status
 
 **当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
-**更新时间：2026-08-14（Asia/Tokyo）**
+**更新时间：2026-08-15（Asia/Tokyo）**
 
 最终 gate/commit/identity/test/blocker 对账见
 [`docs/audits/2026-08-14-v0.1-release-candidate.md`](docs/audits/2026-08-14-v0.1-release-candidate.md)。
@@ -10,9 +10,11 @@
 > “证明真实 K=3 闭环可稳定迭代并形成可用开源 v0.1”。下文 Gate 5/6 历史 benchmark artifacts 继续
 > 保留，但 60×2、K=10/K=80、sealed/full-set 不再阻塞 Gate 7 开源 release。
 
-**v0.1.1 设计边界**：[`docs/v0.1.1.md`](docs/v0.1.1.md) 是 Gate 7 之后的 successor design proposal，
-当前为 `NOT_IMPLEMENTED / NOT_ACCEPTANCE_EVIDENCE`。它不改变 Gate 5–7 的状态；实现前仍需 ADR、
-protocol version bump、fresh lineage，并按最终 v0.1 release commit 重新审计 predecessor gap。
+**v0.1.1 successor**：schema-v2 multi-file candidate、精确父 Loader、raw-evidence citation、受限工具、
+trusted materialization/admission、mechanism outcome 与 schema-11 CLI 已实现；V011-A–D 的自动化工程测试
+通过，真实 DeepSeek 工具循环已生成多文件 child。当前仍为 `V011_E_REAL_K3_PENDING`，不得提前声明
+`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`。下一步是在本次干净实现 commit 上创建 fresh lineage，注入一次
+真实 crash/resume，并完成 3 个真实 candidate Harbor trials 与独立 audit。
 
 ## Gate 5–7 v0.1 successor（已验收）
 

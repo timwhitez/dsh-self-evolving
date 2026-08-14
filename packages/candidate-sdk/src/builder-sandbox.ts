@@ -32,6 +32,10 @@ export interface BuildInput {
   sourceFiles: string[]
   /** Absolute path to the TypeScript binary to use (pinned by provenance). */
   tscBin: string
+  /** Successor candidates use the identity-free behavior-intent schema. */
+  manifestKind?: 'candidate' | 'v011-candidate-intent'
+  /** Trusted test-only imports; never applied to production source. */
+  testImportAllowlist?: ReadonlySet<string>
 }
 
 export interface BuildReceipt {
@@ -46,6 +50,10 @@ export interface BuildReceipt {
   /** Immutable source/bundle bytes consumed by the capsule packer. */
   sourceFiles: BuildArtifactFile[]
   bundleFiles: BuildArtifactFile[]
+  /** Builder-materialized runtime package bytes; canonical source remains in sourceFiles. */
+  runtimeSourceFiles?: BuildArtifactFile[]
+  /** Exact runtime package identity materialized after canonical identity derivation. */
+  runtimePackageName?: string
 }
 
 export interface BuildArtifactFile {
@@ -99,8 +107,8 @@ async function snapshotTree(root: string): Promise<BuildArtifactFile[]> {
 
 function execTsc(tscBin: string, projectDir: string): Promise<void> {
   return new Promise((resolveExec, rejectExec) => {
-    execFile(tscBin, ['-b', '--force'], { cwd: projectDir }, (err, _stdout, stderr) => {
-      if (err) rejectExec(new Error(`tsc failed: ${stderr}\n${err.message}`))
+    execFile(tscBin, ['-b', '--force'], { cwd: projectDir }, (err, stdout, stderr) => {
+      if (err) rejectExec(new Error(`tsc failed: ${stderr}\n${stdout}\n${err.message}`))
       else resolveExec()
     })
   })
@@ -199,7 +207,7 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
 
   // Step 2b: schema validation of candidate.json.
   const schemaValidation = await validateManifestFile(
-    'candidate',
+    input.manifestKind ?? 'candidate',
     join(sourceRoot, 'candidate.json'),
   )
   if (!schemaValidation.valid) {
@@ -215,7 +223,16 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
   const codeFiles = declared
     .filter((d) => d.path.endsWith('.ts') || d.path.endsWith('.js'))
     .map((d) => ({ path: d.path, absPath: d.absPath }))
-  const scan = await scanPaths(codeFiles)
+  const productionFiles = codeFiles.filter((file) => !file.path.startsWith('tests/'))
+  const testFiles = codeFiles.filter((file) => file.path.startsWith('tests/'))
+  const productionScan = await scanPaths(productionFiles)
+  const testScan = await scanPaths(testFiles, {
+    extraImportAllowlist: input.testImportAllowlist ?? new Set<string>(),
+  })
+  const scan: ScanResult = {
+    hits: [...productionScan.hits, ...testScan.hits],
+    passed: productionScan.passed && testScan.passed,
+  }
   if (!scan.passed) {
     const rejects = scan.hits.filter((h) => h.severity === 'reject')
     throw new Error(

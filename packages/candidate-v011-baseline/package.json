@@ -1,0 +1,28 @@
+{
+  "name": "@dsh-rsi/candidate-v011-baseline",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "candidate.json",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-system-prompt": "link:../../deepseek-harness/packages/core/system-prompt",
+    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
+    "typescript": "^5.7.0"
+  }
+}

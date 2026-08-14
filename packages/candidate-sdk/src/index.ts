@@ -47,3 +47,4 @@ export {
 } from './builder-sandbox.js'
 
 export { packCapsule, type CapsuleInput, type CapsuleOutput } from './capsule.js'
+export * from './v011/index.js'

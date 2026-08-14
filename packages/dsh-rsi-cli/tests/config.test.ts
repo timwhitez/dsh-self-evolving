@@ -4,8 +4,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createStableDemoConfig,
+  createV011DemoConfig,
   initializeState,
   loadConfig,
+  loadProjectConfig,
+  validateV011DemoConfig,
   validateStableDemoConfig,
 } from '../src/index.js'
 
@@ -16,6 +19,29 @@ afterEach(async () => {
 })
 
 describe('stable-demo versioned config', () => {
+  it('freezes the v0.1.1 successor protocol in a separate schema and profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-cli-v011-config-'))
+    roots.push(root)
+    const stateDir = join(root, 'state')
+    const config = createV011DemoConfig({
+      runId: 'v011-stable-demo-test',
+      stateDir,
+      repoRoot: '/root/dsh-RSI',
+      codeCommit: 'b'.repeat(40),
+    })
+    expect(config).toMatchObject({
+      schemaVersion: 11,
+      profile: 'v011-stable-demo',
+      protocol: 'dsh-rsi-candidate-tree-v2',
+      limits: { admittedChildren: 3, solverTrialsMax: 15 },
+    })
+    await initializeState(config)
+    expect(await loadProjectConfig(stateDir)).toEqual(config)
+    expect(() => validateV011DemoConfig({ ...config, protocol: 'v1' })).toThrow(
+      /unsupported v0.1.1/,
+    )
+  })
+
   it('freezes K3, 15 solver trials, Zen/high/1M and writes a private no-replace config', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-cli-config-'))
     roots.push(root)

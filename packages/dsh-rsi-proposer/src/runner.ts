@@ -47,12 +47,16 @@ export interface ProposalInput {
   evidenceSummary: string
   /** The proposal width (how many children to request). */
   width: number
+  /** Successor protocols may supply a complete versioned prompt contract. */
+  rawPrompt?: string
 }
 
 export interface ProposalTranscript {
   assistantText: string
   /** The raw session events for audit / cost attribution. */
   eventCount: number
+  /** Retained model-facing tool calls/results for trajectory-grounding audit. */
+  toolTrace: Array<{ type: string; data: unknown }>
   modelRoute: ModelRoute
 }
 
@@ -105,6 +109,7 @@ export async function runProposalTurn(
   route: ModelRoute,
   input: ProposalInput,
   signal?: AbortSignal,
+  setupAgent?: (agentCtx: Context) => void,
 ): Promise<ProposalTranscript> {
   const agents = (
     ctx as unknown as {
@@ -128,7 +133,7 @@ export async function runProposalTurn(
   }>('agents')
   if (!agents) throw new Error('proposer: ctx.agents unavailable (spine not mounted?)')
 
-  const prompt = buildProposalPrompt(input)
+  const prompt = input.rawPrompt ?? buildProposalPrompt(input)
   const handle = await agents.create({
     sessionId: SessionId(`proposer-${process.pid}-${Date.now()}`),
     meta: { cwd: process.cwd() },
@@ -143,6 +148,7 @@ export async function runProposalTurn(
         current: { provider: route.provider, model: route.model },
         assembled: undefined,
       })
+      setupAgent?.(agentCtx)
     },
     ...(signal !== undefined ? { signal } : {}),
   })
@@ -160,6 +166,9 @@ export async function runProposalTurn(
     return {
       assistantText,
       eventCount: handle.agent.session.events.length,
+      toolTrace: handle.agent.session.events
+        .filter((event) => event.type === 'tool/call' || event.type === 'tool/result')
+        .map((event) => ({ type: event.type, data: event.data ?? null })),
       modelRoute: route,
     }
   } finally {

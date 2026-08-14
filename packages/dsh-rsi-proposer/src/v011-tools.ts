@@ -1,0 +1,257 @@
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { dirname, join, posix, resolve, sep } from 'node:path'
+import type { Context } from '@deepseek-ai/cordis'
+import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { assertV011, snapshotV011Tree } from '@dsh-rsi/candidate-sdk'
+
+const EDITABLE = [
+  /^src\/(?:[^/]+\/)*[^/]+\.ts$/,
+  /^tests\/(?:[^/]+\/)*[^/]+\.spec\.ts$/,
+  /^fixtures\/(?:[^/]+\/)*[^/]+\.json$/,
+  /^README\.md$/,
+  /^candidate\.json$/,
+]
+const MAX_TOOL_CALLS = 64
+
+export interface V011ToolRoots {
+  parent: string
+  archive: string
+  evidence: string
+  contracts: string
+  childTree: string
+  slot: string
+}
+
+export interface V011ToolState {
+  finished: boolean
+  callCount: number
+}
+
+function safeRelative(path: string): string {
+  if (
+    path.length === 0 ||
+    path.length > 240 ||
+    path.startsWith('/') ||
+    path.includes('\\') ||
+    path.includes('\0') ||
+    path.split('/').some((segment) => segment === '' || segment === '.' || segment === '..') ||
+    posix.normalize(path) !== path
+  ) {
+    throw new Error(`v0.1.1 tool: unsafe relative path ${JSON.stringify(path)}`)
+  }
+  return path
+}
+
+function inside(root: string, relative: string): string {
+  const absolute = resolve(root, ...safeRelative(relative).split('/'))
+  const canonicalRoot = resolve(root)
+  if (absolute !== canonicalRoot && !absolute.startsWith(canonicalRoot + sep)) {
+    throw new Error('v0.1.1 tool: path escapes root')
+  }
+  return absolute
+}
+
+function writable(path: string): void {
+  if (!EDITABLE.some((pattern) => pattern.test(path))) {
+    throw new Error(`v0.1.1 tool: write outside editable surface: ${path}`)
+  }
+}
+
+async function assertNoLink(path: string): Promise<void> {
+  const info = await lstat(path).catch(() => null)
+  if (info?.isSymbolicLink()) throw new Error(`v0.1.1 tool: symlink rejected: ${path}`)
+}
+
+async function files(root: string): Promise<string[]> {
+  const output: string[] = []
+  async function walk(directory: string): Promise<void> {
+    for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const absolute = join(directory, entry.name)
+      if (entry.isSymbolicLink()) throw new Error(`v0.1.1 tool: link in read tree: ${absolute}`)
+      if (entry.isDirectory()) await walk(absolute)
+      else if (entry.isFile())
+        output.push(
+          absolute
+            .slice(root.length + 1)
+            .split(sep)
+            .join('/'),
+        )
+      else throw new Error(`v0.1.1 tool: special file in read tree: ${absolute}`)
+    }
+  }
+  await walk(root)
+  return output
+}
+
+function render(value: unknown) {
+  return [
+    { type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) },
+  ]
+}
+
+export function installV011Tools(
+  ctx: Context,
+  roots: V011ToolRoots,
+  expectedProposalId: string,
+): V011ToolState {
+  const state: V011ToolState = { finished: false, callCount: 0 }
+  const counted = <T extends (...args: never[]) => unknown>(fn: T): T =>
+    (async (...args: Parameters<T>) => {
+      if (state.callCount >= MAX_TOOL_CALLS) {
+        throw new Error(`v0.1.1 tool: ${MAX_TOOL_CALLS}-call limit exhausted`)
+      }
+      state.callCount += 1
+      return fn(...args)
+    }) as T
+
+  const readRoots: Record<string, string> = {
+    parent: roots.parent,
+    archive: roots.archive,
+    evidence: roots.evidence,
+    contracts: roots.contracts,
+    child: roots.childTree,
+  }
+
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'list_files',
+      description: 'List files in one bounded proposal mount.',
+      parameters: { root: { type: 'string', required: true, enum: Object.keys(readRoots) } },
+      execute: counted(async (args: { root: string }) => {
+        const root = readRoots[args.root]
+        if (root === undefined) throw new Error('v0.1.1 tool: unknown read root')
+        return render((await files(root)).slice(0, 500).join('\n'))
+      }),
+    }),
+  )
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'read_file',
+      description: 'Read one UTF-8 file from a bounded proposal mount.',
+      parameters: {
+        root: { type: 'string', required: true, enum: Object.keys(readRoots) },
+        path: { type: 'string', required: true },
+      },
+      execute: counted(async (args: { root: string; path: string }) => {
+        const root = readRoots[args.root]
+        if (root === undefined) throw new Error('v0.1.1 tool: unknown read root')
+        const path = inside(root, args.path)
+        await assertNoLink(path)
+        const bytes = await readFile(path)
+        if (bytes.byteLength > 128 * 1024) throw new Error('v0.1.1 tool: read exceeds 128 KiB')
+        return render(bytes.toString('utf8'))
+      }),
+    }),
+  )
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'search_text',
+      description: 'Search literal text across one bounded proposal mount.',
+      parameters: {
+        root: { type: 'string', required: true, enum: Object.keys(readRoots) },
+        query: { type: 'string', required: true },
+      },
+      execute: counted(async (args: { root: string; query: string }) => {
+        if (args.query.length === 0 || args.query.length > 256)
+          throw new Error('v0.1.1 tool: invalid query')
+        const root = readRoots[args.root]
+        if (root === undefined) throw new Error('v0.1.1 tool: unknown read root')
+        const hits: string[] = []
+        for (const relative of await files(root)) {
+          const bytes = await readFile(inside(root, relative))
+          if (bytes.byteLength > 128 * 1024) continue
+          for (const [index, line] of bytes.toString('utf8').split('\n').entries()) {
+            if (line.includes(args.query))
+              hits.push(`${relative}:${index + 1}:${line.slice(0, 500)}`)
+            if (hits.length >= 100) return render(hits.join('\n'))
+          }
+        }
+        return render(hits.join('\n'))
+      }),
+    }),
+  )
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'write_file',
+      description: 'Create or replace one file in the preassigned child tree.',
+      parameters: {
+        path: { type: 'string', required: true },
+        content: { type: 'string', required: true },
+      },
+      execute: counted(async (args: { path: string; content: string }) => {
+        const relative = safeRelative(args.path)
+        if (Buffer.byteLength(args.content) > 256 * 1024 || args.content.includes('\0')) {
+          throw new Error('v0.1.1 tool: write exceeds byte policy')
+        }
+        const metadata = relative === 'analysis.json' || relative === 'proposal.json'
+        if (!metadata) writable(relative)
+        const path = inside(metadata ? roots.slot : roots.childTree, relative)
+        await assertNoLink(path)
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+        await writeFile(path, args.content, { mode: 0o600 })
+        if (!metadata) await snapshotV011Tree(roots.childTree)
+        return render({ written: relative, bytes: Buffer.byteLength(args.content) })
+      }),
+    }),
+  )
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'remove_file',
+      description: 'Remove one editable file from the preassigned child tree.',
+      parameters: { path: { type: 'string', required: true } },
+      execute: counted(async (args: { path: string }) => {
+        const relative = safeRelative(args.path)
+        writable(relative)
+        if (relative === 'src/index.ts') throw new Error('v0.1.1 tool: src/index.ts is mandatory')
+        const path = inside(roots.childTree, relative)
+        await assertNoLink(path)
+        await rm(path)
+        await snapshotV011Tree(roots.childTree)
+        return render({ removed: relative })
+      }),
+    }),
+  )
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'validate_child',
+      description: 'Run containment and successor-schema checks on the current child tree.',
+      parameters: {},
+      execute: counted(async () => {
+        const snapshot = await snapshotV011Tree(roots.childTree)
+        const candidate = JSON.parse(
+          await readFile(join(roots.childTree, 'candidate.json'), 'utf8'),
+        ) as unknown
+        await assertV011('candidate-intent', candidate)
+        return render({
+          files: snapshot.files.length,
+          sourceBytes: snapshot.sourceBytes,
+          schema: 'PASS',
+        })
+      }),
+    }),
+  )
+  ctx.tools.register(
+    defineContentToolFixture({
+      name: 'finish_proposal',
+      description: 'Validate final analysis and proposal files and finish this proposal attempt.',
+      parameters: {},
+      execute: counted(async () => {
+        const analysis = JSON.parse(
+          await readFile(join(roots.slot, 'analysis.json'), 'utf8'),
+        ) as unknown
+        const proposal = JSON.parse(await readFile(join(roots.slot, 'proposal.json'), 'utf8')) as {
+          proposalId?: unknown
+        }
+        await Promise.all([assertV011('analysis', analysis), assertV011('proposal', proposal)])
+        if (proposal.proposalId !== expectedProposalId)
+          throw new Error('v0.1.1 tool: proposal ID is not reserved ID')
+        await snapshotV011Tree(roots.childTree)
+        state.finished = true
+        return render({ status: 'PROPOSAL_FILES_VALID', proposalId: expectedProposalId })
+      }),
+    }),
+  )
+  return state
+}

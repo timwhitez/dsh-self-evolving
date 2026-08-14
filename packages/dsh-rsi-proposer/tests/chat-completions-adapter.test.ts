@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  CallId,
+  createAssistantMessage,
+  createToolResultMessage,
+  createUserMessage,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import { TrustedChatCompletionsAdapter, type ProposalGatewayRoute } from '../src/index.js'
 
 const route: ProposalGatewayRoute = {
@@ -107,7 +113,127 @@ describe('trusted compatible Chat Completions proposal adapter', () => {
     expect(JSON.stringify(chunks)).not.toContain('authorization')
   })
 
-  it('rejects route overrides, model tools, and missing credentials', async () => {
+  it('translates tool calls and replays hidden reasoning only on the trusted host', async () => {
+    process.env['RSI_PROVIDER_API_KEY'] = 'x'
+    const wireBodies: Array<Record<string, unknown>> = []
+    let fetchCalls = 0
+    const adapter = new TrustedChatCompletionsAdapter({
+      route,
+      expectedResponseModel: 'deepseek-v4-flash',
+      contextWindow: 1_048_576,
+      async fetchImpl(_input, init) {
+        fetchCalls += 1
+        wireBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return fetchCalls === 1
+          ? Response.json({
+              id: 'tool-turn',
+              model: 'deepseek-v4-flash',
+              choices: [
+                {
+                  finish_reason: 'tool_calls',
+                  message: {
+                    content: '',
+                    reasoning_content: 'trusted private reasoning',
+                    tool_calls: [
+                      {
+                        id: 'call-1',
+                        type: 'function',
+                        function: { name: 'read_file', arguments: '{"path":"x"}' },
+                      },
+                    ],
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 5 },
+            })
+          : Response.json({
+              id: 'final-turn',
+              model: 'deepseek-v4-flash',
+              choices: [{ finish_reason: 'stop', message: { content: 'done' } }],
+              usage: { prompt_tokens: 15, completion_tokens: 1 },
+            })
+      },
+    })
+    const tools = [{ name: 'read_file', description: 'Read', parameters: { type: 'object' } }]
+    const firstChunks: StreamChunk[] = []
+    for await (const chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: 'inspect' }],
+          source: { kind: 'user' },
+        }),
+      ],
+      tools,
+    })) {
+      firstChunks.push(chunk)
+    }
+    expect(firstChunks).toContainEqual({
+      type: 'block-end',
+      index: 0,
+      block: {
+        type: 'tool-call',
+        id: CallId('call-1'),
+        name: 'read_file',
+        arguments: '{"path":"x"}',
+      },
+    })
+    expect(firstChunks.at(-1)).toMatchObject({ reason: { kind: 'tool-calls' } })
+    expect(JSON.stringify(firstChunks)).not.toContain('trusted private reasoning')
+
+    const assistant = createAssistantMessage({
+      content: [
+        {
+          type: 'tool-call',
+          id: CallId('call-1'),
+          name: 'read_file',
+          arguments: '{"path":"x"}',
+        },
+      ],
+      source: { provider: route.provider, model: route.model },
+    })
+    const result = createToolResultMessage({
+      callId: CallId('call-1'),
+      content: [{ type: 'text', text: 'contents' }],
+      isError: false,
+    })
+    for await (const _chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [assistant, result],
+      tools,
+    })) {
+      // Drain the trusted continuation.
+    }
+    expect(wireBodies[0]?.['tools']).toEqual([
+      {
+        type: 'function',
+        function: { name: 'read_file', description: 'Read', parameters: { type: 'object' } },
+      },
+    ])
+    expect(wireBodies[1]?.['messages']).toEqual([
+      {
+        role: 'assistant',
+        content: '',
+        reasoning_content: 'trusted private reasoning',
+        tool_calls: [
+          {
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"path":"x"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call-1', content: 'contents' },
+    ])
+  })
+
+  it('rejects route overrides and missing credentials', async () => {
     delete process.env['RSI_PROVIDER_API_KEY']
     const adapter = new TrustedChatCompletionsAdapter({
       route,
@@ -126,13 +252,6 @@ describe('trusted compatible Chat Completions proposal adapter', () => {
     await expect(async () => {
       for await (const chunk of adapter.stream({ ...base, model: 'override' })) void chunk
     }).rejects.toThrow(/locked route/)
-    await expect(async () => {
-      for await (const chunk of adapter.stream({
-        ...base,
-        tools: [{ name: 'forbidden', description: 'forbidden', parameters: {} }],
-      }))
-        void chunk
-    }).rejects.toThrow(/does not permit model tool calls/)
     await expect(async () => {
       for await (const chunk of adapter.stream(base)) void chunk
     }).rejects.toThrow(/credential env RSI_PROVIDER_API_KEY is unavailable/)

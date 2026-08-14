@@ -38,3 +38,8 @@ export {
   type ProposalSandboxInput,
   type ProposalSandboxResult,
 } from './process-sandbox.js'
+export * from './v011-citations.js'
+export * from './v011-materializer.js'
+export * from './v011-outcome.js'
+export * from './v011-capability-ledger.js'
+export * from './v011-recovery.js'

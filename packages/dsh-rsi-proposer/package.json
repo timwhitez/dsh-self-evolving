@@ -35,6 +35,7 @@
     "@deepseek-ai/dsh-llm": "link:../../deepseek-harness/packages/llm/llm",
     "@deepseek-ai/dsh-llm-deepseek": "link:../../deepseek-harness/packages/llm/llm-deepseek",
     "@deepseek-ai/dsh-session": "link:../../deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-tools": "link:../../deepseek-harness/packages/core/tools",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

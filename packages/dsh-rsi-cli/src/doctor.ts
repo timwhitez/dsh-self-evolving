@@ -3,7 +3,7 @@ import { access, readFile, stat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { StableDemoConfig } from './config.js'
+import type { ProjectConfig } from './config.js'
 import { readSourceArchiveIdentity, verifySourceArchiveIdentity } from './source-identity.js'
 
 export type CheckStatus = 'PASS' | 'FAIL'
@@ -40,7 +40,7 @@ async function privateFile(path: string): Promise<boolean> {
   return info?.isFile() === true && (info.mode & 0o077) === 0
 }
 
-export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport> {
+export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
   const authPath = join(homedir(), '.codex', 'auth.json')
   const codexConfigPath = join(homedir(), '.codex', 'config.toml')
   const [authPrivate, codexConfigPrivate] = await Promise.all([
