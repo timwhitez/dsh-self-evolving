@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-rsi/capsule.manifest.schema.json",
+  "title": "Evaluation capsule manifest",
+  "description": "Self-contained immutable capsule descriptor (spec 02 §12). Verified pre- and post-unpack by the Harbor adapter.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "candidateId",
+    "runtime",
+    "candidate",
+    "runner",
+    "provenance",
+    "sbom",
+    "sha256sums"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "candidateId": { "type": "string" },
+    "runtime": {
+      "type": "object",
+      "required": ["kind", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["pinned-closure", "install-manifest"] },
+        "ref": { "type": "string" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["bundleHash"],
+      "additionalProperties": false,
+      "properties": {
+        "bundleHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "runner": {
+      "type": "object",
+      "required": ["overlay"],
+      "additionalProperties": false,
+      "properties": {
+        "overlay": { "type": "string" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["ref"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "type": "string" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "sbom": {
+      "type": "object",
+      "required": ["ref"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "type": "string" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "sha256sums": {
+      "type": "object",
+      "required": ["ref", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "type": "string" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

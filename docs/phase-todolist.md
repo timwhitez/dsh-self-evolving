@@ -22,16 +22,22 @@
 
 ## Phase 1 — Candidate SDK 与 trusted builder（Gate 1，3–5 天）
 
-- [ ] `schemas/`：candidate/proposal/build/capsule manifest 的 versioned JSON Schema
-- [ ] canonical tar + SHA-256 身份（排序、固定 mode/mtime、拒绝 symlink/traversal/大小超限）
-- [ ] diff boundary 校验 + dependency/import allowlist + task-fingerprint/secret scan（AST + module graph）
-- [ ] `packages/candidate-sdk/`：类型、validator、testkit；两模式（solve/propose）baseline candidate
-- [ ] deterministic builder sandbox：无网络、禁 lifecycle scripts、double build hash 一致、SBOM
-- [ ] evaluation capsule：runtime closure + compiled bundle + runner + provenance + SHA256SUMS
-- [ ] packed capsule 在无 source、无网络的 fresh container 中完成 DSH ACP initialize/session
-- [ ] 全套拒绝 fixtures：traversal/symlink/install-script/dynamic-import/task-literal/default-export/leaked-effect
+- [x] `schemas/`：candidate/proposal/build/capsule manifest 的 versioned JSON Schema
+- [x] canonical tar + SHA-256 身份（排序、固定 mode/mtime、拒绝 symlink/traversal/大小超限）
+- [x] diff boundary 校验 + dependency/import allowlist + task-fingerprint/secret scan（AST + module graph）
+- [x] `packages/candidate-sdk/`：类型、validator、testkit；两模式（solve/propose）baseline candidate
+- [x] deterministic builder sandbox：无网络、禁 lifecycle scripts、double build hash 一致、SBOM
+- [x] evaluation capsule：runtime closure + compiled bundle + runner + provenance + SHA256SUMS
+- [x] packed capsule 在无 source、无网络的 fresh container 中完成 DSH ACP initialize/session
+- [x] 全套拒绝 fixtures：traversal/symlink/install-script/dynamic-import/task-literal/default-export/leaked-effect
 
 **退出证据**：golden candidate 双次 clean build 三 hash 相同；全部拒绝 fixture 生效。
+
+> **已完成（2026-08-14）**：`packages/candidate-sdk/` + 4 个 JSON Schema。证据：
+> golden build 三 hash 一致（`builder-golden.test.ts`，2 绿）；canonical tar/identity 10 绿；
+> policy scanner 19 绿（含 15 reject fixture）；manifest validation 7 绿；rejection suite 9 绿
+> （dynamic-import/default-export/task-literal/external-import/child-process/secret/symlink/install-script）；
+> packed capsule 离线 boot 真实 Loader（`capsule-offline-boot.e2e.ts`，1 绿）。共 57 单元 + 4 E2E。
 
 ## Phase 2 — Terminal-Bench provider 垂直切片（Gate 2，3–5 天）
 

@@ -1,0 +1,40 @@
+{
+  "name": "@dsh-rsi/candidate-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Candidate contract SDK: canonical tar/SHA-256 identity, manifest validation, policy scanner, deterministic builder harness, capsule packing. Trusted code (TCB-adjacent): candidates depend on its types but cannot override its validators.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./identity": {
+      "types": "./lib/identity/index.d.ts",
+      "default": "./lib/identity/index.js"
+    },
+    "./scan": {
+      "types": "./lib/scan/index.d.ts",
+      "default": "./lib/scan/index.js"
+    },
+    "./validate": {
+      "types": "./lib/validate/index.d.ts",
+      "default": "./lib/validate/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dependencies": {
+    "@dsh-rsi/candidate-baseline": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "ajv": "^8.17.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,10 +1,12 @@
-name: gate0
+name: ci
 
-# Gate 0 CI (spec 07 §12). Every PR must pass:
+# CI gates (spec 07 §12). Every PR must pass:
 #   format / lint / typecheck
 #   schema compatibility (via typecheck + unit)
-#   unit + property tests
-#   real Cordis Loader E2E
+#   unit + property tests (incl. canonical-tar identity, policy scanner,
+#     manifest validation, golden builder, rejection fixture suite)
+#   real Cordis Loader E2E (boot/unload/quiescence, negative default-export,
+#     packed-capsule offline boot)
 #   upstream worktrees unchanged
 #   AGENTS/CLAUDE byte equality
 #   provenance lock machine-verifiable
