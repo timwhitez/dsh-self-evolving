@@ -22,7 +22,9 @@ const EDITABLE = [
   /^README\.md$/,
   /^candidate\.json$/,
 ]
-const MAX_TOOL_CALLS = 64
+const MAX_AUTHORING_TOOL_CALLS = 64
+const MAX_CORRECTION_TOOL_CALLS = 16
+const MAX_CONTROL_TOOL_CALLS = 8
 
 export interface V011ToolRoots {
   parent: string
@@ -36,6 +38,10 @@ export interface V011ToolRoots {
 export interface V011ToolState {
   finished: boolean
   callCount: number
+  authoringCallCount: number
+  correctionCallCount: number
+  controlCallCount: number
+  correctionMode: boolean
 }
 
 export interface V011ProposalBindings {
@@ -44,6 +50,38 @@ export interface V011ProposalBindings {
   exportManifestDigest: `sha256:${string}`
   exportMerkleRoot: `sha256:${string}`
   ancestorClusters: string[]
+}
+
+export function consumeV011ToolBudget(
+  state: V011ToolState,
+  kind: 'content' | 'control',
+  enterCorrection = false,
+): void {
+  if (kind === 'control') {
+    if (state.controlCallCount >= MAX_CONTROL_TOOL_CALLS) {
+      throw new Error(`v0.1.1 tool: ${MAX_CONTROL_TOOL_CALLS}-control-call limit exhausted`)
+    }
+    state.controlCallCount += 1
+    state.callCount += 1
+    if (enterCorrection) state.correctionMode = true
+    return
+  }
+  if (state.correctionMode) {
+    if (state.correctionCallCount >= MAX_CORRECTION_TOOL_CALLS) {
+      throw new Error(
+        `v0.1.1 tool: ${MAX_CORRECTION_TOOL_CALLS}-call semantic-correction limit exhausted`,
+      )
+    }
+    state.correctionCallCount += 1
+  } else {
+    if (state.authoringCallCount >= MAX_AUTHORING_TOOL_CALLS) {
+      throw new Error(
+        `v0.1.1 tool: ${MAX_AUTHORING_TOOL_CALLS}-call authoring limit exhausted; call validate_child or finish_proposal`,
+      )
+    }
+    state.authoringCallCount += 1
+  }
+  state.callCount += 1
 }
 
 function safeRelative(path: string): string {
@@ -115,13 +153,22 @@ export function installV011Tools(
   roots: V011ToolRoots,
   bindings: V011ProposalBindings,
 ): V011ToolState {
-  const state: V011ToolState = { finished: false, callCount: 0 }
+  const state: V011ToolState = {
+    finished: false,
+    callCount: 0,
+    authoringCallCount: 0,
+    correctionCallCount: 0,
+    controlCallCount: 0,
+    correctionMode: false,
+  }
   const counted = <T extends (...args: never[]) => unknown>(fn: T): T =>
     (async (...args: Parameters<T>) => {
-      if (state.callCount >= MAX_TOOL_CALLS) {
-        throw new Error(`v0.1.1 tool: ${MAX_TOOL_CALLS}-call limit exhausted`)
-      }
-      state.callCount += 1
+      consumeV011ToolBudget(state, 'content')
+      return fn(...args)
+    }) as T
+  const controlled = <T extends (...args: never[]) => unknown>(fn: T, enterCorrection = false): T =>
+    (async (...args: Parameters<T>) => {
+      consumeV011ToolBudget(state, 'control', enterCorrection)
       return fn(...args)
     }) as T
 
@@ -237,7 +284,7 @@ export function installV011Tools(
       name: 'validate_child',
       description: 'Run containment and successor-schema checks on the current child tree.',
       parameters: {},
-      execute: counted(async () => {
+      execute: controlled(async () => {
         const snapshot = await snapshotV011Tree(roots.childTree)
         const candidate = JSON.parse(
           await readFile(join(roots.childTree, 'candidate.json'), 'utf8'),
@@ -256,7 +303,7 @@ export function installV011Tools(
       name: 'finish_proposal',
       description: 'Validate final analysis and proposal files and finish this proposal attempt.',
       parameters: {},
-      execute: counted(async () => {
+      execute: controlled(async () => {
         const analysis = JSON.parse(
           await readFile(join(roots.slot, 'analysis.json'), 'utf8'),
         ) as V011Analysis
@@ -301,7 +348,7 @@ export function installV011Tools(
         await snapshotV011Tree(roots.childTree)
         state.finished = true
         return render({ status: 'PROPOSAL_SEMANTICS_VALID', proposalId: bindings.proposalId })
-      }),
+      }, true),
     }),
   )
   return state
