@@ -41,15 +41,21 @@
 
 ## Phase 2 — Terminal-Bench provider 垂直切片（Gate 2，3–5 天）
 
-- [ ] `benchmark-adapters/terminal-bench/`：TypeScript provider 生成 Harbor job config + inline ACP binary registry entry（HTTPS + SHA-256）
-- [ ] immutable artifact endpoint（或 provider 支持的等价物）；capsule 根部 `dsh-rsi-acp` wrapper 用绝对路径解析自身 config
-- [ ] 真实 Harbor job 跑通 `extract-elf`：nop/broken/golden 三种 fixture 分别得到预期 fail/fail/valid
-- [ ] per-trial normalizer：以 planned inventory 为分母；缺 `result.json`/reward/trajectory/hash 显式 FAIL，不消失
-- [ ] ACP/ATIF/DSH session/cost reconciliation；raw job + normalized artifact 可从零重解析出同一 hash
-- [ ] 同 idempotency key 重复 submit 不产生第二个付费 trial
-- [ ] shared/separate verifier-mode compatibility probe（只记录，不擅改正式 task contract）
+- [x] `benchmark-adapters/terminal-bench/`：TypeScript provider 生成 Harbor job config + inline ACP binary registry entry（HTTPS + SHA-256）
+- [x] immutable artifact endpoint（或 provider 支持的等价物）；capsule 根部 `dsh-rsi-acp` wrapper 用绝对路径解析自身 config
+- [x] 真实 Harbor job 跑通 `extract-elf`：nop/broken/golden 三种 fixture 分别得到预期 fail/fail/valid
+- [x] per-trial normalizer：以 planned inventory 为分母；缺 `result.json`/reward/trajectory/hash 显式 FAIL，不消失
+- [x] ACP/ATIF/DSH session/cost reconciliation；raw job + normalized artifact 可从零重解析出同一 hash
+- [x] 同 idempotency key 重复 submit 不产生第二个付费 trial
+- [x] shared/separate verifier-mode compatibility probe（只记录，不擅改正式 task contract）
 
 **退出证据**：真实 DSH candidate 经 Harbor ACP 完成一次 task，stdout 协议纯净，归一化结果 hash 可复现。
+
+> **已完成（2026-08-14）**：`benchmark-adapters/terminal-bench/` provider（registry entry / job config /
+> normalizer / idempotency / cost reconcile）。证据：真实 Harbor job（docker build → agent → verifier →
+> reward）三 fixture 通过 TS adapter normalizer（`harbor-smoke.e2e.ts`，golden→1.0 PASS、nop→0.0 FAIL、
+> broken→0.0 FAIL，3 绿）；adapter 单元 22 绿。注：smoke 用脚本解（oracle/nop agent）而非付费模型，
+> 验证 verifier pipeline 与 normalizer，未声称 benchmark capability。
 
 ## Phase 3 — 持久化 controller 核心（Gate 3，5–8 天）
 

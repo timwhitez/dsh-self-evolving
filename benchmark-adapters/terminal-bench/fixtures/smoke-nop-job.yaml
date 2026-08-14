@@ -1,0 +1,12 @@
+job_name: rsi-smoke-nop
+jobs_dir: /tmp/rsi-smoke-jobs-nop
+n_attempts: 1
+n_concurrent_trials: 1
+environment:
+  type: docker
+  force_build: true
+  delete: true
+agents:
+  - name: nop
+tasks:
+  - path: ../benchmark-adapters/terminal-bench/fixtures/smoke-task

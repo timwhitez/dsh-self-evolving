@@ -1,0 +1,16 @@
+# Gate 2 smoke job: runs the golden solution through Harbor's full pipeline
+# (docker build → oracle agent → verifier → reward). Proves the adapter's
+# verifier path produces reward=1.0 for a correct solution.
+# Run: cd harbor && uv run harbor job start -c ../benchmark-adapters/terminal-bench/fixtures/smoke-golden-job.yaml
+job_name: rsi-smoke-golden
+jobs_dir: /tmp/rsi-smoke-jobs
+n_attempts: 1
+n_concurrent_trials: 1
+environment:
+  type: docker
+  force_build: true
+  delete: true
+agents:
+  - name: oracle
+tasks:
+  - path: ../benchmark-adapters/terminal-bench/fixtures/smoke-task

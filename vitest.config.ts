@@ -5,7 +5,11 @@ import { defineConfig } from 'vitest/config'
 // job with a longer timeout and a guaranteed-built DSH tree.
 export default defineConfig({
   test: {
-    include: ['packages/**/tests/**/*.test.ts', 'scripts/**/*.test.ts'],
+    include: [
+      'packages/**/tests/**/*.test.ts',
+      'benchmark-adapters/**/tests/**/*.test.ts',
+      'scripts/**/*.test.ts',
+    ],
     exclude: [
       '**/node_modules/**',
       '**/tests/**/*.e2e.ts',

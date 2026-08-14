@@ -8,7 +8,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     root: __dirname,
-    include: ['packages/**/tests/**/*.e2e.ts'],
+    include: ['packages/**/tests/**/*.e2e.ts', 'benchmark-adapters/**/tests/**/*.e2e.ts'],
     exclude: ['**/node_modules/**', '**/deepseek-harness/**', '**/harbor/**', '**/tb/**'],
     environment: 'node',
     globals: false,

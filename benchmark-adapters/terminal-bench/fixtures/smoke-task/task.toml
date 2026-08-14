@@ -1,0 +1,37 @@
+# Minimal Harbor task for the Gate 2 extract-elf-style smoke (spec 07 §4).
+#
+# It exercises the full Harbor job pipeline (docker build → solution → verifier →
+# reward) WITHOUT a model: the "agent" is a fixed solution script. Three fixture
+# solutions (nop/broken/golden) are swapped in to prove the verifier produces
+# expected fail/fail/valid. This is the trusted normalizer's evidence source.
+schema_version = "1.4"
+
+[task]
+name = "dsh-rsi/smoke"
+version = "1.0.0"
+authors = []
+keywords = []
+
+[metadata]
+author_name = "dsh-rsi"
+difficulty = "easy"
+category = "smoke"
+tags = []
+
+[verifier]
+timeout_sec = 120.0
+
+[agent]
+timeout_sec = 120.0
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 1
+memory_mb = 2048
+storage_mb = 10240
+gpus = 0
+mcp_servers = []
+
+[verifier.env]
+
+[solution.env]
