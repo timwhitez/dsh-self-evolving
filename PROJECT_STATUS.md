@@ -1,7 +1,45 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 + 3 + 4 + 5 + 6 COMPLETE — Awaiting Gate 7**  
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTANCE_FAILED`**
 **更新时间：2026-08-14（Asia/Tokyo）**
+
+## Gate 1 successor（已验收）
+
+Gate 1 已通过 versioned successor 修复：capsule 现在物化真实 pinned runtime closure、生成
+SPDX 2.3 package inventory、使用无循环的 manifest/sums 联合 hash，并从 packed bytes 完成 ACP
+initialize/session/prompt。验收同时在独立 network namespace 与 fresh `FROM scratch` Docker
+容器中通过；容器为只读根文件系统、`NetworkMode=none`，未挂载 source checkout。
+
+完整证据见
+[`docs/audits/2026-08-14-gate1-successor.md`](docs/audits/2026-08-14-gate1-successor.md)。
+当前最早失败门推进为 Gate 2：既有 Harbor smoke 仍是脚本 agent，不是真实 packed DSH candidate
+经 Harbor ACP client 的运行。
+
+## 2026-08-14 独立验收审计
+
+对 commit `4cbd1b0fe0df80765c9e9292f174b8c5f47c1034` 按 `specs/00–07` 重新逐门审计后，
+此前的“Gate 0–6 COMPLETE”口径标记为 `SUPERSEDED`。最早失败门是 Gate 1：当前 capsule
+仍通过 source-checkout symlink 提供 DSH packages，只验证真实 Loader boot，没有按 spec 02 §12 / spec
+07 §3 完成自包含 stable ACP runtime 的 initialize/session E2E。Gate 2–6 的已有代码和 artifact
+继续保留为工程证据，但在 Gate 1 successor 验收前均不得作为已通过门。
+
+完整差距矩阵与修复顺序见
+[`docs/audits/2026-08-14-gate-acceptance-audit.md`](docs/audits/2026-08-14-gate-acceptance-audit.md)。
+
+当前声明边界：
+
+```text
+GATE_0_ACCEPTED
+GATE_1_ACCEPTED
+GATE_2_ACCEPTANCE_FAILED
+FORMAL_SEARCH_NOT_STARTED
+SEALED_NOT_ACCESSED
+NO_PERFORMANCE_CLAIM
+```
+
+## 以下为被审计取代的历史状态（保留，不作为当前验收结论）
+
+**历史状态：GATE 0 + 1 + 2 + 3 + 4 + 5 + 6 COMPLETE — `SUPERSEDED`**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
 

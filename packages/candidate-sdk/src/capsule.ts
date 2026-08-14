@@ -15,9 +15,32 @@
  * runtime user has read-only access to runtime/ and candidate/.
  */
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { dirname, join, relative, resolve } from 'node:path'
 import type { BuildReceipt } from './builder-sandbox.js'
+
+export interface RuntimeClosureInput {
+  /** Trees containing pinned DSH/vendor package roots. */
+  catalogRoots: string[]
+  /** Runtime entry package plus deployment-specific adapters/backends. */
+  seedPackages: string[]
+  /** Package whose built bin boots the ACP server. */
+  entryPackage: string
+  /** POSIX-relative executable module within entryPackage. */
+  entryBin: string
+}
 
 export interface CapsuleInput {
   /** Where to write the capsule. */
@@ -28,10 +51,14 @@ export interface CapsuleInput {
   candidateSourceRoot: string
   /** Runner overlay content (the stable runner's final row restatement). */
   runnerOverlay: string
+  /** Additional immutable runner-local modules referenced by the overlay. */
+  runnerFiles?: Record<string, string>
   /** Provenance slice (JSON string) to embed. */
   provenanceJson: string
   /** SBOM content (JSON string). */
   sbomJson: string
+  /** Pinned package closure for the stable ACP runtime. */
+  runtimeClosure: RuntimeClosureInput
 }
 
 export interface CapsuleOutput {
@@ -56,6 +83,10 @@ async function writeSha256sums(
       else if (e.isFile()) {
         const content = await readFile(abs)
         const rel = relative(root, abs)
+        // Avoid the impossible self-reference/cycle:
+        // SHA256SUMS cannot hash itself, and capsule.json contains the hash of
+        // SHA256SUMS. The capsule identity below hashes both files together.
+        if (rel === 'SHA256SUMS' || rel === 'capsule.json') continue
         const h = createHash('sha256').update(content).digest('hex')
         entries.push(`${h}  ${rel}`)
         map.set(rel, h)
@@ -95,12 +126,360 @@ async function copyCandidate(src: string, dest: string): Promise<void> {
 
 async function copyDir(src: string, dest: string): Promise<void> {
   await mkdir(dest, { recursive: true })
-  const names = await readdir(src, { withFileTypes: true })
+  const names = (await readdir(src, { withFileTypes: true })).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )
   for (const e of names) {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === 'coverage') continue
     const from = join(src, e.name)
     const to = join(dest, e.name)
     if (e.isDirectory()) await copyDir(from, to)
     else if (e.isFile()) await copyFile(from, to)
+    else if (e.isSymbolicLink()) {
+      const target = await readlink(from)
+      if (target.startsWith('/') || target.split('/').includes('..')) {
+        throw new Error(`runtime closure: unsafe package symlink ${from} -> ${target}`)
+      }
+      await symlink(target, to)
+    }
+  }
+}
+
+interface PackageJson {
+  name: string
+  version?: string
+  files?: string[]
+  dependencies?: Record<string, string>
+  optionalDependencies?: Record<string, string>
+  peerDependencies?: Record<string, string>
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>
+}
+
+async function copyPath(from: string, to: string): Promise<boolean> {
+  const info = await lstat(from).catch(() => null)
+  // Published packages occasionally retain a stale non-runtime license/readme
+  // entry in `files`. The executable entry is validated separately below.
+  if (info === null) return false
+  if (info.isDirectory()) await copyDir(from, to)
+  else if (info.isFile()) {
+    await mkdir(dirname(to), { recursive: true })
+    await copyFile(from, to)
+  } else if (info.isSymbolicLink()) {
+    const target = await readlink(from)
+    if (target.startsWith('/') || target.split('/').includes('..')) {
+      throw new Error(`runtime closure: unsafe package symlink ${from} -> ${target}`)
+    }
+    await mkdir(dirname(to), { recursive: true })
+    await symlink(target, to)
+  } else {
+    throw new Error(`runtime closure: unsupported package entry ${from}`)
+  }
+  return true
+}
+
+/** Copy exactly the package's published surface when `files` is declared. */
+async function copyRuntimePackage(src: string, dest: string, pkg: PackageJson): Promise<void> {
+  if (pkg.files === undefined || pkg.files.length === 0) {
+    await copyDir(src, dest)
+    return
+  }
+  await mkdir(dest, { recursive: true })
+  await copyFile(join(src, 'package.json'), join(dest, 'package.json'))
+  const copied = new Set<string>()
+  for (const declaration of [...pkg.files].sort()) {
+    const segments = declaration.split('/')
+    const wildcard = segments.findIndex((segment) => /[*?[\]{}]/.test(segment))
+    const selected = (wildcard === -1 ? segments : segments.slice(0, wildcard)).join('/')
+    if (selected.length === 0 || copied.has(selected)) continue
+    copied.add(selected)
+    await copyPath(join(src, ...selected.split('/')), join(dest, ...selected.split('/')))
+  }
+}
+
+interface ClosurePackage {
+  name: string
+  version: string | null
+  contentHash: string
+}
+
+function generateSpdx(
+  packages: ClosurePackage[],
+  receipt: BuildReceipt,
+  suppliedSbomJson: string,
+): string {
+  const supplied = JSON.parse(suppliedSbomJson) as unknown
+  if (supplied === null || typeof supplied !== 'object' || Array.isArray(supplied)) {
+    throw new Error('capsule SBOM input must be a JSON object')
+  }
+  const sourceSbomHash = createHash('sha256').update(suppliedSbomJson).digest('hex')
+  const described = packages.map((pkg) => ({
+    SPDXID: `SPDXRef-Package-${createHash('sha256').update(pkg.name).digest('hex').slice(0, 20)}`,
+    name: pkg.name,
+    versionInfo: pkg.version ?? 'NOASSERTION',
+    downloadLocation: 'NOASSERTION',
+    filesAnalyzed: false,
+    checksums: [{ algorithm: 'SHA256', checksumValue: pkg.contentHash }],
+    licenseConcluded: 'NOASSERTION',
+    licenseDeclared: 'NOASSERTION',
+    copyrightText: 'NOASSERTION',
+  }))
+  const namespaceHash = createHash('sha256')
+    .update(JSON.stringify(described))
+    .update(receipt.candidateId)
+    .digest('hex')
+  return (
+    JSON.stringify(
+      {
+        spdxVersion: 'SPDX-2.3',
+        dataLicense: 'CC0-1.0',
+        SPDXID: 'SPDXRef-DOCUMENT',
+        name: `dsh-rsi-capsule-${receipt.candidateId}`,
+        documentNamespace: `https://dsh-rsi.invalid/spdx/${namespaceHash}`,
+        documentComment: `source-sbom-sha256:${sourceSbomHash}`,
+        creationInfo: {
+          created: '1970-01-01T00:00:00Z',
+          creators: ['Tool: @dsh-rsi/candidate-sdk'],
+        },
+        documentDescribes: described.map((pkg) => pkg.SPDXID),
+        packages: described,
+      },
+      null,
+      2,
+    ) + '\n'
+  )
+}
+
+async function readPackageJson(root: string): Promise<PackageJson> {
+  const parsed = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as PackageJson
+  if (typeof parsed.name !== 'string' || parsed.name.length === 0) {
+    throw new Error(`runtime closure: package at ${root} has no name`)
+  }
+  return parsed
+}
+
+/** Build a name→root map without following package-internal node_modules. */
+async function scanPackageCatalog(roots: string[]): Promise<Map<string, string>> {
+  const catalog = new Map<string, string>()
+  async function walk(dir: string): Promise<void> {
+    const packagePath = join(dir, 'package.json')
+    const packageStat = await stat(packagePath).catch(() => null)
+    if (packageStat?.isFile()) {
+      const pkg = await readPackageJson(dir)
+      const existing = catalog.get(pkg.name)
+      if (existing !== undefined && resolve(existing) !== resolve(dir)) {
+        throw new Error(`runtime closure: duplicate catalog package ${pkg.name}`)
+      }
+      catalog.set(pkg.name, dir)
+      return
+    }
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('.'))
+        continue
+      await walk(join(dir, entry.name))
+    }
+  }
+  for (const root of [...roots].sort()) await walk(root)
+  return catalog
+}
+
+async function locatePackageRoot(entry: string, expectedName: string): Promise<string> {
+  let cursor = dirname(entry)
+  for (;;) {
+    const candidate = join(cursor, 'package.json')
+    const raw = await readFile(candidate, 'utf8').catch(() => null)
+    if (raw !== null) {
+      const parsed = JSON.parse(raw) as { name?: string }
+      if (parsed.name === expectedName) return cursor
+    }
+    const parent = dirname(cursor)
+    if (parent === cursor) break
+    cursor = parent
+  }
+  throw new Error(`runtime closure: cannot locate package root for ${expectedName} from ${entry}`)
+}
+
+async function resolveDependencyRoot(fromRoot: string, name: string): Promise<string> {
+  const requireFromPackage = createRequire(join(fromRoot, 'package.json'))
+  try {
+    return dirname(requireFromPackage.resolve(`${name}/package.json`))
+  } catch {
+    const entry = requireFromPackage.resolve(name)
+    return locatePackageRoot(entry, name)
+  }
+}
+
+async function hashDirectory(root: string): Promise<string> {
+  const rows: string[] = []
+  async function walk(dir: string): Promise<void> {
+    for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const abs = join(dir, entry.name)
+      const rel = relative(root, abs)
+      if (entry.isDirectory()) await walk(abs)
+      else if (entry.isFile()) {
+        rows.push(
+          `${rel}:${createHash('sha256')
+            .update(await readFile(abs))
+            .digest('hex')}`,
+        )
+      } else if (entry.isSymbolicLink()) {
+        rows.push(`${rel}:symlink:${await readlink(abs)}`)
+      }
+    }
+  }
+  await walk(root)
+  return createHash('sha256').update(rows.join('\n')).digest('hex')
+}
+
+async function materializeRuntimeClosure(input: {
+  runtimeDir: string
+  closure: RuntimeClosureInput
+  candidateSourceRoot: string
+  runnerOverlay: string
+  runnerFiles: Record<string, string>
+}): Promise<{ packages: ClosurePackage[]; closureHash: string }> {
+  const { runtimeDir, closure, candidateSourceRoot, runnerOverlay, runnerFiles } = input
+  const catalog = await scanPackageCatalog(closure.catalogRoots)
+  const pinnedCatalogNames = new Set(catalog.keys())
+  const wanted = new Map<string, string>()
+  const queue = [...new Set([...closure.seedPackages, closure.entryPackage])].sort()
+
+  while (queue.length > 0) {
+    const name = queue.shift()!
+    if (wanted.has(name)) continue
+    const root = catalog.get(name)
+    if (root === undefined) {
+      throw new Error(`runtime closure: seed package ${name} is absent from the pinned catalog`)
+    }
+    const pkg = await readPackageJson(root)
+    wanted.set(name, root)
+    const required = {
+      ...pkg.peerDependencies,
+      ...pkg.dependencies,
+      ...pkg.optionalDependencies,
+    }
+    for (const dependency of Object.keys(required).sort()) {
+      if (wanted.has(dependency) || queue.includes(dependency)) continue
+      if (!catalog.has(dependency)) {
+        try {
+          const resolved = await resolveDependencyRoot(root, dependency)
+          catalog.set(dependency, resolved)
+        } catch (error) {
+          if (
+            pkg.optionalDependencies?.[dependency] !== undefined ||
+            pkg.peerDependenciesMeta?.[dependency]?.optional === true
+          ) {
+            continue
+          }
+          throw new Error(`runtime closure: cannot resolve ${dependency} required by ${name}`, {
+            cause: error,
+          })
+        }
+      }
+      queue.push(dependency)
+      queue.sort()
+    }
+  }
+
+  const nodeModules = join(runtimeDir, 'node_modules')
+  await mkdir(nodeModules, { recursive: true })
+  const packages: ClosurePackage[] = []
+  for (const [name, root] of [...wanted.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const destination = join(nodeModules, ...name.split('/'))
+    const sourcePackage = await readPackageJson(root)
+    if (pinnedCatalogNames.has(name)) await copyRuntimePackage(root, destination, sourcePackage)
+    else await copyDir(root, destination)
+    if (
+      pinnedCatalogNames.has(name) &&
+      sourcePackage.files !== undefined &&
+      name.startsWith('@deepseek-ai/dsh-')
+    ) {
+      for (const forbidden of ['src', 'tests']) {
+        if ((await stat(join(destination, forbidden)).catch(() => null)) !== null) {
+          throw new Error(
+            `runtime closure: published DSH surface unexpectedly contains ${name}/${forbidden}`,
+          )
+        }
+      }
+    }
+    const pkg = await readPackageJson(destination)
+    packages.push({
+      name,
+      version: pkg.version ?? null,
+      contentHash: await hashDirectory(destination),
+    })
+  }
+
+  // Candidate bytes are duplicated into the runtime's ordinary resolution
+  // path. Their canonical copy remains capsule/candidate for audit/release.
+  const runtimeCandidate = join(nodeModules, '@dsh-rsi', 'candidate-baseline')
+  await copyCandidate(candidateSourceRoot, runtimeCandidate)
+  packages.push({
+    name: '@dsh-rsi/candidate-baseline',
+    version: '0.0.0',
+    contentHash: await hashDirectory(runtimeCandidate),
+  })
+  packages.sort((a, b) => a.name.localeCompare(b.name))
+
+  const closureRecord = {
+    schemaVersion: 1,
+    entryPackage: closure.entryPackage,
+    entryBin: closure.entryBin,
+    packages,
+  }
+  const closureBytes = JSON.stringify(closureRecord, null, 2) + '\n'
+  const closureHash = createHash('sha256').update(closureBytes).digest('hex')
+  await writeFile(join(runtimeDir, 'package-closure.json'), closureBytes)
+  await writeFile(join(runtimeDir, 'package.json'), '{"private":true,"type":"module"}\n')
+  await writeFile(join(runtimeDir, 'cordis.yml'), runnerOverlay)
+  await writeRunnerFiles(runtimeDir, runnerFiles)
+
+  const entry = join(
+    runtimeDir,
+    'node_modules',
+    ...closure.entryPackage.split('/'),
+    closure.entryBin,
+  )
+  const entryStat = await stat(entry).catch(() => null)
+  if (!entryStat?.isFile()) {
+    throw new Error(
+      `runtime closure: entry bin is absent: ${closure.entryPackage}/${closure.entryBin}`,
+    )
+  }
+  const binDir = join(runtimeDir, 'bin')
+  await mkdir(binDir, { recursive: true })
+  const wrapper = join(binDir, 'dsh-rsi-acp')
+  const wrapperSource = [
+    '#!/usr/bin/env node',
+    "import { dirname, join } from 'node:path'",
+    "import { fileURLToPath, pathToFileURL } from 'node:url'",
+    'const runtime = join(dirname(fileURLToPath(import.meta.url)), "..")',
+    `const entry = join(runtime, ${JSON.stringify(join('node_modules', ...closure.entryPackage.split('/'), closure.entryBin))})`,
+    'process.argv = [process.execPath, entry, "--config", join(runtime, "cordis.yml")]',
+    'await import(pathToFileURL(entry).href)',
+    '',
+  ].join('\n')
+  await writeFile(wrapper, wrapperSource, { mode: 0o755 })
+  await chmod(wrapper, 0o755)
+  return { packages, closureHash }
+}
+
+async function writeRunnerFiles(root: string, files: Record<string, string>): Promise<void> {
+  for (const [path, content] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
+    const segments = path.split('/')
+    if (
+      path.length === 0 ||
+      path.startsWith('/') ||
+      path.includes('\\') ||
+      segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+    ) {
+      throw new Error(`runner files: unsafe relative path ${JSON.stringify(path)}`)
+    }
+    const destination = join(root, ...segments)
+    await mkdir(dirname(destination), { recursive: true })
+    await writeFile(destination, content)
   }
 }
 
@@ -108,17 +487,29 @@ async function copyDir(src: string, dest: string): Promise<void> {
  * Pack a complete evaluation capsule. Returns paths and the SHA256SUMS hash.
  */
 export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
-  const { outDir, receipt, candidateSourceRoot, runnerOverlay, provenanceJson, sbomJson } = input
+  const {
+    outDir,
+    receipt,
+    candidateSourceRoot,
+    runnerOverlay,
+    provenanceJson,
+    sbomJson,
+    runtimeClosure,
+    runnerFiles = {},
+  } = input
   await mkdir(outDir, { recursive: true })
 
-  // runtime/ — for Gate 1 we record an install-manifest reference; the pinned
-  // production closure is materialized by the Harbor adapter at task time.
+  // runtime/ — actual pinned bytes. No task-time install or source-checkout
+  // resolution is permitted by the Gate 1 contract.
   const runtimeDir = join(outDir, 'runtime')
   await mkdir(runtimeDir, { recursive: true })
-  await writeFile(
-    join(runtimeDir, 'INSTALL.md'),
-    '# Runtime\n\nResolved at task time from the pinned DSH provenance in provenance.json.\n',
-  )
+  const runtime = await materializeRuntimeClosure({
+    runtimeDir,
+    closure: runtimeClosure,
+    candidateSourceRoot,
+    runnerOverlay,
+    runnerFiles,
+  })
 
   // candidate/
   await copyCandidate(candidateSourceRoot, join(outDir, 'candidate'))
@@ -127,36 +518,54 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
   const runnerDir = join(outDir, 'runner')
   await mkdir(runnerDir, { recursive: true })
   await writeFile(join(runnerDir, 'cordis.patch.yml'), runnerOverlay)
+  await writeRunnerFiles(runnerDir, runnerFiles)
 
-  // provenance.json, sbom.spdx.json
+  // provenance.json + generated, content-bound SPDX package inventory. The
+  // caller's scanner SBOM is treated as an input receipt, never copied as an
+  // unverified replacement for the closure inventory.
   await writeFile(join(outDir, 'provenance.json'), provenanceJson)
-  await writeFile(join(outDir, 'sbom.spdx.json'), sbomJson)
+  const generatedSbom = generateSpdx(runtime.packages, receipt, sbomJson)
+  await writeFile(join(outDir, 'sbom.spdx.json'), generatedSbom)
 
   // SHA256SUMS (written last, covers everything except itself).
   const sumsPath = join(outDir, 'SHA256SUMS')
   const { hash } = await writeSha256sums(outDir, sumsPath)
 
-  // capsule.json manifest (must be written AFTER SHA256SUMS so the sums can
-  // record it; re-write sums to include capsule.json, then recompute).
+  // capsule.json is written after SHA256SUMS because it records the sums-file
+  // hash. The two are bound by capsuleHash = H(manifest || sums), avoiding a
+  // circular self-hash while still protecting both control files.
   const capsuleManifest = {
     schemaVersion: 1,
     candidateId: receipt.candidateId,
-    runtime: { kind: 'install-manifest', ref: 'runtime/INSTALL.md', hash: null },
+    runtime: {
+      kind: 'pinned-closure',
+      ref: 'runtime/package-closure.json',
+      hash: runtime.closureHash,
+    },
     candidate: { bundleHash: receipt.bundleHash },
-    runner: { overlay: 'runner/cordis.patch.yml' },
-    provenance: { ref: 'provenance.json' },
-    sbom: { ref: 'sbom.spdx.json' },
+    runner: {
+      overlay: 'runner/cordis.patch.yml',
+      hash: await hashDirectory(runnerDir),
+    },
+    provenance: {
+      ref: 'provenance.json',
+      hash: createHash('sha256').update(provenanceJson).digest('hex'),
+    },
+    sbom: {
+      ref: 'sbom.spdx.json',
+      hash: createHash('sha256').update(generatedSbom).digest('hex'),
+    },
     sha256sums: { ref: 'SHA256SUMS', hash },
   }
   const manifestPath = join(outDir, 'capsule.json')
-  await writeFile(manifestPath, JSON.stringify(capsuleManifest, null, 2) + '\n')
-
-  // Recompute SHA256SUMS to include capsule.json.
-  const finalSums = await writeSha256sums(outDir, sumsPath)
+  const manifestBytes = JSON.stringify(capsuleManifest, null, 2) + '\n'
+  await writeFile(manifestPath, manifestBytes)
+  const sumsBytes = await readFile(sumsPath)
+  const capsuleHash = createHash('sha256').update(manifestBytes).update(sumsBytes).digest('hex')
   return {
     capsuleDir: outDir,
     capsuleManifestPath: manifestPath,
     sha256sumsPath: sumsPath,
-    capsuleHash: finalSums.hash,
+    capsuleHash,
   }
 }

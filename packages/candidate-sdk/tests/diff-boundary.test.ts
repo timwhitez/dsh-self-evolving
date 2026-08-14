@@ -1,7 +1,8 @@
 /**
  * Diff boundary + capsule packing tests (spec 02 §11 step 3, §12).
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -67,6 +68,20 @@ describe('diff boundary', () => {
 
 describe('capsule packing', () => {
   it('packs a complete capsule with SHA256SUMS and capsule.json', async () => {
+    const runtimeCatalog = join(scratch!, 'runtime-catalog')
+    const runtimePackage = join(runtimeCatalog, 'fake-acp')
+    await mkdir(join(runtimePackage, 'lib'), { recursive: true })
+    await writeFile(
+      join(runtimePackage, 'package.json'),
+      JSON.stringify({ name: '@dsh-rsi/fake-acp', version: '1.0.0', type: 'module' }),
+    )
+    await writeFile(join(runtimePackage, 'lib', 'bin.js'), 'export const ready = true\n')
+    const runtimeClosure = {
+      catalogRoots: [runtimeCatalog],
+      seedPackages: ['@dsh-rsi/fake-acp'],
+      entryPackage: '@dsh-rsi/fake-acp',
+      entryBin: 'lib/bin.js',
+    }
     const receipt = await buildCandidate({
       sourceRoot: baselineRoot,
       sourceFiles: [
@@ -86,12 +101,40 @@ describe('capsule packing', () => {
       runnerOverlay: '- insert: []\n',
       provenanceJson: '{}',
       sbomJson: '{}',
+      runtimeClosure,
     })
     expect(out.capsuleHash).toMatch(/^[0-9a-f]{64}$/)
     expect(out.capsuleManifestPath.endsWith('capsule.json')).toBe(true)
-    // capsule.json references the SHA256SUMS hash recorded before capsule.json
-    // was added; the final SHA256SUMS includes capsule.json. The packer returns
-    // the final hash, which must be stable.
+    const sumsBytes = await readFile(out.sha256sumsPath)
+    const sums = sumsBytes.toString('utf8').trim().split('\n')
+    expect(sums.some((line) => line.endsWith('  SHA256SUMS'))).toBe(false)
+    expect(sums.some((line) => line.endsWith('  capsule.json'))).toBe(false)
+    for (const line of sums) {
+      const match = /^([0-9a-f]{64}) {2}(.+)$/.exec(line)
+      expect(match).not.toBeNull()
+      const actual = createHash('sha256')
+        .update(await readFile(join(capsuleDir, match![2]!)))
+        .digest('hex')
+      expect(actual).toBe(match![1])
+    }
+    const manifestBytes = await readFile(out.capsuleManifestPath)
+    const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
+      sha256sums: { hash: string }
+    }
+    expect(manifest.sha256sums.hash).toBe(createHash('sha256').update(sumsBytes).digest('hex'))
+    expect(out.capsuleHash).toBe(
+      createHash('sha256').update(manifestBytes).update(sumsBytes).digest('hex'),
+    )
+    const sbom = JSON.parse(await readFile(join(capsuleDir, 'sbom.spdx.json'), 'utf8')) as {
+      spdxVersion?: string
+      packages?: Array<{ name: string }>
+    }
+    expect(sbom.spdxVersion).toBe('SPDX-2.3')
+    expect(sbom.packages?.map((pkg) => pkg.name)).toEqual(
+      expect.arrayContaining(['@dsh-rsi/fake-acp', '@dsh-rsi/candidate-baseline']),
+    )
+
+    // A second pack from identical inputs must produce the same capsule hash.
     const out2 = await packCapsule({
       outDir: join(scratch!, 'capsule2'),
       receipt,
@@ -99,6 +142,7 @@ describe('capsule packing', () => {
       runnerOverlay: '- insert: []\n',
       provenanceJson: '{}',
       sbomJson: '{}',
+      runtimeClosure,
     })
     expect(out2.capsuleHash).toBe(out.capsuleHash)
   })
