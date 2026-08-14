@@ -203,4 +203,23 @@ describe('stable-demo engine', () => {
     await expect(runStableDemo(config, capabilities)).rejects.toThrow('preflight failed')
     expect(counters.launches).toBe(0)
   })
+
+  it('resumes a mid-run durable boundary without insertion-order conflicts or duplicate launch', async () => {
+    const { config, counters, capabilities } = await fixture()
+    let injected = false
+    capabilities.onEvaluationBoundary = (spec, boundary) => {
+      if (!injected && spec.actionId === 'eval:baseline:task-1' && boundary === 'launch') {
+        injected = true
+        throw new Error('fixture process interruption')
+      }
+    }
+    await expect(runStableDemo(config, capabilities)).rejects.toThrow(
+      'fixture process interruption',
+    )
+    delete capabilities.onEvaluationBoundary
+    const resumed = await runStableDemo(config, capabilities)
+    expect(resumed.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(counters.launches).toBe(9)
+    expect(counters.collects).toBe(9)
+  })
 })

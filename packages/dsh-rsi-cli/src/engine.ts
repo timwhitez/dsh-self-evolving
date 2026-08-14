@@ -5,6 +5,7 @@ import { Context } from '@deepseek-ai/cordis'
 import * as RsiBundle from '@dsh-rsi/core'
 import {
   readAll,
+  canonicalJson,
   recoverEvaluationAction,
   replay,
   type DurableBoundary,
@@ -126,7 +127,7 @@ async function recordOnce<P>(
   const events = await readAll(service.journal)
   const existing = events.find((event) => event.eventId === eventId)
   if (existing !== undefined) {
-    if (existing.type !== type || JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
+    if (existing.type !== type || canonicalJson(existing.payload) !== canonicalJson(payload)) {
       throw new Error(`stable engine: conflicting event replay ${eventId}`)
     }
     return

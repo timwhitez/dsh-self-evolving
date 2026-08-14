@@ -192,3 +192,15 @@ Gate 6 acceptance run.
 
 **Consequence:** the v7 acceptance run starts from a committed clean implementation. No source or documentation commit
 is made until its injected crash has resumed and its final audit receipt is written.
+
+## ADR-018 — Canonical equality for idempotent event replay
+
+**Decision:** stable-demo config schema v8 compares an existing event type and payload with the same canonical JSON
+function used by the journal hash chain. Object insertion order is never semantic.
+
+**Why:** v7 reached the injected real crash, but resume rejected `run:preflight`: the stored canonical payload had
+sorted keys while the in-memory object used source insertion order. No external job was relaunched. v7 is retained as
+crash evidence and marked `QUARANTINED_CANONICAL_REPLAY_COMPARISON_BUG`.
+
+**Consequence:** a dedicated mid-run interruption test must resume from a nonterminal journal and prove launch and
+collect counts remain exactly once before the next commit-bound real run.
