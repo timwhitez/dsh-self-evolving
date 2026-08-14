@@ -150,6 +150,28 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
+  packages/dsh-rsi-pilot:
+    dependencies:
+      '@dsh-rsi/candidate-sdk':
+        specifier: workspace:*
+        version: link:../candidate-sdk
+      '@dsh-rsi/core':
+        specifier: workspace:*
+        version: link:../dsh-rsi
+      '@dsh-rsi/search':
+        specifier: workspace:*
+        version: link:../dsh-rsi-search
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
+
   packages/dsh-rsi-proposer:
     dependencies:
       '@dsh-rsi/candidate-sdk':
