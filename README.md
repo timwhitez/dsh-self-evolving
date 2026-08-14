@@ -75,6 +75,7 @@ pnpm dsh-rsi run --state-dir /var/lib/dsh-rsi-controller/demo-1
 
 配置、恢复和证据解释分别见 [`docs/configuration.md`](docs/configuration.md)、
 [`docs/troubleshooting.md`](docs/troubleshooting.md) 和 [`docs/evidence-guide.md`](docs/evidence-guide.md)。
+备份、恢复、回滚和卸载见 [`docs/operations.md`](docs/operations.md)。
 
 ## 当前固定版本快照
 

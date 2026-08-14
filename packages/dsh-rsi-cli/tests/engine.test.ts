@@ -101,7 +101,8 @@ async function fixture(): Promise<{
             status: baselineFailure ? 'invalid' : 'pass',
             reward: baselineFailure ? null : 1,
             costUsd: 0.001,
-          }
+            rawEvidenceDigests: [digest(`${spec.candidate.candidateId}/${spec.taskId}`)],
+          } as Awaited<ReturnType<EvaluationProvider['collect']>>
         },
       }
     },

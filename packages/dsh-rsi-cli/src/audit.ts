@@ -1,4 +1,4 @@
-import { readControllerStatus } from '@dsh-rsi/core'
+import { computeTotals, readAll, readControllerStatus } from '@dsh-rsi/core'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { StableDemoConfig } from './config.js'
@@ -13,6 +13,11 @@ export interface StableAuditReport {
 
 export async function auditStableRun(config: StableDemoConfig): Promise<StableAuditReport> {
   const controller = await readControllerStatus(config)
+  const events = await readAll({
+    journalDir: join(config.stateDir, 'journal'),
+    runId: config.runId,
+    segmentMaxBytes: 16 * 1024 * 1024,
+  })
   const reasons: string[] = []
   const state = controller.state
   const nodes = Object.values(state.candidates)
@@ -38,10 +43,11 @@ export async function auditStableRun(config: StableDemoConfig): Promise<StableAu
   if (Math.max(0, ...childNodes.map((node) => depthOf(node.candidateId))) < 2) {
     reasons.push('lineage depth is below 2')
   }
-  if (state.observations.filter((row) => row.candidateId !== 'baseline').length !== 3) {
+  const candidateObservations = state.observations.filter((row) => row.candidateId !== 'baseline')
+  if (candidateObservations.length !== 3)
     reasons.push('candidate observation matrix is not exactly 3')
-  }
   if (state.sealedAccessCount !== 0) reasons.push('sealed state was accessed')
+
   const freezePath = join(config.stateDir, 'failure-pool.json')
   const freezeInfo = await stat(freezePath).catch(() => null)
   if (freezeInfo?.isFile() !== true) reasons.push('frozen failure pool missing')
@@ -49,12 +55,102 @@ export async function auditStableRun(config: StableDemoConfig): Promise<StableAu
     const freeze = JSON.parse(await readFile(freezePath, 'utf8')) as { taskIds?: unknown }
     if (!Array.isArray(freeze.taskIds) || freeze.taskIds.length === 0) {
       reasons.push('frozen failure pool is empty')
+    } else {
+      const taskIds = new Set(
+        freeze.taskIds.filter((value): value is string => typeof value === 'string'),
+      )
+      if (candidateObservations.some((row) => !taskIds.has(row.taskId))) {
+        reasons.push('candidate observation escaped the frozen failure pool')
+      }
     }
   }
-  const crashReceipt = await stat(join(config.stateDir, 'crash-resume-receipt.json')).catch(
-    () => null,
+  const frozen = events.find((event) => event.eventId === 'failure-pool:frozen')
+  const firstCandidateObservation = events.find(
+    (event) =>
+      event.type === 'evaluation.observed' &&
+      (event.payload as { candidateId?: string }).candidateId !== 'baseline',
   )
+  if (
+    frozen === undefined ||
+    (firstCandidateObservation !== undefined && frozen.seq >= firstCandidateObservation.seq)
+  ) {
+    reasons.push('failure pool was not frozen before candidate rewards')
+  }
+  if (state.observations.length > config.limits.solverTrialsMax) {
+    reasons.push('solver trial limit exceeded')
+  }
+  const baselineTrials = state.observations.filter((row) => row.candidateId === 'baseline').length
+  if (![6, 12].includes(baselineTrials))
+    reasons.push(`baseline batch is incomplete: ${baselineTrials}`)
+  if (Object.values(state.actions).some((action) => action.status !== 'COMMITTED')) {
+    reasons.push('one or more external actions are not committed')
+  }
+  const normalizedEvents = events.filter((event) => event.type === 'evaluation.observed')
+  if (
+    normalizedEvents.some((event) => {
+      const refs = (event.payload as { rawEvidenceDigests?: unknown }).rawEvidenceDigests
+      return (
+        !Array.isArray(refs) || refs.length === 0 || refs.some((ref) => typeof ref !== 'string')
+      )
+    })
+  ) {
+    reasons.push('one or more observations lack raw evidence digests')
+  }
+  const proposals = events.filter((event) => event.type === 'proposal.completed')
+  if (
+    proposals.length !== 3 ||
+    proposals.some((event) => {
+      const refs = (event.payload as { evidenceRefs?: unknown }).evidenceRefs
+      return (
+        !Array.isArray(refs) ||
+        !refs.some((ref) => typeof ref === 'string' && ref.startsWith('object:sha256:'))
+      )
+    })
+  ) {
+    reasons.push('proposer raw-evidence reference matrix is incomplete')
+  }
+  if (events.filter((event) => event.type === 'build.completed').length !== 3) {
+    reasons.push('build receipt matrix is incomplete')
+  }
+
+  const crashPath = join(config.stateDir, 'crash-resume-receipt.json')
+  const crashReceipt = await stat(crashPath).catch(() => null)
   if (crashReceipt?.isFile() !== true) reasons.push('real crash/resume receipt missing')
+  else {
+    const crash = JSON.parse(await readFile(crashPath, 'utf8')) as {
+      launchEvents?: unknown
+      observationEvents?: unknown
+      commitEvents?: unknown
+      replayStateHash?: unknown
+    }
+    if (
+      crash.launchEvents !== 1 ||
+      crash.observationEvents !== 1 ||
+      crash.commitEvents !== 1 ||
+      crash.replayStateHash !== controller.stateHash
+    ) {
+      reasons.push('crash/resume exactly-once receipt is invalid')
+    }
+  }
+  const budget = await computeTotals({
+    ledgerPath: join(config.stateDir, 'budget.jsonl'),
+    limits: {
+      usd: config.limits.budgetUsd,
+      solverTokens: Number.MAX_SAFE_INTEGER,
+      proposerTokens: Number.MAX_SAFE_INTEGER,
+      taskTrials: config.limits.solverTrialsMax,
+      proposalCalls: config.limits.admittedChildren,
+      wallClockSec: 7 * 24 * 3600,
+      concurrencySlots: 1,
+      storageBytes: 10 * 1024 * 1024 * 1024,
+    },
+  })
+  if (budget.totals.reserved.usd !== 0) reasons.push('budget reservation remains unsettled')
+  if (
+    budget.entries.filter((entry) => entry.kind === 'spend').length !== state.observations.length
+  ) {
+    reasons.push('budget spend count does not match observations')
+  }
   if (state.runPhase !== 'TERMINAL') reasons.push(`run is not terminal: ${state.runPhase}`)
   return {
     accepted: reasons.length === 0,

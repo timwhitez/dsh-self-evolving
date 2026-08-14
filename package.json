@@ -21,7 +21,8 @@
     "upstream:check": "tsx scripts/check-upstream-clean.ts",
     "byteequal:check": "tsx scripts/check-byte-equal.ts",
     "bootstrap:upstreams": "node scripts/bootstrap-upstreams.mjs",
-    "dsh-rsi": "node packages/dsh-rsi-cli/lib/cli.js"
+    "dsh-rsi": "node packages/dsh-rsi-cli/lib/cli.js",
+    "release:build": "tsx scripts/build-release.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
