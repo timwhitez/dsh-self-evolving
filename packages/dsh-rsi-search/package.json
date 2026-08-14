@@ -1,0 +1,26 @@
+{
+  "name": "@dsh-rsi/search",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Evolution search algorithm: clade CMP estimator, clade + node Thompson sampling, UCB-Air expand/evaluate scheduler, deterministic wave RNG, shortlist tournament. Pure functions over an explicit archive view — no reward-dependent policy switches after manifest freeze (spec 03).",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dependencies": {
+    "@dsh-rsi/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

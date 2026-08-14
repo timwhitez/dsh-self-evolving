@@ -1,6 +1,6 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 + 3 + 4 COMPLETE — Awaiting Gate 5**  
+**状态：GATE 0 + 1 + 2 + 3 + 4 COMPLETE; Gate 5 算法工程 COMPLETE（校准运行待付费）**  
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
@@ -166,10 +166,39 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 - **`parse.test.ts`（8 绿）**：良构接受、fence/prose 容错、no-change/parent-mismatch 拒、rejected 保留、
   unparseable → 0 admitted。
 
+## 已完成 — Gate 5 算法工程（搜索 + split + sealed + 统计）
+
+> 注：Gate 5 的**算法与统计工程**已完成并通过 golden/property 测试。唯一剩余的是付费 calibration
+> pilot（60-task baseline + 3-candidate × task-strata 校准）——这是需要真实 benchmark 花费的步骤，
+> 在显式授权前不启动。CALIBRATION_INFEASIBLE 判定逻辑已实现（预算超限时 fail closed）。
+
+### Search（`packages/dsh-rsi-search/`）
+
+- **确定性 counter-based RNG**（`rng.ts`）：splitmix64 + 每流独立 counter；Beta 采样用固定 inverse-CDF；
+  `(stream, counter, params, sampled)` 确定性可重放（resume 不重抽样）。
+- **clade CMP + Thompson + UCB-Air**（`scheduler.ts`）：`CMP_hat(a)=S_C/(S_C+F_C)`；
+  `theta_clade~Beta(tau*(1+S_C),tau*(1+F_C))`；`theta_node~Beta(1+s,1+f)`；
+  `(N+P_eval)^alpha >= T` expand/evaluate 决策（alpha=0.6）；cold-start q0=3；donor 不双重计数。
+- **shortlist tournament**（`tournament.ts`）：clade CMP 降序 + 候选 id 确定性 tiebreak；确定性降级；
+  `DEVELOPMENT_CHAMPION` / `NO_DEVELOPMENT_IMPROVEMENT`。
+- **split ceremony + sealed info-flow**（`split.ts`）：48/12/29 size 校验 + Merkle root 承诺；
+  非封闭 principal 接触 sealed 即 `INFORMATION_FLOW_VIOLATION` abort；candidate lock 后 selector/proposer
+  永久拒绝。
+- **paired cluster-bootstrap CI**（`stats.ts`）：任务级重采样、固定 seed、`Delta>=5pp && CI95 lower>0` →
+  `SEALED_PROMOTED` / `PROMISING_NOT_CONFIRMED` / `SEALED_REJECTED`。
+
+### Gate 5 测试证据（32 绿）
+
+- scheduler（16）：small-tree CMP 手算、UCB-Air 边界精确 cutoff、seeded RNG 重放确定性、
+  donor 不双重计数、cold-start、node Thompson argmax。
+- tournament + split + sealed + stats（16）：shortlist 排序、champion/NO_IMPROVEMENT、
+  48/12/29 Merkle 承诺 + tamper 检测、sealed info-flow abort、candidate lock 拒绝、
+  bootstrap CI 提升/平局/确定性。
+
 ## 尚未完成（后续 Gate）
 
-- Gate 5：search 算法（CMP/Thompson/UCB-Air）、deterministic split ceremony、sealed service、
-  calibration。**需要付费 baseline + calibration pilot 运行**。
+- Gate 5 剩余：付费 calibration pilot（60-task baseline + 3-candidate × task-strata）→
+  `B_eval`/`B_prop`/concurrency 冻结；p90 cost > $500 或 wall >16h → `CALIBRATION_INFEASIBLE`。
 - Gate 6–8：10-candidate pilot、formal 80-candidate evolution、sealed/full evaluation。**重付费运行**。
 
 因此当前不能声称：闭环可端到端运行、分数提升、满足 `$500`/16 小时、零 reward hacking、
@@ -177,6 +206,5 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 
 ## 下一个验收门
 
-执行 `specs/07-implementation-plan.md` 的 Gate 5（搜索算法、split、sealed 与校准）。该 Gate 需要付费
-baseline（60 task × ≥2 attempts）+ 3-candidate 校准 pilot；在显式授权前不启动。逐项执行清单见
-`docs/phase-todolist.md`。
+完成 Gate 5 付费 calibration pilot（需真实 benchmark 花费），或推进 Gate 6（10-candidate pilot，
+同样需付费）。算法/统计/split/sealed 工程已就位。逐项执行清单见 `docs/phase-todolist.md`。

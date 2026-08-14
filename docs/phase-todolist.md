@@ -98,13 +98,13 @@
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 
-- [ ] CMP/clade Thompson、node Thompson、UCB-Air（`alpha=0.6`）wave scheduler + task sampler
-- [ ] golden tests：small-tree CMP 手算、UCB-Air 边界、seeded RNG replay、duplicate/donor 不重复计数
-- [ ] shortlist tournament + 合格节点不足时的确定性降级路径（spec 03 §11）
-- [ ] deterministic split ceremony：48/12/29、seed commitment、Merkle root；difficulty bin 按 spec 04 §3.2 两种合法来源之一或放弃
-- [ ] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
-- [ ] candidate lock 事务：lock 后 selector/proposer 永久拒绝
-- [ ] paired cluster-bootstrap 统计 + report generator（固定 seed、固定分析容器 hash）
+- [x] CMP/clade Thompson、node Thompson、UCB-Air（`alpha=0.6`）wave scheduler + task sampler
+- [x] golden tests：small-tree CMP 手算、UCB-Air 边界、seeded RNG replay、duplicate/donor 不重复计数
+- [x] shortlist tournament + 合格节点不足时的确定性降级路径（spec 03 §11）
+- [x] deterministic split ceremony：48/12/29、seed commitment、Merkle root；difficulty bin 按 spec 04 §3.2 两种合法来源之一或放弃
+- [x] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
+- [x] candidate lock 事务：lock 后 selector/proposer 永久拒绝
+- [x] paired cluster-bootstrap 统计 + report generator（固定 seed、固定分析容器 hash）
 - [ ] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
 - [ ] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
 
