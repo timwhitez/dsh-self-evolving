@@ -51,7 +51,30 @@ function completeInput(): Gate5AcceptanceInput {
     baselineTrials,
     calibrationTrials,
     requiredCalibrationCandidates: 3,
-    splitAssignmentExposedToController: false,
+    splitCeremony: {
+      workerReceiptHash: `sha256:${'b'.repeat(64)}`,
+      controllerViewHash: `sha256:${'c'.repeat(64)}`,
+      privateStoreIdentityHash: `sha256:${'d'.repeat(64)}`,
+      merkleRoot: `sha256:${'f'.repeat(64)}`,
+      principalSeparated: true,
+      assignmentExposedToController: false,
+      difficultyDimension: 'OMITTED',
+      observedCount: 48,
+      guardCount: 12,
+      sealedCount: 29,
+    },
+    informationFlowFixtures: {
+      selectorSealedAbort: true,
+      proposerSealedAbort: true,
+      canaryAbort: true,
+    },
+    candidateLockFixture: {
+      receiptHash: `sha256:${'e'.repeat(64)}`,
+      splitMerkleRoot: `sha256:${'f'.repeat(64)}`,
+      proposerRefused: true,
+      selectorRefused: true,
+      mismatchRelockRefused: true,
+    },
     sealedAccessCount: 0,
     budgetModel: {
       feasible: true,
@@ -81,12 +104,24 @@ describe('Gate 5 fail-closed acceptance', () => {
         normalizedRecordHash: null,
       },
     ]
-    input.splitAssignmentExposedToController = true
+    input.splitCeremony.assignmentExposedToController = true
     const verdict = verifyGate5Acceptance(input)
     expect(verdict.accepted).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/incomplete/)
     expect(verdict.reasons.join('\n')).toMatch(/real\/priced\/normalized/)
     expect(verdict.reasons.join('\n')).toMatch(/split assignment/)
+  })
+
+  it('requires separate-principal ceremony and fail-closed lock/info-flow receipts', () => {
+    const input = completeInput()
+    input.splitCeremony.principalSeparated = false
+    input.informationFlowFixtures.canaryAbort = false
+    input.candidateLockFixture.proposerRefused = false
+    const verdict = verifyGate5Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/principal is not separated/)
+    expect(verdict.reasons.join('\n')).toMatch(/canaryAbort/)
+    expect(verdict.reasons.join('\n')).toMatch(/candidate lock fixture/)
   })
 
   it('does not let the caller weaken fixed calibration and budget gates', () => {

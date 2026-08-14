@@ -19,7 +19,30 @@ export interface Gate5AcceptanceInput {
   baselineTrials: Gate5TrialEvidence[]
   calibrationTrials: Gate5TrialEvidence[]
   requiredCalibrationCandidates: number
-  splitAssignmentExposedToController: boolean
+  splitCeremony: {
+    workerReceiptHash: string
+    controllerViewHash: string
+    privateStoreIdentityHash: string
+    merkleRoot: string
+    principalSeparated: boolean
+    assignmentExposedToController: boolean
+    difficultyDimension: 'OMITTED' | 'PRECOMMITTED_REFERENCE_CALIBRATION'
+    observedCount: number
+    guardCount: number
+    sealedCount: number
+  }
+  informationFlowFixtures: {
+    selectorSealedAbort: boolean
+    proposerSealedAbort: boolean
+    canaryAbort: boolean
+  }
+  candidateLockFixture: {
+    receiptHash: string
+    splitMerkleRoot: string
+    proposerRefused: boolean
+    selectorRefused: boolean
+    mismatchRelockRefused: boolean
+  }
   sealedAccessCount: number
   budgetModel: {
     feasible: boolean
@@ -115,8 +138,51 @@ export function verifyGate5Acceptance(input: Gate5AcceptanceInput): Gate5Accepta
       }
     }
   }
-  if (input.splitAssignmentExposedToController) {
+  for (const [field, value] of Object.entries({
+    workerReceiptHash: input.splitCeremony.workerReceiptHash,
+    controllerViewHash: input.splitCeremony.controllerViewHash,
+    privateStoreIdentityHash: input.splitCeremony.privateStoreIdentityHash,
+    merkleRoot: input.splitCeremony.merkleRoot,
+  })) {
+    if (!/^sha256:[0-9a-f]{64}$/.test(value)) reasons.push(`split ceremony ${field} invalid`)
+  }
+  if (!input.splitCeremony.principalSeparated) {
+    reasons.push('split ceremony service principal is not separated from controller')
+  }
+  if (input.splitCeremony.assignmentExposedToController) {
     reasons.push('split assignment/seed was exposed outside the sealed service')
+  }
+  if (
+    input.splitCeremony.observedCount !== 48 ||
+    input.splitCeremony.guardCount !== 12 ||
+    input.splitCeremony.sealedCount !== 29
+  ) {
+    reasons.push('split ceremony counts are not 48/12/29')
+  }
+  if (
+    input.splitCeremony.difficultyDimension !== 'OMITTED' &&
+    input.splitCeremony.difficultyDimension !== 'PRECOMMITTED_REFERENCE_CALIBRATION'
+  ) {
+    reasons.push('split ceremony used an unauthorized difficulty dimension')
+  }
+  for (const [fixture, passed] of Object.entries(input.informationFlowFixtures)) {
+    if (!passed) reasons.push(`information-flow fixture failed: ${fixture}`)
+  }
+  if (
+    !/^sha256:[0-9a-f]{64}$/.test(input.candidateLockFixture.receiptHash) ||
+    !/^sha256:[0-9a-f]{64}$/.test(input.candidateLockFixture.splitMerkleRoot)
+  ) {
+    reasons.push('candidate lock fixture lacks immutable receipt/split binding')
+  }
+  if (input.candidateLockFixture.splitMerkleRoot !== input.splitCeremony.merkleRoot) {
+    reasons.push('candidate lock fixture is bound to a different split')
+  }
+  if (
+    !input.candidateLockFixture.proposerRefused ||
+    !input.candidateLockFixture.selectorRefused ||
+    !input.candidateLockFixture.mismatchRelockRefused
+  ) {
+    reasons.push('candidate lock fixture does not fail closed')
   }
   if (input.sealedAccessCount !== 0) reasons.push('sealed store was accessed before candidate lock')
   if (input.budgetModel === null) reasons.push('budget model missing')

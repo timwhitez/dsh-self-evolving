@@ -144,6 +144,12 @@
 > 公共常量 seed 也不能作为 concealed split。原 artifact 保留并标记
 > `QUARANTINED_NOT_ACCEPTED`；Gate 5 verifier 当前如实拒绝，需新 sealed ceremony、120+ real baseline
 > trials 与 real 3-candidate calibration successor。
+>
+> **sealed-service 工程 preflight（2026-08-14，非正式 ceremony）**：新增独立 worker process、
+> `0700/0600` private state、非覆盖式 public receipt、256-bit internal seed、difficulty omitted、
+> 48/12/29 controller view，以及绑定 split root 的 candidate lock。5 unit + 2 process E2E 通过，
+> 包括非服务 UID 读拒绝、state tamper、receipt conflict、lock 后 proposer/selector 拒绝。尚未部署
+> 正式独立 account/volume 或 mint 正式 split，因此上方两项保持未勾选。
 
 ## Phase 6 — 10-candidate pilot（Gate 6，1–3 天 + runtime）
 

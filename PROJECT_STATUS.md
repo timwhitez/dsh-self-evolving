@@ -44,6 +44,13 @@ Unix gateway 生成 1 个 admitted child；sandbox 仍无 IP network、无 crede
 `QUARANTINED_NOT_ACCEPTED`。新增 Gate 5/6 fail-closed verifier；完整审计见
 [`docs/audits/2026-08-14-gate5-gate6-evidence-audit.md`](docs/audits/2026-08-14-gate5-gate6-evidence-audit.md)。
 
+Gate 5 sealed-service 工程 preflight 已新增独立 worker process、`0700/0600` private state、
+non-replacing public receipts、非公开 256-bit seed、48/12/29 controller view、split-bound candidate
+lock 与 lock 后永久拒绝。synthetic E2E 证明非服务 UID 无法读取 private state，且协议没有
+dump/reveal 操作。该验证未部署正式 service account/volume、未 mint 正式 split，故只标记
+`ENGINEERING_PREFLIGHT_PASSED`，Gate 5 仍未验收。证据见
+[`docs/audits/2026-08-14-gate5-sealed-service-preflight.md`](docs/audits/2026-08-14-gate5-sealed-service-preflight.md)。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP

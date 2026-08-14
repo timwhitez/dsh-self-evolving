@@ -31,6 +31,7 @@
     { "path": "./packages/dsh-rsi-loader-e2e" },
     { "path": "./packages/dsh-rsi-proposer" },
     { "path": "./packages/dsh-rsi-pilot" },
+    { "path": "./packages/dsh-rsi-sealed-service" },
     { "path": "./packages/dsh-rsi-search" },
     { "path": "./benchmark-adapters/terminal-bench" }
   ]
