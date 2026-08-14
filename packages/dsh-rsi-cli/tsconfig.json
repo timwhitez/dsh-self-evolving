@@ -6,5 +6,10 @@
     "composite": true,
     "tsBuildInfoFile": "lib/.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../candidate-sdk" },
+    { "path": "../dsh-rsi" },
+    { "path": "../dsh-rsi-proposer" }
+  ]
 }
