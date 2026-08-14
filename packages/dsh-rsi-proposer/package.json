@@ -1,0 +1,38 @@
+{
+  "name": "@dsh-rsi/proposer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agentic proposal runner: boots the real DSH Loader, drives the verified deepseek-v4-flash model via ctx.agents.create to generate child candidate proposals from a parent + filtered evidence, then validates them through the candidate-SDK builder + proposal protocol. Gate 4 vertical slice.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dependencies": {
+    "@dsh-rsi/candidate-sdk": "workspace:*",
+    "@dsh-rsi/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/cordis-plugin-group": "link:../../deepseek-harness/vendor/group",
+    "@deepseek-ai/cordis-plugin-include": "link:../../deepseek-harness/vendor/include",
+    "@deepseek-ai/cordis-plugin-loader": "link:../../deepseek-harness/vendor/loader",
+    "@deepseek-ai/cosmokit": "link:../../deepseek-harness/vendor/cosmokit",
+    "@deepseek-ai/dsh-agent": "link:../../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-agent-default-model": "link:../../deepseek-harness/packages/core/agent-default-model",
+    "@deepseek-ai/dsh-agent-spine-demo": "link:../../deepseek-harness/packages/examples/agent-spine-demo",
+    "@deepseek-ai/dsh-llm": "link:../../deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/dsh-llm-deepseek": "link:../../deepseek-harness/packages/llm/llm-deepseek",
+    "@deepseek-ai/dsh-session": "link:../../deepseek-harness/packages/core/session",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

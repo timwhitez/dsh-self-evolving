@@ -79,15 +79,22 @@
 
 ## Phase 4 — Agentic proposal 垂直切片（Gate 4，4–7 天）
 
-- [ ] proposal sandbox：filesystem/network/model gateway policy（parent/evidence 只读，仅 child root 可写）
-- [ ] parent candidate 以 `propose` mode 经真实 Loader 装载，proposer 用 `ctx.agents.create({ setup })`
-- [ ] label-filtered evidence export（manifest + Merkle root + guard/sealed canary absence receipt）
+- [x] proposal sandbox：filesystem/network/model gateway policy（parent/evidence 只读，仅 child root 可写）
+- [x] parent candidate 以 `propose` mode 经真实 Loader 装载，proposer 用 `ctx.agents.create({ setup })`
+- [x] label-filtered evidence export（manifest + Merkle root + guard/sealed canary absence receipt）
 - [ ] archive catalog 导出：统计只从 `DEV_OBSERVED` 派生，无 guard/sealed 衍生数字
-- [ ] proposal 输出协议：width=3、hypothesis 去重、donor provenance、no-change/test-only 拒绝
-- [ ] builder handoff + rejected proposal 证据保留
-- [ ] 安全测试：proposer 读不到 controller/canary/credentials/sibling；trace prompt-injection fixture 不能改变 policy
+- [x] proposal 输出协议：width=3、hypothesis 去重、donor provenance、no-change/test-only 拒绝
+- [x] builder handoff + rejected proposal 证据保留
+- [x] 安全测试：proposer 读不到 controller/canary/credentials/sibling；trace prompt-injection fixture 不能改变 policy
 
 **退出证据**：baseline parent 从两条 synthetic failure trace 生成 ≥1 个 nontrivial admitted child，preservation tests 通过，transcript/cost 完整。
+
+> **已完成（2026-08-14）**：`packages/dsh-rsi-proposer/` proposal runner。证据：真实 `deepseek-v4-flash` 模型经真实 DSH Loader
+> （`ctx.agents.create` + `agent-spine-demo` + `llm-deepseek` → verified provider）从 baseline parent + 2 条 synthetic DEV_OBSERVED
+> failure trace 生成 ≥1 个 nontrivial admitted child（含 hypothesis / production diff / mechanism+preservation tests），
+> `real-model-propose.e2e.ts` 绿。parse+protocol 8 绿；prompt-injection 安全 5 绿（policy 纯函数不被注入改变；
+> canary leak 检出；model firewall 拒 route override）。注：archive catalog 导出（统计只从 DEV_OBSERVED 派生）
+> 随 Gate 5 搜索/统计层实现；evidence export 的 label 过滤已就位。
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 

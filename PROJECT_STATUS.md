@@ -1,6 +1,6 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 + 3 COMPLETE; Gate 4 工程地基 COMPLETE（真实模型生成待集成）**  
+**状态：GATE 0 + 1 + 2 + 3 + 4 COMPLETE — Awaiting Gate 5**  
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
@@ -137,45 +137,46 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 共 103 单元 + 7 E2E（loader/capsule/harbor）。三上游 clean；AGENTS/CLAUDE 字节一致。
 
-## 已完成 — Gate 4 工程地基（proposal safety + protocol）
+## 已完成 — Gate 4（agentic proposal 垂直切片）
 
-> 注：Gate 4 的**安全工程地基**已完成并通过测试。最后一步——parent candidate 经真实 DSH Loader
-> （`ctx.agents.create`）+ 真实模型生成 ≥1 个 admitted child——是把已验证的 proposal protocol/sandbox
-> 接入 DSH agent spine + ACP 的集成工作，留给后续。provider 连通性已验证（`PONG` probe 成功）。
+### Proposal runner（`packages/dsh-rsi-proposer/`）
 
-### Proposal 模块（`packages/dsh-rsi/src/proposal/`）
+- **真实 DSH Loader + 真实模型**（`runner.ts`）：boot 最小 model-backed composition
+  （`llm-deepseek` → `agent-spine-demo` → `agent-default-model`），通过 `ctx.agents.create({ agentOptions,
+setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composition 锁定
+  （只有 `deepseek-official` adapter 指向 verified endpoint）。followup proposal prompt → whenIdle →
+  收集 `assistant/message` 事件文本。
+- **parse + protocol validation**（`parse.ts`）：解析模型 JSON envelope（容错 markdown fence / 嵌入散文）→
+  `validateProposalBatch`（width、hypothesis dedup、donor provenance、no-change/test-only 拒绝）。
+- **builder handoff + rejected 保留**（`parse.ts` `retainRejected`）：rejected proposal 连同 raw assistant
+  text + reason + timestamp 保留为 evidence（不静默丢弃）。
 
-- **proposal sandbox policy**（`sandbox.ts`）：纯函数 fs/network/model-firewall 决策；parent/archive/
-  evidence/contracts 只读、childrenRoot 唯一可写；host 敏感路径（home/SSH/docker.sock/controller IPC/
-  .aws）一律拒；traversal 拒；build phase 全禁网；model firewall 锁 provider/endpoint/model，拒 candidate
-  自定 route/billing tags。**决策是纯函数 → prompt-injection 不能改变 policy**。
-- **label-filtered evidence export**（`export.ts`）：proposer 视图只含 allowed labels（PUBLIC_SPEC/
-  DEV_OBSERVED），GUARDED/SEALED 永不进入；Merkle root 防篡改；canary absence receipt 记录 excluded
-  数量与 hash。
-- **canary leak scan**：sealed/guard canary token 若泄漏进 proposer transcript 即被检出（information-
-  flow incident）。
-- **proposal output protocol validator**（`protocol.ts`）：width=3、hypothesis dedup、donor provenance 校验；
-  拒绝 no-change / test-only / 空 hypothesis / 缺测试 / 超 width / 坏 donor。
+### Proposal safety（`packages/dsh-rsi/src/proposal/`，Gate 4 工程地基，复述）
 
-### Gate 4 测试证据（23 绿）
+- 纯函数 fs/network/model-firewall policy（prompt-injection 不能改变）；label-filtered evidence export
+  - Merkle + canary absence receipt；canary leak scan；proposal output protocol validator。
 
-- sandbox fs policy（6）：read-only 输入、唯一可写、host 敏感拒、traversal 拒、纯函数。
-- network policy（2）：proposal allowlist、build 全禁。
-- model firewall（4）：locked route、拒 model/endpoint override、拒 billing tags。
-- evidence export（3）：GUARDED/SEALED 不进入 proposer 视图、Merkle 防篡改、canary leak 检出。
-- proposal protocol（8）：良构接受、no-change/test-only/空 hypothesis/缺测试/duplicate/超 width/坏 donor 全拒。
+### Gate 4 真实模型证据
+
+- **`real-model-propose.e2e.ts`（绿）**：真实 `deepseek-v4-flash` 经真实 DSH Loader 从 baseline parent +
+  2 条 synthetic DEV_OBSERVED failure trace 生成 **≥1 个 nontrivial admitted child**（含 hypothesis、
+  production diff、mechanism+preservation tests）。provider 连通性 + 模型生成已验证。
+- **`prompt-injection.test.ts`（5 绿）**：malicious trace（声称放宽 writable root / 允许 evil host / override
+  model route / exfiltrate sealed canary）不能改变 policy（纯函数不变）；sealed canary leak 检出。
+- **`parse.test.ts`（8 绿）**：良构接受、fence/prose 容错、no-change/parent-mismatch 拒、rejected 保留、
+  unparseable → 0 admitted。
 
 ## 尚未完成（后续 Gate）
 
-- Gate 4 剩余：parent candidate propose mode 经真实 DSH Loader（`ctx.agents.create` + ACP）+ 真实模型
-  生成 ≥1 个 admitted child 的端到端集成；builder handoff；rejected proposal 证据保留。
-- Gate 5+：search/split/sealed、calibration、pilot、formal 80-candidate、sealed/full evaluation。
-  **需要付费 benchmark 运行**。
+- Gate 5：search 算法（CMP/Thompson/UCB-Air）、deterministic split ceremony、sealed service、
+  calibration。**需要付费 baseline + calibration pilot 运行**。
+- Gate 6–8：10-candidate pilot、formal 80-candidate evolution、sealed/full evaluation。**重付费运行**。
 
 因此当前不能声称：闭环可端到端运行、分数提升、满足 `$500`/16 小时、零 reward hacking、
 可提交 leaderboard 或达到 SOTA。
 
 ## 下一个验收门
 
-完成 Gate 4 的真实模型生成集成（DSH agent spine + ACP + 已验证 provider），或推进 Gate 5
-（需要付费 baseline/calibration 运行）。逐项执行清单见 `docs/phase-todolist.md`。
+执行 `specs/07-implementation-plan.md` 的 Gate 5（搜索算法、split、sealed 与校准）。该 Gate 需要付费
+baseline（60 task × ≥2 attempts）+ 3-candidate 校准 pilot；在显式授权前不启动。逐项执行清单见
+`docs/phase-todolist.md`。

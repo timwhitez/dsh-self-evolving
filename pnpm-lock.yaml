@@ -150,6 +150,58 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
+  packages/dsh-rsi-proposer:
+    dependencies:
+      '@dsh-rsi/candidate-sdk':
+        specifier: workspace:*
+        version: link:../candidate-sdk
+      '@dsh-rsi/core':
+        specifier: workspace:*
+        version: link:../dsh-rsi
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: link:../../deepseek-harness/vendor/cordis
+        version: link:../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/cordis-plugin-group':
+        specifier: link:../../deepseek-harness/vendor/group
+        version: link:../../deepseek-harness/vendor/group
+      '@deepseek-ai/cordis-plugin-include':
+        specifier: link:../../deepseek-harness/vendor/include
+        version: link:../../deepseek-harness/vendor/include
+      '@deepseek-ai/cordis-plugin-loader':
+        specifier: link:../../deepseek-harness/vendor/loader
+        version: link:../../deepseek-harness/vendor/loader
+      '@deepseek-ai/cosmokit':
+        specifier: link:../../deepseek-harness/vendor/cosmokit
+        version: link:../../deepseek-harness/vendor/cosmokit
+      '@deepseek-ai/dsh-agent':
+        specifier: link:../../deepseek-harness/packages/core/agent
+        version: link:../../deepseek-harness/packages/core/agent
+      '@deepseek-ai/dsh-agent-default-model':
+        specifier: link:../../deepseek-harness/packages/core/agent-default-model
+        version: link:../../deepseek-harness/packages/core/agent-default-model
+      '@deepseek-ai/dsh-agent-spine-demo':
+        specifier: link:../../deepseek-harness/packages/examples/agent-spine-demo
+        version: link:../../deepseek-harness/packages/examples/agent-spine-demo
+      '@deepseek-ai/dsh-llm':
+        specifier: link:../../deepseek-harness/packages/llm/llm
+        version: link:../../deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-llm-deepseek':
+        specifier: link:../../deepseek-harness/packages/llm/llm-deepseek
+        version: link:../../deepseek-harness/packages/llm/llm-deepseek
+      '@deepseek-ai/dsh-session':
+        specifier: link:../../deepseek-harness/packages/core/session
+        version: link:../../deepseek-harness/packages/core/session
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
+
 packages:
 
   '@esbuild/aix-ppc64@0.28.2':
