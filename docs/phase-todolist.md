@@ -6,15 +6,19 @@
 
 ## Phase 0 — Provenance 与 Cordis lifecycle 地基（Gate 0，1–2 天）
 
-- [ ] 初始化项目 Git scope；`deepseek-harness/`、`harbor/`、`tb/` 保持外部 pinned checkout，不纳入可编辑范围
-- [ ] 建立 root workspace：pnpm + strict TypeScript + lint/format/test + JSON Schema 工具链
-- [ ] 生成机器可读 `provenance.lock.json`（DSH/Harbor/TB commit、paper hash、Node/pnpm、container、model catalog）
-- [ ] 创建最小 `@dsh-rsi/candidate-baseline` bundle（namespace-form exports）与真实 `cordis.yml` fixture
-- [ ] 实现无模型 Loader E2E：boot → service/tool/listener inventory → unload → quiescence 精确一致
-- [ ] negative fixture：加 `export default apply` 后测试必须失败（证明能捕获 Loader unwrap 缺陷）
-- [ ] CI 骨架：format/lint/typecheck/unit/Loader E2E/upstream-clean/AGENTS-CLAUDE 字节一致
+- [x] 初始化项目 Git scope；`deepseek-harness/`、`harbor/`、`tb/` 保持外部 pinned checkout，不纳入可编辑范围
+- [x] 建立 root workspace：pnpm + strict TypeScript + lint/format/test + JSON Schema 工具链
+- [x] 生成机器可读 `provenance.lock.json`（DSH/Harbor/TB commit、paper hash、Node/pnpm、container、model catalog）
+- [x] 创建最小 `@dsh-rsi/candidate-baseline` bundle（namespace-form exports）与真实 `cordis.yml` fixture
+- [x] 实现无模型 Loader E2E：boot → service/tool/listener inventory → unload → quiescence 精确一致
+- [x] negative fixture：加 `export default apply` 后测试必须失败（证明能捕获 Loader unwrap 缺陷）
+- [x] CI 骨架：format/lint/typecheck/unit/Loader E2E/upstream-clean/AGENTS-CLAUDE 字节一致
 
 **退出证据**：Loader E2E 通过记录 + negative fixture 失败记录 + 可机器验证的 provenance lock。
+
+> **已完成（2026-08-14）**：commit `3799fa5`。证据：`pnpm provenance:check`、
+> `pnpm upstream:check`、`pnpm byteequal:check`、`pnpm test`（7 单元）、
+> `pnpm test:e2e`（3 真实 Loader 测试，含 negative）全绿。详见 `PROJECT_STATUS.md`。
 
 ## Phase 1 — Candidate SDK 与 trusted builder（Gate 1，3–5 天）
 
