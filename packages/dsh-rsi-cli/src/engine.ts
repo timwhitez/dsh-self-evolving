@@ -272,13 +272,15 @@ export async function runStableDemo(
         }
         events = await readAll(service.journal)
         const failures = replay(events).observations.filter(
-          (row) => row.candidateId === 'baseline' && row.reward === 0,
+          (row) => row.candidateId === 'baseline' && (row.status !== 'pass' || row.reward !== 1),
         )
         if (failures.length > 0) break
       }
       events = await readAll(service.journal)
       const taskIds = replay(events)
-        .observations.filter((row) => row.candidateId === 'baseline' && row.reward === 0)
+        .observations.filter(
+          (row) => row.candidateId === 'baseline' && (row.status !== 'pass' || row.reward !== 1),
+        )
         .map((row) => row.taskId)
         .sort()
       const pool: FailurePool = {

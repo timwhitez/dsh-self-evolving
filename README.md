@@ -60,6 +60,22 @@ Terminal-Bench K=10/K=80 搜索、29-task sealed confirmation、89×≥5 full-se
 属于持续提分 profile，不阻塞 v0.1 开源发布。启用时仍必须遵守 split、预算、统计和 claim boundary，
 工程稳定不等于 benchmark 提升。
 
+## 安装与运行
+
+完整步骤见 [`docs/quickstart.md`](docs/quickstart.md)。最短命令面：
+
+```bash
+pnpm bootstrap:upstreams
+pnpm install --frozen-lockfile
+pnpm build
+pnpm dsh-rsi init --run-id demo-1 --state-dir /var/lib/dsh-rsi-controller/demo-1 --repo-root "$PWD"
+pnpm dsh-rsi doctor --state-dir /var/lib/dsh-rsi-controller/demo-1
+pnpm dsh-rsi run --state-dir /var/lib/dsh-rsi-controller/demo-1
+```
+
+配置、恢复和证据解释分别见 [`docs/configuration.md`](docs/configuration.md)、
+[`docs/troubleshooting.md`](docs/troubleshooting.md) 和 [`docs/evidence-guide.md`](docs/evidence-guide.md)。
+
 ## 当前固定版本快照
 
 设计核验使用以下本地快照；实现开始时必须重新生成 `provenance.lock.json`，不得仅依赖此表：

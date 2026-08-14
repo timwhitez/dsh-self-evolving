@@ -115,3 +115,15 @@ solver envelope is at most 15 trials: 12 baseline discovery plus 3 candidate eva
 
 **Claim boundary:** `STABLE_ITERATION_VERIFIED` proves lifecycle/recovery/evidence behavior only. K=10/K=80,
 sealed confirmation, full-set and SOTA remain optional post-release profiles with their original strict claims.
+
+## ADR-012 — Baseline INVALID enters the frozen failure pool
+
+**Decision:** stable-demo config schema v2 defines a baseline failure as `status != pass OR reward != 1`. The fixed
+batch still completes before every FAIL/INVALID task in that batch is frozen for candidate evaluation.
+
+**Why:** the first real predecessor produced an `INVALID` normalized observation with `reward=null`. The v1 product
+engine selected only `reward=0`, contrary to the fail-closed evaluation contract. Run `stable-demo-20260814-v1` was
+stopped and marked `QUARANTINED_PROTOCOL_BUG`; it cannot be resumed or used for Gate 6 evidence.
+
+**Consequence:** the successor uses a new run ID and schema. This correction does not change the model route, sealed
+boundary, candidate rewards or any benchmark promotion rule.

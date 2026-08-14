@@ -19,7 +19,9 @@
     "test:gate4:codex-provider": "tsx scripts/run-gate4-codex-provider.ts",
     "provenance:check": "tsx scripts/check-provenance.ts",
     "upstream:check": "tsx scripts/check-upstream-clean.ts",
-    "byteequal:check": "tsx scripts/check-byte-equal.ts"
+    "byteequal:check": "tsx scripts/check-byte-equal.ts",
+    "bootstrap:upstreams": "node scripts/bootstrap-upstreams.mjs",
+    "dsh-rsi": "node packages/dsh-rsi-cli/lib/cli.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

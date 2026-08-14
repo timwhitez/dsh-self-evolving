@@ -1,7 +1,7 @@
 import { chmod, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
-export const CONFIG_SCHEMA_VERSION = 1 as const
+export const CONFIG_SCHEMA_VERSION = 2 as const
 export const STABLE_DEMO_PROFILE = 'stable-demo' as const
 
 export interface StableDemoConfig {
@@ -87,7 +87,7 @@ export function createStableDemoConfig(input: InitConfigInput): StableDemoConfig
 
 export function validateStableDemoConfig(value: unknown): StableDemoConfig {
   const c = value as Partial<StableDemoConfig> | null
-  if (c === null || c.schemaVersion !== 1 || c.profile !== STABLE_DEMO_PROFILE) {
+  if (c === null || c.schemaVersion !== 2 || c.profile !== STABLE_DEMO_PROFILE) {
     throw new Error('config: unsupported schema/profile')
   }
   if (typeof c.runId !== 'string' || !RUN_ID.test(c.runId)) throw new Error('config: unsafe run id')

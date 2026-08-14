@@ -98,8 +98,8 @@ async function fixture(): Promise<{
             candidateId: spec.candidate.candidateId,
             taskId: spec.taskId,
             attemptIndex: 0,
-            status: baselineFailure ? 'fail' : 'pass',
-            reward: baselineFailure ? 0 : 1,
+            status: baselineFailure ? 'invalid' : 'pass',
+            reward: baselineFailure ? null : 1,
             costUsd: 0.001,
           }
         },
