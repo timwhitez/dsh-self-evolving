@@ -158,6 +158,14 @@ function eventPayload<T>(events: JournalEvent[], eventId: string): T | undefined
   return events.find((event) => event.eventId === eventId)?.payload as T | undefined
 }
 
+function isBaselineFailure(row: {
+  candidateId: string
+  status: 'pass' | 'fail' | 'invalid'
+  reward: number | null
+}): boolean {
+  return row.candidateId === 'baseline' && row.status === 'fail' && row.reward === 0
+}
+
 async function writeFailurePool(config: ProjectConfig, pool: FailurePool): Promise<void> {
   const path = join(config.stateDir, 'failure-pool.json')
   const bytes = JSON.stringify(pool, null, 2) + '\n'
@@ -302,16 +310,12 @@ export async function runStableDemo(
           evaluated += 1
         }
         events = await readAll(service.journal)
-        const failures = replay(events).observations.filter(
-          (row) => row.candidateId === 'baseline' && (row.status !== 'pass' || row.reward !== 1),
-        )
+        const failures = replay(events).observations.filter(isBaselineFailure)
         if (failures.length > 0) break
       }
       events = await readAll(service.journal)
       const taskIds = replay(events)
-        .observations.filter(
-          (row) => row.candidateId === 'baseline' && (row.status !== 'pass' || row.reward !== 1),
-        )
+        .observations.filter(isBaselineFailure)
         .map((row) => row.taskId)
         .sort()
       const pool: FailurePool = {

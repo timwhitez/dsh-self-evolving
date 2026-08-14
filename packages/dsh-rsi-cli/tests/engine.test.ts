@@ -103,8 +103,8 @@ async function fixture(): Promise<{
             candidateId: spec.candidate.candidateId,
             taskId: spec.taskId,
             attemptIndex: 0,
-            status: baselineFailure ? 'invalid' : 'pass',
-            reward: baselineFailure ? null : 1,
+            status: baselineFailure ? 'fail' : 'pass',
+            reward: baselineFailure ? 0 : 1,
             costUsd: 0.001,
             rawEvidenceDigests: [digest(`${spec.candidate.candidateId}/${spec.taskId}`)],
           } as Awaited<ReturnType<EvaluationProvider['collect']>>
@@ -145,8 +145,8 @@ describe('stable-demo engine', () => {
         candidateId: spec.candidate.candidateId,
         taskId: spec.taskId,
         attemptIndex: 0,
-        status: 'pass',
-        reward: 1,
+        status: spec.taskId === 'task-2' ? 'invalid' : 'pass',
+        reward: spec.taskId === 'task-2' ? null : 1,
         costUsd: 0.001,
       })
       return provider
