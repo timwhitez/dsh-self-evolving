@@ -33,7 +33,11 @@ const repoRoot = resolve(here, '..', '..', '..')
 const baselineRoot = resolve(repoRoot, 'packages', 'candidate-baseline')
 const dshRoot = resolve(repoRoot, 'deepseek-harness')
 
-const ROUTE: ModelRoute = { provider: 'deepseek-official', model: 'deepseek-v4-flash-zen' }
+const ROUTE: ModelRoute = {
+  provider: 'deepseek-official',
+  model: 'deepseek-v4-flash-zen',
+  maxTokens: 32_768,
+}
 const API_KEY = process.env['DEEPSEEK_API_KEY'] ?? process.env['RSI_PROVIDER_API_KEY'] ?? ''
 const BASE_URL = process.env['RSI_PROVIDER_BASE_URL'] ?? 'https://64.186.236.156:24635/v1'
 

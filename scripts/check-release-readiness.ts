@@ -62,6 +62,7 @@ for (const required of [
   'SECURITY.md',
   'CODE_OF_CONDUCT.md',
   'CHANGELOG.md',
+  'LICENSE',
   'docs/quickstart.md',
   'docs/configuration.md',
   'docs/troubleshooting.md',

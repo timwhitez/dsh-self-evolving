@@ -21,7 +21,7 @@ export function buildSpdxSbom(
   commit: string,
   licenses: Record<string, LicensePackage[]>,
 ): Record<string, unknown> {
-  const packages = Object.entries(licenses)
+  const dependencyPackages = Object.entries(licenses)
     .flatMap(([license, entries]) =>
       entries.flatMap((entry) =>
         (entry.versions ?? ['NOASSERTION']).map((version) => ({
@@ -49,7 +49,20 @@ export function buildSpdxSbom(
       created: new Date().toISOString(),
       creators: ['Tool: dsh-rsi-release-builder-v1'],
     },
-    packages,
+    documentDescribes: ['SPDXRef-Package-dsh-rsi'],
+    packages: [
+      {
+        SPDXID: 'SPDXRef-Package-dsh-rsi',
+        name: 'dsh-rsi',
+        versionInfo: '0.1.0-rc.1',
+        downloadLocation: 'NOASSERTION',
+        filesAnalyzed: false,
+        licenseConcluded: 'Apache-2.0',
+        licenseDeclared: 'Apache-2.0',
+        copyrightText: 'NOASSERTION',
+      },
+      ...dependencyPackages,
+    ],
   }
 }
 
@@ -161,6 +174,7 @@ async function main(): Promise<void> {
     JSON.stringify(licenses, null, 2) + '\n',
   )
   await copyFile(join(repoRoot, 'provenance.lock.json'), join(outDir, 'provenance.lock.json'))
+  await copyFile(join(repoRoot, 'LICENSE'), join(outDir, 'LICENSE'))
 
   const primaryArtifacts = (await readdir(outDir))
     .filter((name) => name !== 'SHA256SUMS' && name !== 'release-receipt.json')
@@ -175,6 +189,7 @@ async function main(): Promise<void> {
       installation: 'SOURCE_ARCHIVE',
       standaloneNpmPackage: 'NOT_INCLUDED',
     },
+    license: 'Apache-2.0',
     benchmarkClaim: 'NONE',
   }
   const receiptFile = await open(join(outDir, 'release-receipt.json'), 'wx', 0o644)

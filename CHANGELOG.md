@@ -9,6 +9,7 @@ All notable changes are recorded here. This project uses semantic versioning for
 - Added durable hash-chain controller, budget ledger, provider saga and process crash recovery.
 - Added networkless DSH proposer with a locked Zen-compatible DeepSeek route.
 - Added the bounded `stable-demo` CLI profile with `init`, `doctor`, `run`, `resume`, `status` and `audit`.
+- Added source-archive installation, verifiable no-Git source identity, SPDX SBOM, checksums and Apache-2.0 license.
 - Defined K=10/K=80, sealed and full-set work as optional post-release benchmark profiles.
 
 No Terminal-Bench improvement, sealed promotion, leaderboard or SOTA result is claimed.

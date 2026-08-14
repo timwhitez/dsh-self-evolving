@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "A bounded, crash-resumable DSH Cordis self-iteration engine with auditable Harbor evaluation.",
+  "license": "Apache-2.0",
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

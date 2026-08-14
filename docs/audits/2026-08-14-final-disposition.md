@@ -1,5 +1,9 @@
 # Final disposition — 2026-08-14
 
+> **SUPERSEDED:** this was the Gate 4 snapshot before the v0.1 scope successor. Current Gate 5–7 acceptance is in
+> [`2026-08-14-v0.1-release-candidate.md`](2026-08-14-v0.1-release-candidate.md). The evidence below remains
+> historical and must not be read as current project status.
+
 ## Outcome
 
 Gate 4's Zen compatible successor is accepted. The project is not a completed RSI experiment and

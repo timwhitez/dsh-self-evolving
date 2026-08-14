@@ -3,9 +3,9 @@
 `dsh-RSI` 是一个以 DeepSeek Harness（DSH）插件为唯一运行时核心、以
 Terminal-Bench 2.1 为首个验证环境的递归自改进（RSI）项目。
 
-项目当前处于 **v0.1 稳定迭代发布阶段**。Gate 0–4 的 Loader、candidate builder、Harbor ACP、
-durable controller 和真实 Zen proposer 已有验收证据；当前工作是把它们接成一个可安装、可恢复、
-可审计的 K=3 真实迭代命令。尚无 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA 结论。
+项目当前状态为 **`OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`**。Gate 0–7 的 Loader、candidate builder、
+Harbor ACP、durable controller、真实 Zen proposer、K=3 稳定迭代与 Apache-2.0 source release 已有验收
+证据。尚无 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA 结论。
 
 ## 一句话架构
 

@@ -1,14 +1,38 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_PRODUCTIZATION_IN_PROGRESS`; `GATE_6_STABLE_DEMO_NOT_RUN`; `GATE_7_RELEASE_NOT_STARTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 最终 gate/commit/identity/test/blocker 对账见
-[`docs/audits/2026-08-14-final-disposition.md`](docs/audits/2026-08-14-final-disposition.md)。
+[`docs/audits/2026-08-14-v0.1-release-candidate.md`](docs/audits/2026-08-14-v0.1-release-candidate.md)。
 
 > **Scope successor（2026-08-14）**：当前完成口径已由“一次性跑完 Terminal-Bench campaign”调整为
 > “证明真实 K=3 闭环可稳定迭代并形成可用开源 v0.1”。下文 Gate 5/6 历史 benchmark artifacts 继续
 > 保留，但 60×2、K=10/K=80、sealed/full-set 不再阻塞 Gate 7 开源 release。
+
+**v0.1.1 设计边界**：[`docs/v0.1.1.md`](docs/v0.1.1.md) 是 Gate 7 之后的 successor design proposal，
+当前为 `NOT_IMPLEMENTED / NOT_ACCEPTANCE_EVIDENCE`。它不改变 Gate 5–7 的状态；实现前仍需 ADR、
+protocol version bump、fresh lineage，并按最终 v0.1 release commit 重新审计 predecessor gap。
+
+## Gate 5–7 v0.1 successor（已验收）
+
+统一 stable-demo CLI 已接通真实 proposer、candidate builder、Loader、Harbor evaluator、normalizer、durable
+controller 与 Archive，并提供 `init/run/resume/status/audit/doctor`。默认 profile 为 K=3、最多 15 个
+solver trials、sealed access 为 0；付费 launch 前 fail closed 检查 credential、route、Docker、Harbor、
+task materialization、private state、预算及源码身份。
+
+真实 run `stable-demo-20260814-v10` 完成 6 个 baseline 与 3 个 candidate Harbor trials，产生 3 个 unique
+admitted children、lineage depth 3，并在真实 external launch 后注入 `SIGKILL`。resume 后每个 action 只有
+一次 launch/observation/commit；独立 audit 接受 73 个 events，终态为 `STABLE_ITERATION_VERIFIED`，state
+hash 为 `sha256:1ede79e9a0e702d4f74849be5a0cf5628d75063862746bb1674c5f13aade3bc0`。
+
+Gate 7 已完成 Apache-2.0 source-archive release closure：一条 `pnpm setup:source` 在 fresh extraction 中
+完成固定上游、DSH、Harbor 与本项目安装；真实 Loader、无 Git source identity、doctor、backup/restore、
+uninstall/rollback、SBOM、dependency licenses、provenance、checksums 与 leak/UTF-8 scan 均通过。发行状态为
+`OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`；独立 npm package 明确为 `NOT_INCLUDED`。
+
+完整证据见
+[`docs/audits/2026-08-14-v0.1-release-candidate.md`](docs/audits/2026-08-14-v0.1-release-candidate.md)。
 
 ## Gate 3 successor（已验收）
 
@@ -127,7 +151,7 @@ initialize/session/prompt。验收同时在独立 network namespace 与 fresh `F
 完整差距矩阵与修复顺序见
 [`docs/audits/2026-08-14-gate-acceptance-audit.md`](docs/audits/2026-08-14-gate-acceptance-audit.md)。
 
-当前声明边界：
+该历史审计当时的声明边界：
 
 ```text
 GATE_0_ACCEPTED
@@ -379,19 +403,18 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 > 到达 terminal state；它不是 deterministic evidence，也不是 Gate 6。real proposer/builder/Harbor
 > successor 必须先完成 Gate 6，且结果与 formal Archive 隔离。
 
-## 当前开发范围尚未完成
+## 当前开发范围已完成
 
-- Gate 5：把 accepted proposer、builder、Loader、Harbor 和 durable controller 接成统一 CLI；默认
-  `K=3`，solver trial 上限 15，sealed access 为 0。
-- Gate 6：真实 failure-discovery sample 后完成 3 个 unique candidates、lineage depth ≥2，并实测一次
-  crash/resume exactly-once；不要求分数提升。
-- Gate 7：fresh-profile install、公开文档与治理文件、SBOM/provenance/checksums、全套测试、rollback。
-- Gate 8：K=10/K=80、sealed、full-set 全部为发布后 optional profiles，不阻塞当前交付。
+- Gate 5：统一 CLI 与真实迭代闭环已验收。
+- Gate 6：真实 K=3、三候选、多代谱系与 crash/resume exactly-once 已验收；不要求得分提升。
+- Gate 7：Apache-2.0 source release、fresh install、SBOM/provenance/checksums 与操作恢复已验收。
+- Gate 8：K=10/K=80、sealed、full-set 全部为发布后 optional profiles，状态为
+  `BENCHMARK_PROFILES_NOT_RUN`。
 
-因此当前可以声明 Gate 0–4 工程能力已验收，但不能声明稳定迭代闭环或开源 v0.1 已完成，也不能声明
+当前可以声明 `STABLE_ITERATION_VERIFIED` 与 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`。不能声明
 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA。
 
-## 下一个可执行验收门
+## 下一开发范围
 
-下一验收门是实现统一 stable-demo CLI，将真实 proposer → builder → Loader → Harbor → Archive 接通。
-逐项清单见 `docs/phase-todolist.md`。
+发布到 GitHub 需等待 maintainer 授权。发布后可按独立 fresh lineage 实现 `docs/v0.1.1.md`，或另行授权
+Gate 8 benchmark profile；两者都不属于本次 Gate 7 验收。

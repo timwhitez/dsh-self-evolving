@@ -3,7 +3,12 @@
  * output pipeline correctly parses + admits/rejects model output shapes.
  */
 import { describe, expect, it } from 'vitest'
-import { parseAndValidate, retainRejected, buildProposalPrompt } from '../src/index.js'
+import {
+  parseAndValidate,
+  retainRejected,
+  buildProposalPrompt,
+  proposalMaxTokens,
+} from '../src/index.js'
 
 const PARENT = 'sha256:' + 'a'.repeat(64)
 
@@ -75,6 +80,19 @@ describe('parse + validate', () => {
 })
 
 describe('buildProposalPrompt', () => {
+  it('uses the locked route output budget instead of silently forcing 2048 tokens', () => {
+    expect(
+      proposalMaxTokens({
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash-zen',
+        maxTokens: 32_768,
+      }),
+    ).toBe(32_768)
+    expect(() =>
+      proposalMaxTokens({ provider: 'deepseek', model: 'deepseek-v4-flash-zen', maxTokens: 0 }),
+    ).toThrow(/positive safe integer/)
+  })
+
   it('embeds the parent digest and width in the protocol contract', () => {
     const prompt = buildProposalPrompt({
       parentDigest: PARENT,

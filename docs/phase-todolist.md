@@ -126,36 +126,36 @@
 ## Phase 5 — 产品化迭代闭环（Gate 5，1–3 天）
 
 - [x] 搜索、split/sealed、bootstrap、durable controller 的核心模块与测试已存在
-- [ ] 将真实 proposer → candidate builder → Loader → Harbor evaluator → Archive 接到统一 CLI
-- [ ] 实现 `init/run/resume/status/audit/doctor` 和 versioned config
-- [ ] 默认 profile 固定为 `K=3`、development-only、sealedAccessCount=0、solver trial 上限 15
-- [ ] 付费 launch 前检查 credential、Docker、Harbor、task materialization、预算和 writable state
-- [ ] 同 idempotency key / crash resume 不重复 proposal、trial、score 或 cost
+- [x] 将真实 proposer → candidate builder → Loader → Harbor evaluator → Archive 接到统一 CLI
+- [x] 实现 `init/run/resume/status/audit/doctor` 和 versioned config
+- [x] 默认 profile 固定为 `K=3`、development-only、sealedAccessCount=0、solver trial 上限 15
+- [x] 付费 launch 前检查 credential、Docker、Harbor、task materialization、预算和 writable state
+- [x] 同 idempotency key / crash resume 不重复 proposal、trial、score 或 cost
 
 **退出证据**：单命令真实完成一次 propose/build/evaluate/commit，重启后 status/replay 一致。
 
 ## Phase 6 — 稳定 K=3 迭代证明（Gate 6，1–2 天 + runtime）
 
-- [ ] fresh run ID；baseline failure discovery 分批运行，最多 12 个 observed tasks
-- [ ] 在 candidate reward 前冻结 failure pool 与每个 candidate 的 task draw
-- [ ] 无人工干预产生 3 个 unique admitted candidates，lineage depth ≥2
-- [ ] 每个 candidate 只评测 1 个 frozen baseline-failed task；不要求分数提升
-- [ ] 真实 external effect 后注入一次 crash，resume 后 exactly-once 且 state hash/replay 一致
-- [ ] proposer 引用历史 raw evidence；全部 raw/normalized/usage/cost refs 完整
-- [ ] sealedAccessCount 始终为 0；终态为 `STABLE_ITERATION_VERIFIED`
+- [x] fresh run ID；baseline failure discovery 分批运行，最多 12 个 observed tasks
+- [x] 在 candidate reward 前冻结 failure pool 与每个 candidate 的 task draw
+- [x] 无人工干预产生 3 个 unique admitted candidates，lineage depth ≥2
+- [x] 每个 candidate 只评测 1 个 frozen baseline-failed task；不要求分数提升
+- [x] 真实 external effect 后注入一次 crash，resume 后 exactly-once 且 state hash/replay 一致
+- [x] proposer 引用历史 raw evidence；raw/normalized/cost refs 完整，缺失 usage 显式为 unpriced
+- [x] sealedAccessCount 始终为 0；终态为 `STABLE_ITERATION_VERIFIED`
 
 **停止条件**：12 个 baseline tasks 均通过时标记 `NO_REAL_FAILURE_SIGNAL`，不按候选结果动态换题。
 
 ## Phase 7 — 开源 v0.1 release candidate（Gate 7，1–2 天）
 
-- [ ] README/quickstart/config/troubleshooting/architecture/evidence interpretation 与当前实现一致
-- [ ] 用户确认 OSI license；补齐 CONTRIBUTING、SECURITY、code of conduct、CHANGELOG
-- [ ] fresh-profile 安装后运行真实 Loader 与 K=3 demo smoke
-- [ ] 生成 source archive、SBOM、provenance、checksums、dependency/license scan、secret/leak scan；独立 npm
+- [x] README/quickstart/config/troubleshooting/architecture/evidence interpretation 与当前实现一致
+- [x] 用户确认 Apache-2.0；补齐 CONTRIBUTING、SECURITY、code of conduct、CHANGELOG
+- [x] fresh-profile 安装后运行真实 Loader 与 K=3 demo smoke
+- [x] 生成 source archive、SBOM、provenance、checksums、dependency/license scan、secret/leak scan；独立 npm
       package 明确为 `NOT_INCLUDED`
-- [ ] full unit/E2E/typecheck/lint/format/provenance/upstream-clean/UTF-8 全绿
-- [ ] 实测 uninstall/rollback 与一次 state backup/restore
-- [ ] 发布审计只声明 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`，不声明 benchmark 提升
+- [x] full unit/E2E/typecheck/lint/format/provenance/upstream-clean/UTF-8 全绿
+- [x] 实测 uninstall/rollback 与一次 state backup/restore
+- [x] 发布审计只声明 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`，不声明 benchmark 提升
 
 ## Phase 8 — 发布后持续提分 profiles（可选，不阻塞 v0.1）
 
@@ -169,7 +169,7 @@
 
 ## 跨阶段持续项
 
-- [ ] 每个 Phase 结束更新 `PROJECT_STATUS.md`，只报告有 artifact 支持的状态
+- [x] 每个已验收 Phase 更新 `PROJECT_STATUS.md`，只报告有 artifact 支持的状态
 - [ ] 任何 TCB/协议/split/metric 变更走 ADR + protocol version bump（spec 07 §13）
 - [ ] 凭据永不进入 candidate/config/log/evidence；每次 export 附 canary absence receipt
 - [ ] CI 全绿是合入条件；nightly Harbor smoke、weekly provenance refresh report 不自动改 pin

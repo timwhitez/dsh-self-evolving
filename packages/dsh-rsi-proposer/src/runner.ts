@@ -27,6 +27,15 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 export interface ModelRoute {
   provider: string
   model: string
+  maxTokens?: number
+}
+
+export function proposalMaxTokens(route: ModelRoute): number {
+  const maxTokens = route.maxTokens ?? 2048
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) {
+    throw new Error('proposer: route maxTokens must be a positive safe integer')
+  }
+  return maxTokens
 }
 
 export interface ProposalInput {
@@ -123,7 +132,11 @@ export async function runProposalTurn(
   const handle = await agents.create({
     sessionId: SessionId(`proposer-${process.pid}-${Date.now()}`),
     meta: { cwd: process.cwd() },
-    agentOptions: { provider: route.provider, model: route.model, maxTokens: 2048 },
+    agentOptions: {
+      provider: route.provider,
+      model: route.model,
+      maxTokens: proposalMaxTokens(route),
+    },
     setup: (agentCtx) => {
       // Lock the model selection in the agent scope before publication.
       installModelSelection(agentCtx, {

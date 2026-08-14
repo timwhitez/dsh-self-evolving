@@ -1,6 +1,7 @@
 export {
   buildProposalPrompt,
   runProposalTurn,
+  proposalMaxTokens,
   type ModelRoute,
   type ProposalInput,
   type ProposalTranscript,

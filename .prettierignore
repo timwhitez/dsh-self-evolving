@@ -9,6 +9,7 @@ tb/
 **/.tsbuildinfo
 
 # Lockfiles and pinned artifacts.
+LICENSE
 pnpm-lock.yaml
 provenance.lock.json
 
