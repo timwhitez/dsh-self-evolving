@@ -4,8 +4,23 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildCandidate, packCapsule } from '@dsh-rsi/candidate-sdk'
-import { runProposalSandbox, type ProposalSandboxMounts } from '@dsh-rsi/core'
+import {
+  buildCandidate,
+  canonicalV011,
+  canonicalizeV011Tree,
+  digestV011,
+  freezeCapabilityCatalog,
+  packCapsule,
+  snapshotV011Tree,
+  V011_PROTOCOL,
+  type EvidenceCitation,
+} from '@dsh-rsi/candidate-sdk'
+import {
+  materializeProposerExport,
+  publishBytes,
+  runProposalSandbox,
+  type ProposalSandboxMounts,
+} from '@dsh-rsi/core'
 import {
   TrustedChatCompletionsAdapter,
   createProposalGatewayLlmHandler,
@@ -52,6 +67,7 @@ async function topology(selectedRoute: ProposalGatewayRoute = route): Promise<{
   mounts: ProposalSandboxMounts
   runtimeRoot: string
   request: Record<string, unknown>
+  citations: [EvidenceCitation, EvidenceCitation]
 }> {
   root = await mkdtemp(join(tmpdir(), 'dsh-rsi-v011-proposer-'))
   const receipt = await buildCandidate({ sourceRoot: v1Baseline, sourceFiles, tscBin })
@@ -94,7 +110,11 @@ async function topology(selectedRoute: ProposalGatewayRoute = route): Promise<{
     contracts: join(root, 'input', 'contracts'),
     childrenRoot: join(root, 'children'),
   }
-  await Promise.all(Object.values(mounts).map((path) => mkdir(path, { recursive: true })))
+  await Promise.all(
+    [mounts.parent, mounts.archive, mounts.contracts, mounts.childrenRoot].map((path) =>
+      mkdir(path, { recursive: true }),
+    ),
+  )
   const parentTree = join(mounts.parent, 'tree')
   await mkdir(parentTree, { recursive: true })
   for (const path of ['src', 'tests'])
@@ -112,25 +132,56 @@ async function topology(selectedRoute: ProposalGatewayRoute = route): Promise<{
   await mkdir(slot, { recursive: true })
   await cp(parentTree, join(slot, 'tree'), { recursive: true })
   await writeFile(join(mounts.archive, 'catalog.json'), '{"sourceLabel":"DEV_OBSERVED"}\n')
-  await mkdir(join(mounts.evidence, 'objects'), { recursive: true })
-  await writeFile(
-    join(mounts.evidence, 'objects', 'trajectory.json'),
-    '{"events":[{"error":"transient"}]}\n',
+  const store = { root: join(root, 'object-store') }
+  const atif = await publishBytes(
+    store,
+    Buffer.from('{"events":[{"error":"transient"}]}\n'),
+    'application/vnd.dsh-rsi.atif+json',
+    'DEV_OBSERVED',
   )
-  await writeFile(
-    join(mounts.evidence, 'objects', 'normalized.json'),
-    '{"status":"fail","reward":0}\n',
+  const normalized = await publishBytes(
+    store,
+    Buffer.from('{"status":"fail","reward":0}\n'),
+    'application/vnd.dsh-rsi.normalized-trial-record+json',
+    'DEV_OBSERVED',
   )
+  const exportManifest = await materializeProposerExport({
+    store,
+    outDir: mounts.evidence,
+    exportId: 'v011-e2e-export',
+    principal: 'proposer:e2e',
+    objects: [atif, normalized],
+    createdFromStateHash: digest('f'),
+  })
+  const catalog = await freezeCapabilityCatalog({
+    schemaVersion: 1,
+    protocol: V011_PROTOCOL,
+    dshCommit: '4'.repeat(40),
+    capabilities: [
+      {
+        id: 'systemPrompt',
+        tier: 'T0',
+        kind: 'service',
+        signature: 'systemPrompt.section(input): disposer',
+        enabled: true,
+        fixtureDigest: digest('5'),
+      },
+    ],
+  })
+  await writeFile(join(mounts.contracts, 'capability-catalog.json'), JSON.stringify(catalog) + '\n')
+  const parentDigest =
+    `sha256:${(await canonicalizeV011Tree(await snapshotV011Tree(parentTree))).hash}` as const
+  const exportManifestDigest = digestV011(canonicalV011(exportManifest))
   const request = {
     route: selectedRoute,
     proposalId,
-    parentDigest: digest('a'),
+    parentDigest,
     parentEntryDigest,
     parentRuntimeDigest,
     candidateId: digest('b'),
-    exportManifestDigest: digest('c'),
-    exportMerkleRoot: digest('d'),
-    capabilityCatalogDigest: digest('e'),
+    exportManifestDigest,
+    exportMerkleRoot: exportManifest.merkleRoot,
+    capabilityCatalogDigest: catalog.digest,
     ancestorClusters: [],
   }
   await writeFile(join(mounts.contracts, 'request.json'), JSON.stringify(request) + '\n')
@@ -143,7 +194,21 @@ async function topology(selectedRoute: ProposalGatewayRoute = route): Promise<{
   ]) {
     await cp(join(repoRoot, 'schemas', schema), join(mounts.contracts, 'schemas', schema))
   }
-  return { mounts, runtimeRoot, request }
+  const citations: [EvidenceCitation, EvidenceCitation] = [
+    {
+      objectDigest: `sha256:${atif.digest}`,
+      mediaType: atif.mediaType,
+      locator: { kind: 'json-pointer', value: '/events/0' },
+      observation: 'The tool failed transiently.',
+    },
+    {
+      objectDigest: `sha256:${normalized.digest}`,
+      mediaType: normalized.mediaType,
+      locator: { kind: 'json-pointer', value: '/status' },
+      observation: 'The baseline trial failed.',
+    },
+  ]
+  return { mounts, runtimeRoot, request, citations }
 }
 
 function call(index: number, name: string, args: unknown) {
@@ -176,19 +241,8 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
     'loads the exact parent through Loader and authors a multi-file child with retained tools',
     { timeout: 180_000 },
     async () => {
-      const { mounts, runtimeRoot, request } = await topology()
-      const citation1 = {
-        objectDigest: digest('6'),
-        mediaType: 'application/vnd.dsh-rsi.atif+json',
-        locator: { kind: 'json-pointer', value: '/events/0' },
-        observation: 'The tool failed transiently.',
-      }
-      const citation2 = {
-        objectDigest: digest('7'),
-        mediaType: 'application/vnd.dsh-rsi.normalized-trial-record+json',
-        locator: { kind: 'json-pointer', value: '/status' },
-        observation: 'The baseline trial failed.',
-      }
+      const { mounts, runtimeRoot, request, citations } = await topology()
+      const [citation1, citation2] = citations
       const hypothesis =
         'One bounded retry after a transient tool error reaches normal finalization.'
       const candidate = {
@@ -226,6 +280,15 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
         expectedBehaviorChange: 'Retry exactly once.',
         preservationRequirements: ['Do not repeat success.'],
         regressionRisks: ['Duplicate side effects.'],
+      }
+      const invalidAnalysis = {
+        ...analysis,
+        failureClusters: [
+          {
+            ...analysis.failureClusters[0],
+            citations: [citation2],
+          },
+        ],
       }
       const proposal = {
         schemaVersion: 2,
@@ -272,9 +335,11 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
           },
         ],
         ['write_file', { path: 'candidate.json', content: JSON.stringify(candidate) + '\n' }],
-        ['write_file', { path: 'analysis.json', content: JSON.stringify(analysis) + '\n' }],
+        ['write_file', { path: 'analysis.json', content: JSON.stringify(invalidAnalysis) + '\n' }],
         ['write_file', { path: 'proposal.json', content: JSON.stringify(proposal) + '\n' }],
         ['validate_child', {}],
+        ['finish_proposal', {}],
+        ['write_file', { path: 'analysis.json', content: JSON.stringify(analysis) + '\n' }],
         ['finish_proposal', {}],
       ]
       let turn = 0
@@ -314,7 +379,7 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
           entryDigest: request['parentEntryDigest'],
           runtimeDigest: request['parentRuntimeDigest'],
         })
-        expect(output.toolCallCount).toBe(10)
+        expect(output.toolCallCount).toBe(12)
         expect(output.transcript.toolTrace.length).toBeGreaterThanOrEqual(20)
         expect(
           await readFile(
@@ -322,7 +387,7 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
             'utf8',
           ),
         ).toContain('boundedRetryLimit')
-        expect(gateway.receipts()).toHaveLength(11)
+        expect(gateway.receipts()).toHaveLength(13)
       } finally {
         await gateway.close()
       }

@@ -81,6 +81,21 @@ function sha(bytes: string | Uint8Array): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
 }
 
+function diagnosticTail(message: string, maxBytes = 8192): string {
+  const ansiColor = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g')
+  const clean = message.replace(ansiColor, '')
+  if (Buffer.byteLength(clean) <= maxBytes) return clean
+  let low = 0
+  let high = clean.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (Buffer.byteLength(clean.slice(middle)) > maxBytes) low = middle + 1
+    else high = middle
+  }
+  if (low < clean.length && /[\uDC00-\uDFFF]/.test(clean[low]!)) low += 1
+  return clean.slice(low)
+}
+
 async function writeExclusive(path: string, bytes: string, mode = 0o600): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const file = await open(path, 'wx', mode)
@@ -90,6 +105,29 @@ async function writeExclusive(path: string, bytes: string, mode = 0o600): Promis
   } finally {
     await file.close()
   }
+}
+
+async function retainProposalRejection(
+  action: string,
+  classification: 'PROPOSAL_SANDBOX_REJECT' | 'PROPOSAL_SEMANTIC_REJECT',
+  message: string,
+): Promise<void> {
+  const path = join(action, 'rejection.json')
+  if ((await stat(path).catch(() => null)) !== null) return
+  await writeExclusive(
+    path,
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        classification,
+        reason: diagnosticTail(message),
+        reasonDigest: sha(message),
+        retained: true,
+      },
+      null,
+      2,
+    ) + '\n',
+  )
 }
 
 async function walk(root: string): Promise<string[]> {
@@ -636,7 +674,11 @@ async function realV011Proposal(
         gatewaySocket: gateway.socketPath,
       })
       sandboxResult = result
-      if (result.exitCode !== 0) throw new Error(`v0.1.1 real proposer failed: ${result.stderr}`)
+      if (result.exitCode !== 0) {
+        const message = `v0.1.1 real proposer failed: ${result.stderr}`
+        await retainProposalRejection(action, 'PROPOSAL_SANDBOX_REJECT', message)
+        throw new Error(message)
+      }
     } finally {
       await writeExclusive(
         join(action, 'gateway-receipts.json'),
@@ -656,6 +698,7 @@ async function realV011Proposal(
                     exitCode: sandboxResult.exitCode,
                     signal: sandboxResult.signal,
                     stderrSha256: sha(sandboxResult.stderr),
+                    stderrTail: diagnosticTail(sandboxResult.stderr),
                   },
           },
           null,
@@ -672,29 +715,36 @@ async function realV011Proposal(
     toolCallCount: number
   }
   const store: ObjectStore = { root: join(config.stateDir, 'v011', 'object-store') }
-  const materialized = await materializeV011Proposal({
-    store,
-    parentRoot: input.parent.sourceRoot,
-    childRoot: join(slot, 'tree'),
-    exportRoot: exported.root,
-    exportManifest: exported.manifest,
-    expected: {
-      proposalId,
-      parentDigest: input.parent.sourceDigest as `sha256:${string}`,
-      exportManifestDigest: exportDigest,
-      exportMerkleRoot: exported.manifest.merkleRoot as `sha256:${string}`,
-    },
-    capabilityCatalog: catalog,
-    transcript: Buffer.from(worker.transcript.assistantText),
-    toolTrace: Buffer.from(JSON.stringify(worker.transcript.toolTrace)),
-    proposerUsage: {
-      gatewayReceipts: JSON.parse(await readFile(join(action, 'gateway-receipts.json'), 'utf8'))
-        .length,
-      eventCount: worker.transcript.eventCount,
-    },
-    ancestorClustersRequiringReconciliation:
-      input.parent.targetClusterSlug === undefined ? [] : [input.parent.targetClusterSlug],
-  })
+  let materialized: Awaited<ReturnType<typeof materializeV011Proposal>>
+  try {
+    materialized = await materializeV011Proposal({
+      store,
+      parentRoot: input.parent.sourceRoot,
+      childRoot: join(slot, 'tree'),
+      exportRoot: exported.root,
+      exportManifest: exported.manifest,
+      expected: {
+        proposalId,
+        parentDigest: input.parent.sourceDigest as `sha256:${string}`,
+        exportManifestDigest: exportDigest,
+        exportMerkleRoot: exported.manifest.merkleRoot as `sha256:${string}`,
+      },
+      capabilityCatalog: catalog,
+      transcript: Buffer.from(worker.transcript.assistantText),
+      toolTrace: Buffer.from(JSON.stringify(worker.transcript.toolTrace)),
+      proposerUsage: {
+        gatewayReceipts: JSON.parse(await readFile(join(action, 'gateway-receipts.json'), 'utf8'))
+          .length,
+        eventCount: worker.transcript.eventCount,
+      },
+      ancestorClustersRequiringReconciliation:
+        input.parent.targetClusterSlug === undefined ? [] : [input.parent.targetClusterSlug],
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown semantic rejection'
+    await retainProposalRejection(action, 'PROPOSAL_SEMANTIC_REJECT', message)
+    throw error
+  }
   const analysis = JSON.parse(await readFile(join(slot, 'analysis.json'), 'utf8')) as {
     falsifiableHypothesis: string
   }

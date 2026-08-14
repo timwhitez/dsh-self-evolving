@@ -2,7 +2,18 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import { assertV011, snapshotV011Tree } from '@dsh-rsi/candidate-sdk'
+import {
+  assertV011,
+  snapshotV011Tree,
+  type FrozenCapabilityCatalog,
+  type V011Proposal,
+} from '@dsh-rsi/candidate-sdk'
+import {
+  validateV011ProposalSemantics,
+  type CandidateIntent,
+  type ExportManifest,
+  type V011Analysis,
+} from '@dsh-rsi/core'
 
 const EDITABLE = [
   /^src\/(?:[^/]+\/)*[^/]+\.ts$/,
@@ -25,6 +36,14 @@ export interface V011ToolRoots {
 export interface V011ToolState {
   finished: boolean
   callCount: number
+}
+
+export interface V011ProposalBindings {
+  proposalId: string
+  parentDigest: `sha256:${string}`
+  exportManifestDigest: `sha256:${string}`
+  exportMerkleRoot: `sha256:${string}`
+  ancestorClusters: string[]
 }
 
 function safeRelative(path: string): string {
@@ -94,7 +113,7 @@ function render(value: unknown) {
 export function installV011Tools(
   ctx: Context,
   roots: V011ToolRoots,
-  expectedProposalId: string,
+  bindings: V011ProposalBindings,
 ): V011ToolState {
   const state: V011ToolState = { finished: false, callCount: 0 }
   const counted = <T extends (...args: never[]) => unknown>(fn: T): T =>
@@ -240,16 +259,48 @@ export function installV011Tools(
       execute: counted(async () => {
         const analysis = JSON.parse(
           await readFile(join(roots.slot, 'analysis.json'), 'utf8'),
-        ) as unknown
+        ) as V011Analysis
         const proposal = JSON.parse(await readFile(join(roots.slot, 'proposal.json'), 'utf8')) as {
           proposalId?: unknown
-        }
-        await Promise.all([assertV011('analysis', analysis), assertV011('proposal', proposal)])
-        if (proposal.proposalId !== expectedProposalId)
+        } & V011Proposal
+        const candidateIntent = JSON.parse(
+          await readFile(join(roots.childTree, 'candidate.json'), 'utf8'),
+        ) as CandidateIntent
+        await Promise.all([
+          assertV011('analysis', analysis),
+          assertV011('proposal', proposal),
+          assertV011('candidate-intent', candidateIntent),
+        ])
+        if (proposal.proposalId !== bindings.proposalId)
           throw new Error('v0.1.1 tool: proposal ID is not reserved ID')
+        const [exportManifest, capabilityCatalog] = (await Promise.all([
+          readFile(join(roots.evidence, 'manifest.json'), 'utf8').then(
+            (raw) => JSON.parse(raw) as ExportManifest,
+          ),
+          readFile(join(roots.contracts, 'capability-catalog.json'), 'utf8').then(
+            (raw) => JSON.parse(raw) as FrozenCapabilityCatalog,
+          ),
+        ])) as [ExportManifest, FrozenCapabilityCatalog]
+        await validateV011ProposalSemantics({
+          parentRoot: roots.parent,
+          childRoot: roots.childTree,
+          exportRoot: roots.evidence,
+          exportManifest,
+          expected: {
+            proposalId: bindings.proposalId,
+            parentDigest: bindings.parentDigest,
+            exportManifestDigest: bindings.exportManifestDigest,
+            exportMerkleRoot: bindings.exportMerkleRoot,
+          },
+          capabilityCatalog,
+          proposal,
+          analysis,
+          candidateIntent,
+          ancestorClustersRequiringReconciliation: bindings.ancestorClusters,
+        })
         await snapshotV011Tree(roots.childTree)
         state.finished = true
-        return render({ status: 'PROPOSAL_FILES_VALID', proposalId: expectedProposalId })
+        return render({ status: 'PROPOSAL_SEMANTICS_VALID', proposalId: bindings.proposalId })
       }),
     }),
   )

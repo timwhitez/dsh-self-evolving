@@ -19,13 +19,13 @@ import { publishBytes, type ObjectRef, type ObjectStore } from '../object-store/
 import { verifyExport, type ExportManifest } from './export.js'
 import { resolveV011Citations, type ResolvedCitation } from './v011-citations.js'
 
-interface FailureCluster {
+export interface FailureCluster {
   slug: string
   mechanism: string
   citations: EvidenceCitation[]
 }
 
-interface V011Analysis {
+export interface V011Analysis {
   schemaVersion: 1
   failureClusters: FailureCluster[]
   ancestorReconciliations: Array<{
@@ -41,7 +41,7 @@ interface V011Analysis {
   regressionRisks: string[]
 }
 
-interface CandidateIntent {
+export interface CandidateIntent {
   schemaVersion: 2
   proposal: { hypothesis: string }
   runtime: { requiredServices: string[]; optionalServices: string[]; newToolNames: string[] }
@@ -97,6 +97,81 @@ function assertTrajectoryGrounding(analysis: V011Analysis): void {
   }
 }
 
+export async function validateV011ProposalSemantics(input: {
+  parentRoot: string
+  childRoot: string
+  exportRoot: string
+  exportManifest: ExportManifest
+  expected: {
+    proposalId: string
+    parentDigest: `sha256:${string}`
+    exportManifestDigest: `sha256:${string}`
+    exportMerkleRoot: `sha256:${string}`
+  }
+  capabilityCatalog: FrozenCapabilityCatalog
+  proposal: V011Proposal
+  analysis: V011Analysis
+  candidateIntent: CandidateIntent
+  ancestorClustersRequiringReconciliation?: string[]
+}): Promise<{ operations: TreeOperation[]; resolvedCitations: ResolvedCitation[] }> {
+  if (!verifyExport(input.exportManifest))
+    throw new Error('v0.1.1 materializer: invalid export Merkle root')
+  const actualExportDigest = digestV011(canonicalV011(input.exportManifest))
+  if (actualExportDigest !== input.expected.exportManifestDigest) {
+    throw new Error('v0.1.1 materializer: export manifest digest mismatch')
+  }
+  if (input.exportManifest.merkleRoot !== input.expected.exportMerkleRoot) {
+    throw new Error('v0.1.1 materializer: export Merkle binding mismatch')
+  }
+  if (
+    input.proposal.proposalId !== input.expected.proposalId ||
+    input.proposal.canonicalParentDigest !== input.expected.parentDigest ||
+    input.proposal.evidenceExport.manifestDigest !== input.expected.exportManifestDigest ||
+    input.proposal.evidenceExport.merkleRoot !== input.expected.exportMerkleRoot ||
+    input.proposal.analysisPath !== 'analysis.json'
+  ) {
+    throw new Error('v0.1.1 materializer: proposal does not match durable reservation')
+  }
+  if (
+    input.proposal.hypothesis !== input.analysis.falsifiableHypothesis ||
+    input.proposal.hypothesis !== input.candidateIntent.proposal.hypothesis
+  ) {
+    throw new Error(
+      'v0.1.1 materializer: hypothesis differs across proposal, analysis, and candidate intent',
+    )
+  }
+  assertTrajectoryGrounding(input.analysis)
+  for (const cluster of new Set(input.ancestorClustersRequiringReconciliation ?? [])) {
+    if (!input.analysis.ancestorReconciliations.some((row) => row.clusterSlug === cluster)) {
+      throw new Error(`v0.1.1 analysis: missing ancestor reconciliation for ${cluster}`)
+    }
+  }
+  assertRuntimeIntentAgainstCatalog(input.candidateIntent.runtime, input.capabilityCatalog)
+  const parent = await snapshotV011Tree(input.parentRoot)
+  const child = await snapshotV011Tree(input.childRoot)
+  const parentArchive = await canonicalizeV011Tree(parent)
+  if (`sha256:${parentArchive.hash}` !== input.expected.parentDigest) {
+    throw new Error('v0.1.1 materializer: canonical parent bytes do not match reservation')
+  }
+  const diff = await deriveV011Operations(parent, child)
+  assertDeclaredOperations(diff.operations, input.proposal.declaredOperations)
+  const citations = uniqueCitations([
+    ...input.proposal.evidenceCitations,
+    ...input.analysis.failureClusters.flatMap((cluster) => cluster.citations),
+    ...input.analysis.ancestorReconciliations.flatMap((row) => [
+      row.analysisCitation,
+      row.outcomeCitation,
+    ]),
+    ...input.proposal.capabilityRequests.flatMap((request) => request.evidenceCitations),
+  ])
+  const resolvedCitations = await resolveV011Citations({
+    citations,
+    exportManifest: input.exportManifest,
+    exportRoot: input.exportRoot,
+  })
+  return { operations: diff.operations, resolvedCitations }
+}
+
 export async function materializeV011Proposal(input: {
   store: ObjectStore
   parentRoot: string
@@ -115,15 +190,6 @@ export async function materializeV011Proposal(input: {
   proposerUsage: Record<string, unknown>
   ancestorClustersRequiringReconciliation?: string[]
 }): Promise<V011MaterializationOutput> {
-  if (!verifyExport(input.exportManifest))
-    throw new Error('v0.1.1 materializer: invalid export Merkle root')
-  const actualExportDigest = digestV011(canonicalV011(input.exportManifest))
-  if (actualExportDigest !== input.expected.exportManifestDigest) {
-    throw new Error('v0.1.1 materializer: export manifest digest mismatch')
-  }
-  if (input.exportManifest.merkleRoot !== input.expected.exportMerkleRoot) {
-    throw new Error('v0.1.1 materializer: export Merkle binding mismatch')
-  }
   const proposalBytes = await readFile(join(input.childRoot, '..', 'proposal.json'))
   const analysisBytes = await readFile(join(input.childRoot, '..', 'analysis.json'))
   const proposal = JSON.parse(proposalBytes.toString('utf8')) as V011Proposal
@@ -136,53 +202,24 @@ export async function materializeV011Proposal(input: {
     assertV011('analysis', analysis),
     assertV011('candidate-intent', candidateIntent),
   ])
-  if (
-    proposal.proposalId !== input.expected.proposalId ||
-    proposal.canonicalParentDigest !== input.expected.parentDigest ||
-    proposal.evidenceExport.manifestDigest !== input.expected.exportManifestDigest ||
-    proposal.evidenceExport.merkleRoot !== input.expected.exportMerkleRoot ||
-    proposal.analysisPath !== 'analysis.json'
-  ) {
-    throw new Error('v0.1.1 materializer: proposal does not match durable reservation')
-  }
-  if (
-    proposal.hypothesis !== analysis.falsifiableHypothesis ||
-    proposal.hypothesis !== candidateIntent.proposal.hypothesis
-  ) {
-    throw new Error(
-      'v0.1.1 materializer: hypothesis differs across proposal, analysis, and candidate intent',
-    )
-  }
-  assertTrajectoryGrounding(analysis)
-  for (const cluster of new Set(input.ancestorClustersRequiringReconciliation ?? [])) {
-    if (!analysis.ancestorReconciliations.some((row) => row.clusterSlug === cluster)) {
-      throw new Error(`v0.1.1 analysis: missing ancestor reconciliation for ${cluster}`)
-    }
-  }
-  assertRuntimeIntentAgainstCatalog(candidateIntent.runtime, input.capabilityCatalog)
-  const parent = await snapshotV011Tree(input.parentRoot)
-  const child = await snapshotV011Tree(input.childRoot)
-  const parentArchive = await canonicalizeV011Tree(parent)
-  if (`sha256:${parentArchive.hash}` !== input.expected.parentDigest) {
-    throw new Error('v0.1.1 materializer: canonical parent bytes do not match reservation')
-  }
-  const diff = await deriveV011Operations(parent, child)
-  assertDeclaredOperations(diff.operations, proposal.declaredOperations)
-  const archive = await canonicalizeV011Tree(child)
-  const citations = uniqueCitations([
-    ...proposal.evidenceCitations,
-    ...analysis.failureClusters.flatMap((cluster) => cluster.citations),
-    ...analysis.ancestorReconciliations.flatMap((row) => [
-      row.analysisCitation,
-      row.outcomeCitation,
-    ]),
-    ...proposal.capabilityRequests.flatMap((request) => request.evidenceCitations),
-  ])
-  const resolvedCitations = await resolveV011Citations({
-    citations,
-    exportManifest: input.exportManifest,
+  const semantic = await validateV011ProposalSemantics({
+    parentRoot: input.parentRoot,
+    childRoot: input.childRoot,
     exportRoot: input.exportRoot,
+    exportManifest: input.exportManifest,
+    expected: input.expected,
+    capabilityCatalog: input.capabilityCatalog,
+    proposal,
+    analysis,
+    candidateIntent,
+    ...(input.ancestorClustersRequiringReconciliation === undefined
+      ? {}
+      : {
+          ancestorClustersRequiringReconciliation: input.ancestorClustersRequiringReconciliation,
+        }),
   })
+  const child = await snapshotV011Tree(input.childRoot)
+  const archive = await canonicalizeV011Tree(child)
   const [sourceRef, analysisRef, proposalRef] = await Promise.all([
     publishBytes(
       input.store,
@@ -213,7 +250,7 @@ export async function materializeV011Proposal(input: {
     proposalDigest: `sha256:${proposalRef.digest}`,
     transcriptDigest: digestV011(input.transcript),
     toolTraceDigest: digestV011(input.toolTrace),
-    operations: diff.operations,
+    operations: semantic.operations,
     capabilityCatalogDigest: input.capabilityCatalog.digest,
     retainedCapabilityRequests: proposal.capabilityRequests,
     proposerUsage: input.proposerUsage,
@@ -225,5 +262,12 @@ export async function materializeV011Proposal(input: {
     'application/vnd.dsh-rsi.materialization-receipt+json',
     'DEV_OBSERVED',
   )
-  return { receipt, receiptRef, sourceRef, analysisRef, proposalRef, resolvedCitations }
+  return {
+    receipt,
+    receiptRef,
+    sourceRef,
+    analysisRef,
+    proposalRef,
+    resolvedCitations: semantic.resolvedCitations,
+  }
 }

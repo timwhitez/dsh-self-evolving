@@ -31,6 +31,7 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     `Ancestor clusters requiring reconciliation: ${JSON.stringify(input.ancestorClusters)}`,
     '',
     'Use list_files/read_file/search_text to inspect the parent, raw evidence, archive, and contracts.',
+    'Inspect every exported application/vnd.dsh-rsi.rejection+json object before authoring; its reason is corrective evidence for this attempt.',
     'Use write_file/remove_file only inside the preassigned child tree.',
     'Create at least one new production module under src/** and update src/index.ts to use it.',
     'The new module must be a namespace-form Cordis component (name/inject/apply, no default export) mounted from the candidate root with ctx.plugin().',
@@ -39,7 +40,8 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     'Citations must resolve to exact exported object digests and JSON Pointer or JSONL line spans.',
     'If an ancestor cluster is listed, cite its analysis and mechanism-outcome record and state your position.',
     'Capability requests are data-only and cannot alter this run.',
-    'Call validate_child, then finish_proposal. Do not stop after only explaining the change.',
+    'Call validate_child, then finish_proposal. finish_proposal runs the same semantic validator as trusted materialization.',
+    'If finish_proposal returns an error, correct the named defect and call it again. Do not stop after only explaining the change.',
   ].join('\n')
 }
 
@@ -62,7 +64,13 @@ export async function runV011ProposalTurn(
     },
     signal,
     (agentCtx) => {
-      state = installV011Tools(agentCtx, input.roots, input.proposalId)
+      state = installV011Tools(agentCtx, input.roots, {
+        proposalId: input.proposalId,
+        parentDigest: input.parentDigest as `sha256:${string}`,
+        exportManifestDigest: input.exportManifestDigest as `sha256:${string}`,
+        exportMerkleRoot: input.exportMerkleRoot as `sha256:${string}`,
+        ancestorClusters: input.ancestorClusters,
+      })
     },
   )
   if (state === undefined) throw new Error('v0.1.1 proposer: scoped tool state was not installed')
