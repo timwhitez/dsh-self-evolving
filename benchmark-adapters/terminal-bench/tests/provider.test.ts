@@ -98,11 +98,26 @@ describe('job config generation', () => {
       verifier: { timeoutSec: 180, agentTimeoutSec: 900 },
       idempotencyKey: 'rsi-key-001',
       jobsDir: 'jobs',
+      agentEnv: { RSI_TRACE_MODE: 'content-free' },
+      environment: {
+        env: { CURL_CA_BUNDLE: '/run/dsh-rsi/artifact-ca.crt' },
+        mounts: [
+          {
+            type: 'bind',
+            source: '/trusted/artifact-ca.crt',
+            target: '/run/dsh-rsi/artifact-ca.crt',
+            read_only: true,
+          },
+        ],
+      },
     })
     expect(cfg.agents[0]!.name).toBe('acp')
     expect(cfg.agents[0]!.kwargs.registry_entry).toBe(entry)
     expect(cfg.n_attempts).toBe(3)
     expect(cfg.tasks[0]!.path).toBe('/tb/original-tasks/extract-elf')
+    expect(cfg.agents[0]!.env).toEqual({ RSI_TRACE_MODE: 'content-free' })
+    expect(cfg.environment.mounts).toHaveLength(1)
+    expect(jobConfigToYaml(cfg)).not.toMatch(/sk-[A-Za-z0-9]/)
     expect((cfg.metadata['dsh-rsi'] as Record<string, unknown>)['idempotency_key']).toBe(
       'rsi-key-001',
     )
@@ -141,6 +156,23 @@ describe('job config generation', () => {
         jobsDir: 'jobs',
       }),
     ).toThrow(/no tasks/)
+  })
+
+  it('rejects sensitive agent environment values, including host templates', () => {
+    expect(() =>
+      buildJobConfig({
+        jobName: 'x',
+        registryEntry: entry,
+        modelName: 'm',
+        tasks: [{ taskId: 't', path: '/t' }],
+        nAttempts: 1,
+        nConcurrentTrials: 1,
+        verifier: { timeoutSec: 60, agentTimeoutSec: 60 },
+        idempotencyKey: 'k',
+        jobsDir: 'jobs',
+        agentEnv: { DEEPSEEK_API_KEY: 'literal-secret' },
+      }),
+    ).toThrow(/sensitive agent env.*process arguments/)
   })
 })
 

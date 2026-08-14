@@ -59,6 +59,13 @@ controller 只获得 observed IDs、guard handles 与 Merkle root，seed/assignm
 仍为 0。Gate 5 仍因缺少真实 60x2 baseline、三候选分层 calibration 与冻结预算而未验收。详见
 [`docs/audits/2026-08-14-gate5-sealed-deployment-successor.md`](docs/audits/2026-08-14-gate5-sealed-deployment-successor.md)。
 
+Gate 5 real one-task smoke 的 v1/v2 分别在 TB layout 与 Loader config 阶段失败且未调用 provider；v3
+到达真实 Zen-compatible ACP 路径，但发现 Harbor 会把敏感 `agent.env` 展开到宿主 Docker CLI 参数，
+因此立即停止 trial/container 并永久标记 `ABORTED_CREDENTIAL_EXPOSURE`。持久化 run root 的 credential
+byte scan 为 0；successor 已改为容器内只读 secret-file launcher，并在 provider 层永久拒绝敏感
+`agentEnv`。暴露的 CPA client key 尚未轮换，轮换前禁止新的真实 provider 调用。详见
+[`docs/audits/2026-08-14-gate5-real-smoke-security-incident.md`](docs/audits/2026-08-14-gate5-real-smoke-security-incident.md)。
+
 ## Gate 7 formal preflight
 
 新增 detached-Ed25519、外部 trusted key 验证的 formal manifest/pre-start verifier，绑定 Git tag/commit、

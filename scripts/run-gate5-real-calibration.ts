@@ -1,0 +1,406 @@
+#!/usr/bin/env tsx
+/** Gate 5 real Harbor/ACP runner. Defaults to one observed-task smoke. */
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createServer, type Server } from 'node:https'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import type { AddressInfo } from 'node:net'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { buildCandidate, packCapsule } from '../packages/candidate-sdk/src/index.js'
+import {
+  buildJobConfig,
+  buildRegistryEntry,
+  jobConfigToYaml,
+  normalizeTrial,
+  packAcpBinaryArchive,
+} from '../benchmark-adapters/terminal-bench/src/index.js'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const repoRoot = resolve(here, '..')
+const harborDir = join(repoRoot, 'harbor')
+const harborBin = join(harborDir, '.venv', 'bin', 'harbor')
+const dshRoot = join(repoRoot, 'deepseek-harness')
+const baselineRoot = join(repoRoot, 'packages', 'candidate-baseline')
+const tscBin = join(repoRoot, 'node_modules', '.bin', 'tsc')
+const controllerRoot = '/var/lib/dsh-rsi-controller/gate5-real'
+const tb21Dir = process.env['TB21_DIR'] ?? '/tmp/tb21/terminal-bench-2-1'
+const targetModel = 'deepseek-v4-flash-zen'
+const effectiveModel = 'deepseek-v4-flash'
+const contextWindow = 1_048_576
+const maxTokens = 32_768
+const sourceFiles = [
+  'src/index.ts',
+  'package.json',
+  'candidate.json',
+  'cordis.patch.yml',
+  'tsconfig.json',
+]
+
+interface InventoryTask {
+  taskId: string
+  agentTimeoutSec: number
+}
+
+function execResult(
+  file: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<string> {
+  return new Promise((done, reject) => {
+    execFile(
+      file,
+      args,
+      {
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+        ...(options.env === undefined ? {} : { env: options.env }),
+        maxBuffer: 32 * 1024 * 1024,
+      },
+      (error, stdout, stderr) =>
+        error ? reject(new Error(`${file} failed:\n${stderr}`, { cause: error })) : done(stdout),
+    )
+  })
+}
+
+async function assertPrivate(path: string): Promise<void> {
+  const info = await stat(path)
+  if ((info.mode & 0o777) !== 0o600 || info.uid !== (process.getuid?.() ?? info.uid)) {
+    throw new Error(`gate5 runner: ${path} must be current-UID owned and mode 0600`)
+  }
+}
+
+function deepseekSection(config: string): string {
+  const section = config.match(/\[model_providers\.deepseek\]([\s\S]*?)(?:\n\[|$)/)?.[1]
+  if (section === undefined) throw new Error('gate5 runner: DeepSeek provider section missing')
+  return section
+}
+
+async function loadTrustedRoute(): Promise<{ apiKey: string; baseUrl: string }> {
+  const codexDir = join(homedir(), '.codex')
+  const authPath = join(codexDir, 'auth.json')
+  const configPath = join(codexDir, 'config.toml')
+  await Promise.all([assertPrivate(authPath), assertPrivate(configPath)])
+  const [authRaw, config] = await Promise.all([
+    readFile(authPath, 'utf8'),
+    readFile(configPath, 'utf8'),
+  ])
+  const auth = JSON.parse(authRaw) as { OPENAI_API_KEY?: unknown }
+  const baseUrl = deepseekSection(config).match(/^base_url\s*=\s*"([^"]+)"/m)?.[1]
+  if (typeof auth.OPENAI_API_KEY !== 'string' || auth.OPENAI_API_KEY.length === 0) {
+    throw new Error('gate5 runner: bearer credential unavailable')
+  }
+  if (baseUrl === undefined || !baseUrl.startsWith('https://')) {
+    throw new Error('gate5 runner: trusted compatible endpoint unavailable')
+  }
+  return { apiKey: auth.OPENAI_API_KEY, baseUrl }
+}
+
+async function startArtifactServer(
+  archivePath: string,
+  trustDir: string,
+): Promise<{ server: Server; url: string; caPath: string }> {
+  const gateway = (
+    await execResult('/usr/bin/docker', [
+      'network',
+      'inspect',
+      'bridge',
+      '--format',
+      '{{(index .IPAM.Config 0).Gateway}}',
+    ])
+  ).trim()
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(gateway)) {
+    throw new Error(`gate5 runner: unexpected Docker gateway ${gateway}`)
+  }
+  const keyPath = join(trustDir, 'artifact.key')
+  const caPath = join(trustDir, 'artifact-ca.crt')
+  await execResult('/usr/bin/openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-nodes',
+    '-keyout',
+    keyPath,
+    '-out',
+    caPath,
+    '-days',
+    '1',
+    '-subj',
+    '/CN=dsh-rsi-gate5-artifact',
+    '-addext',
+    `subjectAltName=IP:${gateway}`,
+  ])
+  await chmod(keyPath, 0o600)
+  await chmod(caPath, 0o644)
+  const [key, cert, archive] = await Promise.all([
+    readFile(keyPath),
+    readFile(caPath),
+    readFile(archivePath),
+  ])
+  const server = createServer({ key, cert }, (request, response) => {
+    if (request.method !== 'GET' || request.url !== '/dsh-rsi-acp.tar.gz') {
+      response.writeHead(404).end()
+      return
+    }
+    response.writeHead(200, {
+      'content-type': 'application/gzip',
+      'content-length': String(archive.byteLength),
+      'cache-control': 'public, max-age=31536000, immutable',
+    })
+    response.end(archive)
+  })
+  await new Promise<void>((done, reject) => {
+    server.once('error', reject)
+    server.listen(0, '0.0.0.0', done)
+  })
+  const address = server.address() as AddressInfo
+  return { server, url: `https://${gateway}:${address.port}/dsh-rsi-acp.tar.gz`, caPath }
+}
+
+async function buildBaselineRuntime(workDir: string, baseUrl: string) {
+  const receipt = await buildCandidate({ sourceRoot: baselineRoot, sourceFiles, tscBin })
+  const capsuleDir = join(workDir, 'capsule')
+  await packCapsule({
+    outDir: capsuleDir,
+    receipt,
+    runnerOverlay: [
+      '- id: deepseek-llm',
+      "  name: '@deepseek-ai/dsh-llm-deepseek'",
+      '  config:',
+      '    apiKeyEnv: DEEPSEEK_API_KEY',
+      `    baseURL: ${JSON.stringify(baseUrl)}`,
+      '    thinking: enabled',
+      '    reasoningEffort: high',
+      `    maxTokens: ${maxTokens}`,
+      `    defaultContextWindow: ${contextWindow}`,
+      '    models:',
+      `      - id: ${targetModel}`,
+      `        name: ${targetModel}`,
+      `        contextWindow: ${contextWindow}`,
+      `        maxTokens: ${maxTokens}`,
+      '- id: acp-agent',
+      "  name: '@deepseek-ai/dsh-acp-demo'",
+      '  config:',
+      '    provider: deepseek-official',
+      `    model: ${targetModel}`,
+      "    persona: 'DSH RSI Terminal-Bench baseline. Solve the task autonomously and verify the result.'",
+      '    workspaceContext: false',
+      '- id: rsi-candidate',
+      "  name: '@dsh-rsi/candidate-baseline'",
+      '  config:',
+      `    candidateId: ${receipt.candidateId}`,
+      '    mode: solve',
+      '',
+    ].join('\n'),
+    provenanceJson: JSON.stringify({
+      dshCommit: '47f943859bef60e4160492346772ded9b24f765a',
+      model: targetModel,
+      effectiveModel,
+      reasoningEffort: 'high',
+      contextWindow,
+      maxTokens,
+    }),
+    sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
+    runnerFiles: {
+      'credential-launcher.sh': [
+        '#!/bin/sh',
+        'set -eu',
+        'runtime=${0%/*}',
+        'secret_file=${RSI_PROVIDER_SECRET_FILE:-/run/dsh-rsi/provider.secret}',
+        'test -f "$secret_file"',
+        'DEEPSEEK_API_KEY=$(cat -- "$secret_file")',
+        'test -n "$DEEPSEEK_API_KEY"',
+        'export DEEPSEEK_API_KEY',
+        'unset RSI_PROVIDER_SECRET_FILE',
+        'exec "$runtime/dsh-rsi-acp" "$@"',
+        '',
+      ].join('\n'),
+    },
+    runtimeClosure: {
+      catalogRoots: [join(dshRoot, 'packages'), join(dshRoot, 'vendor')],
+      seedPackages: ['@deepseek-ai/dsh-acp-demo', '@deepseek-ai/dsh-llm-deepseek'],
+      entryPackage: '@deepseek-ai/dsh-acp-demo',
+      entryBin: 'lib/bin.js',
+    },
+  })
+  await chmod(join(capsuleDir, 'runtime', 'credential-launcher.sh'), 0o755)
+  const packed = await packAcpBinaryArchive(
+    join(capsuleDir, 'runtime'),
+    join(workDir, 'dsh-rsi-acp.tar.gz'),
+  )
+  return { receipt, packed }
+}
+
+async function main(): Promise<void> {
+  const runId = process.env['GATE5_RUN_ID'] ?? 'gate5-real-smoke-v1'
+  if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(runId)) throw new Error('unsafe run id')
+  const taskIds = (process.env['GATE5_TASK_IDS'] ?? 'fix-git')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const attempts = Number(process.env['GATE5_ATTEMPTS'] ?? '1')
+  const concurrency = Number(process.env['GATE5_CONCURRENCY'] ?? '1')
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 10) {
+    throw new Error('attempts must be 1 through 10')
+  }
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) {
+    throw new Error('concurrency must be 1 through 16')
+  }
+  const split = JSON.parse(
+    await readFile(join(repoRoot, 'evidence', 'gate5', 'split-commitment.json'), 'utf8'),
+  ) as { observedTaskIds: string[] }
+  const observed = new Set(split.observedTaskIds)
+  if (taskIds.some((taskId) => !observed.has(taskId))) {
+    throw new Error('runner accepts only published DEV_OBSERVED task ids')
+  }
+  const inventory = JSON.parse(
+    await readFile(join(repoRoot, 'evidence', 'calibration', 'tb21-inventory.json'), 'utf8'),
+  ) as { tasks: InventoryTask[] }
+  const byId = new Map(inventory.tasks.map((task) => [task.taskId, task]))
+  const tasks = taskIds.map((taskId) => {
+    const task = byId.get(taskId)
+    if (task === undefined) throw new Error(`task missing from inventory: ${taskId}`)
+    return task
+  })
+  for (const task of tasks) {
+    await stat(join(tb21Dir, task.taskId, 'task.toml')).catch(() => {
+      throw new Error(`fixed TB 2.1 task materialization missing: ${task.taskId}`)
+    })
+  }
+  const route = await loadTrustedRoute()
+  await mkdir(controllerRoot, { recursive: true, mode: 0o700 })
+  await chmod(controllerRoot, 0o700)
+  const runDir = join(controllerRoot, runId)
+  await mkdir(runDir, { recursive: false, mode: 0o700 })
+  const workDir = await mkdtemp(join(tmpdir(), `${runId}-`))
+  const { receipt, packed } = await buildBaselineRuntime(workDir, route.baseUrl)
+  const artifact = await startArtifactServer(packed.archivePath, runDir)
+  const secretDir = await mkdtemp('/run/dsh-rsi-gate5-secret-')
+  await chmod(secretDir, 0o700)
+  const secretPath = join(secretDir, 'provider.secret')
+  await writeFile(secretPath, route.apiKey, { mode: 0o600, flag: 'wx' })
+  try {
+    const registry = buildRegistryEntry({
+      candidateId: receipt.candidateId,
+      agentName: 'dsh-rsi-gate5-baseline',
+      version: receipt.candidateId,
+      archiveUrl: artifact.url,
+      archiveSha256: packed.sha256,
+      cmd: './credential-launcher.sh',
+      env: { RSI_PROVIDER_SECRET_FILE: '/run/dsh-rsi/provider.secret' },
+    })
+    const maxAgentTimeout = Math.max(...tasks.map((task) => task.agentTimeoutSec))
+    const config = buildJobConfig({
+      jobName: runId,
+      registryEntry: registry,
+      modelName: '',
+      tasks: tasks.map((task) => ({
+        taskId: task.taskId,
+        path: join(tb21Dir, task.taskId),
+      })),
+      nAttempts: attempts,
+      nConcurrentTrials: concurrency,
+      verifier: { timeoutSec: maxAgentTimeout, agentTimeoutSec: maxAgentTimeout },
+      idempotencyKey: `gate5/${runId}/${receipt.candidateId}`,
+      jobsDir: join(runDir, 'jobs'),
+      environment: {
+        env: { CURL_CA_BUNDLE: '/run/dsh-rsi/artifact-ca.crt' },
+        mounts: [
+          {
+            type: 'bind',
+            source: artifact.caPath,
+            target: '/run/dsh-rsi/artifact-ca.crt',
+            read_only: true,
+          },
+          {
+            type: 'bind',
+            source: secretPath,
+            target: '/run/dsh-rsi/provider.secret',
+            read_only: true,
+          },
+        ],
+      },
+    })
+    const configPath = join(runDir, 'job.yaml')
+    const yaml = jobConfigToYaml(config)
+    if (yaml.includes(route.apiKey)) throw new Error('credential leaked into persisted config')
+    await writeFile(configPath, yaml, { mode: 0o600, flag: 'wx' })
+    const startedAt = Date.now()
+    await execResult(harborBin, ['job', 'start', '-c', configPath], {
+      cwd: harborDir,
+      env: process.env,
+    })
+    const wallSec = (Date.now() - startedAt) / 1000
+    const jobDir = join(runDir, 'jobs', runId)
+    const entries = await readdir(jobDir, { withFileTypes: true })
+    const trialDirs = entries
+      .filter((entry) => entry.isDirectory() && entry.name.includes('__'))
+      .map((entry) => join(jobDir, entry.name))
+      .sort()
+    const normalized = []
+    const attemptsByTask = new Map<string, number>()
+    for (const trialDir of trialDirs) {
+      const configRaw = JSON.parse(await readFile(join(trialDir, 'config.json'), 'utf8')) as {
+        task: { path: string }
+      }
+      const taskId = configRaw.task.path.split('/').at(-1) ?? configRaw.task.path
+      const attemptIndex = attemptsByTask.get(taskId) ?? 0
+      attemptsByTask.set(taskId, attemptIndex + 1)
+      await writeFile(
+        join(trialDir, 'attribution.json'),
+        JSON.stringify({ candidate_id: receipt.candidateId, attempt_index: attemptIndex }) + '\n',
+        { flag: 'wx' },
+      )
+      normalized.push(
+        await normalizeTrial({
+          trialDir,
+          expectedCandidateId: receipt.candidateId,
+          taskId,
+          requireAcpEvidence: true,
+        }),
+      )
+    }
+    const summary = {
+      schemaVersion: 1,
+      runId,
+      capabilityMode: 'real-zen-harbor-acp',
+      candidateId: receipt.candidateId,
+      capsuleSha256: packed.sha256,
+      route: {
+        requestedModel: targetModel,
+        effectiveModel,
+        reasoningEffort: 'high',
+        contextWindow,
+        maxTokens,
+        wireApi: 'chat-completions-compatible',
+      },
+      plannedTrials: taskIds.length * attempts,
+      collectedTrials: normalized.length,
+      wallSec,
+      normalized,
+    }
+    const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
+    await writeFile(join(runDir, 'summary.json'), summaryBytes, { mode: 0o600, flag: 'wx' })
+    process.stdout.write(
+      JSON.stringify({
+        runId,
+        candidateId: receipt.candidateId,
+        capsuleSha256: packed.sha256,
+        plannedTrials: summary.plannedTrials,
+        collectedTrials: summary.collectedTrials,
+        statuses: normalized.map((row) => row.status),
+        wallSec,
+        summaryHash: `sha256:${createHash('sha256').update(summaryBytes).digest('hex')}`,
+        runDir,
+      }) + '\n',
+    )
+  } finally {
+    await new Promise<void>((done, reject) =>
+      artifact.server.close((error) => (error ? reject(error) : done())),
+    )
+    await rm(secretDir, { recursive: true })
+  }
+}
+
+await main()

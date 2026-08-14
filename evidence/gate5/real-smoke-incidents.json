@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "status": "QUARANTINED_SECURITY_SUCCESSORS_REQUIRED",
+  "sealedAccessCount": 0,
+  "runs": [
+    {
+      "runId": "gate5-real-smoke-v1",
+      "status": "INFRA_PRELAUNCH_FAILED",
+      "reason": "legacy task.yaml checkout was passed to a Harbor version requiring task.toml",
+      "providerCallObserved": false,
+      "jobConfigHash": "sha256:bdaef2e6297dc8c6567dde4392df52211357b6f6124a7bff4b16dfb133088545",
+      "jobResultHash": "sha256:01842dfff462cf2acfb21d0defb17377292f9169ed52527bd82635a7bd0445e7"
+    },
+    {
+      "runId": "gate5-real-smoke-v2",
+      "status": "INFRA_LOADER_FAILED",
+      "reason": "workspaceContext boolean true violated the pinned ACP schema",
+      "providerCallObserved": false,
+      "jobConfigHash": "sha256:48d6eb28c12303a47892533b55ccf5db0438560793e1708f0be1a22b5eb22dfb",
+      "trialResultHash": "sha256:16926fea6891ec85fa12e4b96948616c956efdbea3e9ab97a88fed8728a6da73"
+    },
+    {
+      "runId": "gate5-real-smoke-v3",
+      "status": "ABORTED_CREDENTIAL_EXPOSURE",
+      "reason": "Harbor expanded sensitive agent env into host-visible Docker CLI process arguments",
+      "providerCallObserved": true,
+      "terminalNormalizedResult": false,
+      "jobConfigHash": "sha256:2f84ba8e9fb5f6d54500b684f2bb30622bbf3e4db75194e269a7146f32c3badb",
+      "acpEventsHash": "sha256:fb06feae516e7e5a679bcf5b8c90d82f535f3de6283119e79302364c63af63c3"
+    }
+  ],
+  "persistedCredentialLeakScanCount": 0,
+  "runtimeStopped": true,
+  "acceptedTrialCount": 0
+}

@@ -12,6 +12,8 @@
 import { stringify } from 'yaml'
 import type { AcpRegistryEntry } from './acp-registry.js'
 
+const sensitiveEnvKey = /(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH)/i
+
 /** A TB task to run (path to a TB original-tasks/<name> directory). */
 export interface TBTaskSpec {
   /** TB task id (directory name), e.g. "extract-elf". Used as the trial key. */
@@ -49,6 +51,18 @@ export interface JobConfigInput {
   idempotencyKey: string
   /** Jobs output directory. */
   jobsDir: string
+  /** Runtime-only agent environment. Sensitive values must use Harbor templates. */
+  agentEnv?: Record<string, string>
+  /** Optional provider infrastructure needed before agent installation. */
+  environment?: {
+    env?: Record<string, string>
+    mounts?: Array<{
+      type: 'bind'
+      source: string
+      target: string
+      read_only: true
+    }>
+  }
 }
 
 /** The Harbor JobConfig as a plain object (serialized to YAML by the caller). */
@@ -62,11 +76,19 @@ export interface HarborJobConfig {
     type: 'docker'
     force_build: boolean
     delete: boolean
+    env?: Record<string, string>
+    mounts?: Array<{
+      type: 'bind'
+      source: string
+      target: string
+      read_only: true
+    }>
   }
   agents: Array<{
     name: string
     model_name: string
     kwargs: Record<string, unknown>
+    env?: Record<string, string>
   }>
   tasks: Array<{ path: string }>
   /** Custom metadata block; Harbor ignores unknown top-level keys. */
@@ -79,6 +101,19 @@ export interface HarborJobConfig {
 export function buildJobConfig(input: JobConfigInput): HarborJobConfig {
   if (input.tasks.length === 0) throw new Error('job config: no tasks specified')
   if (!input.idempotencyKey) throw new Error('job config: idempotency key required')
+  for (const [key, value] of Object.entries(input.agentEnv ?? {})) {
+    if (sensitiveEnvKey.test(key)) {
+      throw new Error(
+        `job config: sensitive agent env ${key} is forbidden because Harbor exposes it in process arguments`,
+      )
+    }
+    if (value.includes('\u0000')) throw new Error(`job config: agent env ${key} contains NUL`)
+  }
+  for (const mount of input.environment?.mounts ?? []) {
+    if (!mount.source.startsWith('/') || !mount.target.startsWith('/') || !mount.read_only) {
+      throw new Error('job config: infrastructure mounts must be absolute and read-only')
+    }
+  }
   return {
     job_name: input.jobName,
     jobs_dir: input.jobsDir,
@@ -89,6 +124,8 @@ export function buildJobConfig(input: JobConfigInput): HarborJobConfig {
       type: 'docker',
       force_build: true,
       delete: true,
+      ...(input.environment?.env === undefined ? {} : { env: input.environment.env }),
+      ...(input.environment?.mounts === undefined ? {} : { mounts: input.environment.mounts }),
     },
     agents: [
       {
@@ -101,6 +138,7 @@ export function buildJobConfig(input: JobConfigInput): HarborJobConfig {
           auth_policy: 'disabled',
           permission_mode: 'allow',
         },
+        ...(input.agentEnv === undefined ? {} : { env: input.agentEnv }),
       },
     ],
     tasks: input.tasks.map((t) => ({ path: t.path })),
