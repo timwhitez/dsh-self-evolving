@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { EvaluationProvider } from '@dsh-rsi/core'
 import {
   createStableDemoConfig,
+  createV011DemoConfig,
   initializeState,
   runStableDemo,
   type BuiltCandidate,
@@ -23,15 +24,22 @@ function digest(value: string): string {
 }
 
 async function fixture(): Promise<{
-  config: ReturnType<typeof createStableDemoConfig>
+  config: ReturnType<typeof createStableDemoConfig> | ReturnType<typeof createV011DemoConfig>
   counters: { proposals: number; builds: number; launches: number; collects: number }
   capabilities: StableDemoCapabilities
-}> {
+}>
+async function fixture(v011: boolean): Promise<{
+  config: ReturnType<typeof createV011DemoConfig>
+  counters: { proposals: number; builds: number; launches: number; collects: number }
+  capabilities: StableDemoCapabilities
+}>
+async function fixture(v011 = false) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-engine-'))
   roots.push(root)
   const repoRoot = join(root, 'repo')
   const stateDir = join(root, 'state')
-  const config = createStableDemoConfig({
+  const createConfig = v011 ? createV011DemoConfig : createStableDemoConfig
+  const config = createConfig({
     runId: 'stable-k3',
     stateDir,
     repoRoot,
@@ -177,6 +185,19 @@ describe('stable-demo engine', () => {
     expect(result.baselineTrials).toBe(6)
     await expect(readFile(join(config.stateDir, 'failure-pool.json'), 'utf8')).resolves.toContain(
       'task-2',
+    )
+  })
+
+  it('stops schema-11 failure discovery immediately after the first attributable non-pass', async () => {
+    const { config, counters, capabilities } = await fixture(true)
+    const result = await runStableDemo(config, capabilities)
+    expect(result.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(result.baselineTrials).toBe(2)
+    expect(result.candidateTrials).toBe(3)
+    expect(result.solverTrials).toBe(5)
+    expect(counters.launches).toBe(5)
+    await expect(readFile(join(config.stateDir, 'failure-pool.json'), 'utf8')).resolves.toContain(
+      '"batchSize": 1',
     )
   })
 

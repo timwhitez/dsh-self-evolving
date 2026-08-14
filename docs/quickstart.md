@@ -46,7 +46,8 @@ The development profile evaluates at most 12 baseline tasks in two fixed batches
 It never accesses the sealed split. Run `resume` after an interruption; do not run `run` again on existing state.
 
 For the v0.1.1 multi-file successor, add `--profile v011-stable-demo` to `init`. It requires a fresh state directory
-and run ID; schema-10 state is never upgraded in place.
+and run ID; schema-10 state is never upgraded in place. Schema 11 freezes a public-metadata hard-task order and
+stops baseline discovery at the first attributable reward-zero non-pass, up to 12 trials.
 
 ```bash
 pnpm dsh-rsi resume --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1

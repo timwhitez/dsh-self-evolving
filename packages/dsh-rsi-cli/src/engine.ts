@@ -104,7 +104,7 @@ export interface StableDemoResult {
 interface FailurePool {
   schemaVersion: 1
   runId: string
-  batchSize: 6
+  batchSize: 1 | 6
   evaluatedTaskIds: string[]
   taskIds: string[]
   frozenBeforeCandidateRewards: true
@@ -300,7 +300,11 @@ export async function runStableDemo(
         throw new Error('stable engine: fewer than 12 unique observed tasks')
       const planned = observed.slice(0, 12)
       let evaluated = 0
-      for (const batch of [planned.slice(0, 6), planned.slice(6, 12)]) {
+      const discoveryBatches =
+        config.profile === 'v011-stable-demo'
+          ? planned.map((taskId) => [taskId])
+          : [planned.slice(0, 6), planned.slice(6, 12)]
+      for (const batch of discoveryBatches) {
         for (const taskId of batch) {
           const spec: StableEvaluationSpec = {
             actionId: `eval:baseline:${taskId}`,
@@ -325,7 +329,7 @@ export async function runStableDemo(
       const pool: FailurePool = {
         schemaVersion: 1,
         runId: config.runId,
-        batchSize: 6,
+        batchSize: config.profile === 'v011-stable-demo' ? 1 : 6,
         evaluatedTaskIds: planned.slice(0, evaluated),
         taskIds,
         frozenBeforeCandidateRewards: true,

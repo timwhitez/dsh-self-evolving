@@ -99,8 +99,11 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
     reasons.push('solver trial limit exceeded')
   }
   const baselineTrials = state.observations.filter((row) => row.candidateId === 'baseline').length
-  if (![6, 12].includes(baselineTrials))
-    reasons.push(`baseline batch is incomplete: ${baselineTrials}`)
+  const validBaselineTrialCount =
+    config.profile === 'v011-stable-demo'
+      ? baselineTrials >= 1 && baselineTrials <= config.limits.baselineFailureDiscoveryMax
+      : [6, 12].includes(baselineTrials)
+  if (!validBaselineTrialCount) reasons.push(`baseline batch is incomplete: ${baselineTrials}`)
   if (Object.values(state.actions).some((action) => action.status !== 'COMMITTED')) {
     reasons.push('one or more external actions are not committed')
   }
