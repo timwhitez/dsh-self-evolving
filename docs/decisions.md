@@ -1,0 +1,93 @@
+# Architecture decision records
+
+**Status:** accepted for specification v1; changes require a new ADR entry
+
+## ADR-001 — RSI lives inside DSH as a Cordis service
+
+**Decision:** the trusted evolution controller is a standard DSH bundle/service; candidates are standard DSH
+bundles/plugins. DSH upstream remains unchanged.
+
+**Why:** DSH already owns dynamic composition, agent loop, services, tools, sessions and reversible lifecycle. An
+external meta-controller would duplicate the most important harness mechanisms and evolve a wrapper rather than the
+real runtime.
+
+**Rejected:** DSH fork; independent Python evolution controller; candidate as arbitrary shell script.
+
+## ADR-002 — Generated candidates execute in disposable processes
+
+**Decision:** controller never imports or dynamically runs generated code. Proposal, build and task execution use
+separate process/container boundaries.
+
+**Why:** Cordis Fiber and `dynamicCordisRunner` provide compositional rollback, but DSH explicitly states its
+`node:vm` is not a security boundary and declared services reach the live runtime.
+
+**Cost:** more startup/capsule work. **Benefit:** controller/sealed/verifier secrets remain out of reach.
+
+## ADR-003 — Harbor ACP is the benchmark bridge
+
+**Decision:** build a DSH ACP binary capsule and use Harbor's generic ACP runner with inline, checksummed binary
+distribution. The TB adapter remains TypeScript and does not implement a Python BaseAgent.
+
+**Why:** both sides already implement the protocol and lifecycle/trajectory concerns. Reusing them removes a
+duplicated command runner and preserves real DSH behavior.
+
+**Fallback:** add a thin local-upload adapter only after a concrete provider cannot serve immutable HTTPS artifacts.
+
+## ADR-004 — One canonical parent, optional donors
+
+**Decision:** each candidate has one canonical parent for the HGM clade tree; other source/evidence inspirations are
+donors.
+
+**Why:** a multi-parent DAG makes descendant success double-counting ambiguous. Donor provenance retains
+crossover without breaking CMP semantics.
+
+## ADR-005 — HGM search, no greedy acceptance
+
+**Decision:** all admitted candidates remain in Archive; CMP Thompson selects parents, node Thompson selects
+measurement targets, and UCB-Air (`alpha=0.6`) decides expansion versus evaluation.
+
+**Why:** immediate benchmark score can be a weak proxy for lineage productivity. Archive search preserves stepping
+stones and allocates partial evaluation adaptively.
+
+**Qualification:** formulas are fixed for the run and require TB-specific calibration/ablation; “CMP” is an
+estimator, not an oracle.
+
+## ADR-006 — Sealed test is one-time, not per-candidate gating
+
+**Decision:** 48 observed + 12 guard development tasks drive search; 29 tasks remain sealed until exactly one
+development champion is content-hash locked.
+
+**Why:** repeatedly using 29 “held-out” outcomes for 80 accept/reject choices adapts to that set. One-time reveal
+supports a clearer generalization claim.
+
+**Consequence:** a sealed failure ends the run; testing the runner-up requires a new split/new run.
+
+## ADR-007 — Filesystem event log is the state authority
+
+**Decision:** content-addressed objects plus a hash-chained JSONL journal are authoritative. Snapshots, catalogs and
+graphs are derived and rebuildable.
+
+**Why:** files give the proposer rich, scalable evidence using model-native tools and keep every claim auditable.
+A database/queue is deferred until measured scaling needs it.
+
+## ADR-008 — Safety and cost are external policy
+
+**Decision:** filesystem/network/process/model/budget/split/verifier policies live in trusted outer layers, never only
+in prompts or candidate code.
+
+**Why:** candidates optimize against feedback and may remove or bypass voluntary constraints. Policies must remain
+non-evolvable and fail closed.
+
+## ADR-009 — Accuracy is primary; efficiency is constrained/Pareto
+
+**Decision:** maximize paired task performance first. Cost/time/tokens break near-performance ties and enforce hard
+budgets; no arbitrary weighted scalar lets cheapness offset a material score regression.
+
+**Why:** the project goal is SOTA capability, while still meeting explicit operational limits.
+
+## ADR-010 — Static SOTA numbers are not product requirements
+
+**Decision:** capture a timestamped official leaderboard snapshot and target comparator in each run manifest.
+
+**Why:** models, harnesses, verification and submission policy change. The prior hard-coded `83.8%` was already a
+moving external fact, not an architectural constant.

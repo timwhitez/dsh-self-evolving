@@ -1,0 +1,16 @@
+# Upstream read-only checkouts — never format or touch.
+deepseek-harness/
+harbor/
+tb/
+
+# Build output and caches.
+**/lib/
+**/node_modules/
+**/.tsbuildinfo
+
+# Lockfiles and pinned artifacts.
+pnpm-lock.yaml
+provenance.lock.json
+
+# Evidence and run artifacts.
+evidence/

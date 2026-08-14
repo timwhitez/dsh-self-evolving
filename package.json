@@ -1,0 +1,34 @@
+{
+  "name": "@dsh-rsi/root",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Recursive self-improvement as standard DSH Cordis bundles/services. Specification-first; no benchmark claims without sealed artifacts.",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "provenance:check": "tsx scripts/check-provenance.ts",
+    "upstream:check": "tsx scripts/check-upstream-clean.ts",
+    "byteequal:check": "tsx scripts/check-byte-equal.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.18.0",
+    "globals": "^17.11.0",
+    "prettier": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^3.0.0"
+  }
+}

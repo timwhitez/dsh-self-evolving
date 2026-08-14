@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "candidateId": "baseline",
+  "canonicalParent": null,
+  "donorCandidates": [],
+  "proposal": {
+    "hypothesis": "Neutral baseline: no mechanism change. Establishes the paired-comparison reference and the loader lifecycle contract.",
+    "evidenceRefs": [],
+    "targetFailureModes": [],
+    "expectedBehaviorChange": "None by construction; identical to the unmodified runner modulo a stable candidate-scoped prompt section.",
+    "regressionRisks": [],
+    "touchedSurfaces": ["system-prompt"]
+  },
+  "runtime": {
+    "requiredServices": ["systemPrompt"],
+    "optionalServices": [],
+    "newToolNames": [],
+    "supportsModes": ["solve", "propose"]
+  },
+  "tests": {
+    "mechanismAssertions": [
+      "Loader boots the bundle and unloads it with exact inventory equality",
+      "No leaked timer/process/open-handle after unload"
+    ],
+    "preservationAssertions": [
+      "Baseline does not alter tool schema, model route, verifier, or split"
+    ]
+  }
+}

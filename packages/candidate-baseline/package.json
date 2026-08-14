@@ -1,0 +1,36 @@
+{
+  "name": "@dsh-rsi/candidate-baseline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Stable baseline parent candidate. Namespace-form DSH bundle; loaded through the real Cordis Loader in Gate 0. Not a profile, not a generated candidate.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "candidate.json",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-system-prompt": "link:../../deepseek-harness/packages/core/system-prompt",
+    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
+    "typescript": "^5.7.0"
+  }
+}

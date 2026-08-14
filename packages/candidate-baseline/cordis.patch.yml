@@ -1,0 +1,7 @@
+# Candidate row inserted by this bundle. The stable runner re-states the full
+# row config (including mode and immutable identity) in a later patch layer,
+# because Loader config patches replace the whole row rather than deep-merging.
+# A candidate MUST NOT override runner rows, adapter rows, or insert Host/Web/LLM.
+- insert:
+    - id: rsi-candidate
+      name: '@dsh-rsi/candidate-baseline'

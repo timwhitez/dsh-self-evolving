@@ -1,0 +1,118 @@
+# Implementation phase todolist
+
+**Status:** execution checklist derived from `specs/07-implementation-plan.md`  
+**Rule:** 逐项勾选必须有对应 artifact/测试证据；勾选不产生任何规范效力，验收以 spec 07 各 Gate 为准。
+上一 Gate 的 Accept 项未全部有证据前，不开始下一 Phase 的付费/全量工作。
+
+## Phase 0 — Provenance 与 Cordis lifecycle 地基（Gate 0，1–2 天）
+
+- [ ] 初始化项目 Git scope；`deepseek-harness/`、`harbor/`、`tb/` 保持外部 pinned checkout，不纳入可编辑范围
+- [ ] 建立 root workspace：pnpm + strict TypeScript + lint/format/test + JSON Schema 工具链
+- [ ] 生成机器可读 `provenance.lock.json`（DSH/Harbor/TB commit、paper hash、Node/pnpm、container、model catalog）
+- [ ] 创建最小 `@dsh-rsi/candidate-baseline` bundle（namespace-form exports）与真实 `cordis.yml` fixture
+- [ ] 实现无模型 Loader E2E：boot → service/tool/listener inventory → unload → quiescence 精确一致
+- [ ] negative fixture：加 `export default apply` 后测试必须失败（证明能捕获 Loader unwrap 缺陷）
+- [ ] CI 骨架：format/lint/typecheck/unit/Loader E2E/upstream-clean/AGENTS-CLAUDE 字节一致
+
+**退出证据**：Loader E2E 通过记录 + negative fixture 失败记录 + 可机器验证的 provenance lock。
+
+## Phase 1 — Candidate SDK 与 trusted builder（Gate 1，3–5 天）
+
+- [ ] `schemas/`：candidate/proposal/build/capsule manifest 的 versioned JSON Schema
+- [ ] canonical tar + SHA-256 身份（排序、固定 mode/mtime、拒绝 symlink/traversal/大小超限）
+- [ ] diff boundary 校验 + dependency/import allowlist + task-fingerprint/secret scan（AST + module graph）
+- [ ] `packages/candidate-sdk/`：类型、validator、testkit；两模式（solve/propose）baseline candidate
+- [ ] deterministic builder sandbox：无网络、禁 lifecycle scripts、double build hash 一致、SBOM
+- [ ] evaluation capsule：runtime closure + compiled bundle + runner + provenance + SHA256SUMS
+- [ ] packed capsule 在无 source、无网络的 fresh container 中完成 DSH ACP initialize/session
+- [ ] 全套拒绝 fixtures：traversal/symlink/install-script/dynamic-import/task-literal/default-export/leaked-effect
+
+**退出证据**：golden candidate 双次 clean build 三 hash 相同；全部拒绝 fixture 生效。
+
+## Phase 2 — Terminal-Bench provider 垂直切片（Gate 2，3–5 天）
+
+- [ ] `benchmark-adapters/terminal-bench/`：TypeScript provider 生成 Harbor job config + inline ACP binary registry entry（HTTPS + SHA-256）
+- [ ] immutable artifact endpoint（或 provider 支持的等价物）；capsule 根部 `dsh-rsi-acp` wrapper 用绝对路径解析自身 config
+- [ ] 真实 Harbor job 跑通 `extract-elf`：nop/broken/golden 三种 fixture 分别得到预期 fail/fail/valid
+- [ ] per-trial normalizer：以 planned inventory 为分母；缺 `result.json`/reward/trajectory/hash 显式 FAIL，不消失
+- [ ] ACP/ATIF/DSH session/cost reconciliation；raw job + normalized artifact 可从零重解析出同一 hash
+- [ ] 同 idempotency key 重复 submit 不产生第二个付费 trial
+- [ ] shared/separate verifier-mode compatibility probe（只记录，不擅改正式 task contract）
+
+**退出证据**：真实 DSH candidate 经 Harbor ACP 完成一次 task，stdout 协议纯净，归一化结果 hash 可复现。
+
+## Phase 3 — 持久化 controller 核心（Gate 3，5–8 天）
+
+- [ ] `packages/dsh-rsi/`：DSH bundle + 单一 `ctx.rsi` Cordis service，`ctx.effect` 全量 disposer
+- [ ] content-addressed object store（staging → fsync → hash → no-clobber publish；scrub）
+- [ ] hash-chain JSONL journal + 单 writer lock + HEAD 原子更新
+- [ ] pure state reducer + snapshot；full replay 与 snapshot resume 的 canonical state hash 一致
+- [ ] action saga（PLANNED→…→COMMITTED）+ 确定性 idempotency keys + provider reconcile
+- [ ] budget double-entry ledger（reserve→spent/released；unpriced usage 显式；最坏上界防超卖）
+- [ ] fault-injection harness：在每个 intent/launch/collect/commit 边界 kill 后 resume，不重复外部 effect/score/cost
+- [ ] event completion order permutation 测试：同 wave 任意完成顺序得到相同 state hash
+- [ ] corrupt journal/object/snapshot 的 fail-closed 测试；read-only status command
+
+**退出证据**：crash/replay 全套通过；controller unload 后无残留 worker/handle。
+
+## Phase 4 — Agentic proposal 垂直切片（Gate 4，4–7 天）
+
+- [ ] proposal sandbox：filesystem/network/model gateway policy（parent/evidence 只读，仅 child root 可写）
+- [ ] parent candidate 以 `propose` mode 经真实 Loader 装载，proposer 用 `ctx.agents.create({ setup })`
+- [ ] label-filtered evidence export（manifest + Merkle root + guard/sealed canary absence receipt）
+- [ ] archive catalog 导出：统计只从 `DEV_OBSERVED` 派生，无 guard/sealed 衍生数字
+- [ ] proposal 输出协议：width=3、hypothesis 去重、donor provenance、no-change/test-only 拒绝
+- [ ] builder handoff + rejected proposal 证据保留
+- [ ] 安全测试：proposer 读不到 controller/canary/credentials/sibling；trace prompt-injection fixture 不能改变 policy
+
+**退出证据**：baseline parent 从两条 synthetic failure trace 生成 ≥1 个 nontrivial admitted child，preservation tests 通过，transcript/cost 完整。
+
+## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
+
+- [ ] CMP/clade Thompson、node Thompson、UCB-Air（`alpha=0.6`）wave scheduler + task sampler
+- [ ] golden tests：small-tree CMP 手算、UCB-Air 边界、seeded RNG replay、duplicate/donor 不重复计数
+- [ ] shortlist tournament + 合格节点不足时的确定性降级路径（spec 03 §11）
+- [ ] deterministic split ceremony：48/12/29、seed commitment、Merkle root；difficulty bin 按 spec 04 §3.2 两种合法来源之一或放弃
+- [ ] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
+- [ ] candidate lock 事务：lock 后 selector/proposer 永久拒绝
+- [ ] paired cluster-bootstrap 统计 + report generator（固定 seed、固定分析容器 hash）
+- [ ] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
+- [ ] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
+
+**退出证据**：算法测试全绿 + baseline 波动/成本测量 + 可行性判定书面结论。
+
+## Phase 6 — 10-candidate pilot（Gate 6，1–3 天 + runtime）
+
+- [ ] 新 pilot run ID，`K=10`，development-only，无 sealed reveal，代码路径与正式 run 完全一致
+- [ ] 无人工干预完成 10 个 admitted candidates
+- [ ] 至少一次真实 crash/resume，事后 evidence 完整、replay 一致
+- [ ] build reject/runtime fail/infra retry/duplicate child 至少各覆盖一次（fixture 或真实事件）
+- [ ] proposer 实际引用历史 raw evidence（而非只看摘要）的记录
+- [ ] 成本预测误差 ≤ ±20%；audit 无 critical finding
+- [ ] pilot 结果隔离，不并入正式 Archive；据此冻结实现与 manifest 参数
+
+## Phase 7 — 正式 80-candidate evolution（Gate 7，runtime ≤16h + audit）
+
+- [ ] pre-start checklist：tag clean commit、签名 run manifest（track=`self`）、split commitment、leaderboard snapshot、预算含 sealed + 20% reserve、揭盲前发布统计协议
+- [ ] fresh 60-task baseline 或 exact-identity 复用验证
+- [ ] controller 自治运行至 terminal state；operator 只做安全/成本/基础设施干预，不按分数 steer
+- [ ] 中途 bug fix = 终止当前 run，successor run 不继承受影响评测
+- [ ] `SEARCH_COMPLETE`：80 unique admitted artifacts、全部 action terminal/reconciled、journal replay 一致
+- [ ] tournament 锁定唯一 development champion（或如实报告 `NO_DEVELOPMENT_IMPROVEMENT`）
+- [ ] lock 前 sealed store access count == 0 的审计记录
+
+## Phase 8 — Sealed 确认、full-set 评测与发布（Gate 8，2–5 天 + runtime/review）
+
+- [ ] 验证 split commitment + candidate lock；baseline/candidate 29×`k_sealed` 配对交错运行，无中间适应
+- [ ] 冻结分析容器计算 `Delta`/95% CI/regression 表；准确赋予 `SEALED_PROMOTED`/`PROMISING_NOT_CONFIRMED`/`SEALED_REJECTED`
+- [ ] 自动 100% trial 审计 + 预注册人工轨迹审查（sealed 全部 PASS + regressions + 20% 抽样）
+- [ ] 仅 `SEALED_PROMOTED` 后：固定 capsule 89×≥5 official protocol；community submission 关闭时标 `FULL_SET_VERIFIED_LOCAL`
+- [ ] release：pack + fresh profile 安装 + Loader smoke；SBOM/provenance/checksums/rollback hash
+- [ ] 最终报告：candidate/baseline hash、digest、model route、split/attempts、cost/time、全部 `NOT_VERIFIED`/`QUARANTINED` 项如实列出
+
+## 跨阶段持续项
+
+- [ ] 每个 Phase 结束更新 `PROJECT_STATUS.md`，只报告有 artifact 支持的状态
+- [ ] 任何 TCB/协议/split/metric 变更走 ADR + protocol version bump（spec 07 §13）
+- [ ] 凭据永不进入 candidate/config/log/evidence；每次 export 附 canary absence receipt
+- [ ] CI 全绿是合入条件；nightly Harbor smoke、weekly provenance refresh report 不自动改 pin

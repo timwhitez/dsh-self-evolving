@@ -1,0 +1,18 @@
+# Upstream pinned checkouts — tracked as git checkouts inside the repo dir but
+# NOT part of this git scope. They are verified read-only by `pnpm upstream:check`.
+deepseek-harness/
+harbor/
+tb/
+
+# Dependencies and build output.
+node_modules/
+**/lib/
+**/.tsbuildinfo
+
+# Evidence and run artifacts (created in later gates).
+evidence/
+runs/
+
+# Editor / OS noise.
+.DS_Store
+*.log

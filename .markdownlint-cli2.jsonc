@@ -1,0 +1,10 @@
+{
+  "config": {
+    // Chinese prose and long reference URLs are clearer without hard wrapping.
+    "MD013": false,
+    // Repeated Build/Accept headings are scoped by their parent gate.
+    "MD024": { "siblings_only": true },
+    // Compact separator rows keep wide normative tables readable in source.
+    "MD060": false,
+  },
+}

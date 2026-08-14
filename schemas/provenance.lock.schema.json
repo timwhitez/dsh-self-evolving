@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-rsi/provenance.lock.schema.json",
+  "title": "Provenance lock",
+  "description": "Machine-verifiable pinned provenance for the dsh-RSI project (Gate 0, spec 07 §2).",
+  "type": "object",
+  "required": ["version", "upstreams", "toolchain"],
+  "additionalProperties": true,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "upstreams": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["path", "vcs", "commit"],
+        "properties": {
+          "path": { "type": "string" },
+          "vcs": { "type": "string" },
+          "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "describe": { "type": "string" }
+        }
+      }
+    },
+    "references": { "type": "object" },
+    "toolchain": {
+      "type": "object",
+      "required": ["node", "pnpm"],
+      "properties": {
+        "node": { "type": "string" },
+        "pnpm": { "type": "string" }
+      }
+    },
+    "modelCatalog": { "type": "object" }
+  }
+}

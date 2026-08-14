@@ -1,0 +1,33 @@
+{
+  "name": "@dsh-rsi/loader-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Real Cordis Loader E2E harness for Gate 0: boot → inventory → unload → quiescence. Not a published package; it hosts the loader lifecycle tests and negative fixtures.",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test:e2e": "vitest run --config ../../vitest.e2e.config.ts"
+  },
+  "dependencies": {
+    "@dsh-rsi/candidate-baseline": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/cordis-plugin-group": "link:../../deepseek-harness/vendor/group",
+    "@deepseek-ai/cordis-plugin-include": "link:../../deepseek-harness/vendor/include",
+    "@deepseek-ai/cordis-plugin-loader": "link:../../deepseek-harness/vendor/loader",
+    "@deepseek-ai/cosmokit": "link:../../deepseek-harness/vendor/cosmokit",
+    "@deepseek-ai/dsh-system-prompt": "link:../../deepseek-harness/packages/core/system-prompt",
+    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

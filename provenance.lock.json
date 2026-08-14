@@ -1,0 +1,81 @@
+{
+  "$schema": "./schemas/provenance.lock.schema.json",
+  "version": 1,
+  "generatedAt": "2026-08-14T00:00:00+09:00",
+  "generatedBy": "Gate 0 manual lock; verify with `pnpm provenance:check`",
+  "upstreams": {
+    "deepseek-harness": {
+      "path": "./deepseek-harness",
+      "vcs": "git",
+      "commit": "47f943859bef60e4160492346772ded9b24f765a",
+      "describe": "47f9438",
+      "packageJsonVersion": "0.1.0-rc.5",
+      "nodeVersion": ">=22.19.0 || >=24.0.0",
+      "packageManager": "pnpm@11.7.0",
+      "lockfileIntegrity": { "algo": "sha256", "value": "${computed:deepseek-harness/pnpm-lock.yaml}" }
+    },
+    "harbor": {
+      "path": "./harbor",
+      "vcs": "git",
+      "commit": "ac398bbda7c4c1073461797d3b95c2455cc671b5",
+      "packageManager": "uv"
+    },
+    "terminal-bench": {
+      "path": "./tb",
+      "vcs": "git",
+      "commit": "d28711d0da2675d0bb1d56de45ae5df6082438a3",
+      "packageManager": "uv"
+    }
+  },
+  "references": {
+    "cordisPaper": {
+      "path": "/root/paper.pdf",
+      "algo": "sha256",
+      "value": "4d48478dc0b6222d9f74d7db10ee776449b1209eb112632336544d32a49db97f",
+      "note": "Cordis dynamic composition / self-evolving harness theory; API names verified against fixed source, not the paper."
+    }
+  },
+  "toolchain": {
+    "node": "v22.23.1",
+    "pnpm": "11.7.0",
+    "python": "3.12.3",
+    "uv": "0.11.33",
+    "docker": "29.6.2",
+    "os": "Ubuntu 24.04.4 LTS (Noble Numbat)",
+    "platform": "linux x64"
+  },
+  "dshPackages": {
+    "note": "Pinned @deepseek-ai/* package versions actually resolved from the locked DSH checkout. Versions are verified against each package's manifest in deepseek-harness/.",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.2",
+    "@deepseek-ai/cordis-plugin-include": "1.0.6",
+    "@deepseek-ai/cordis-plugin-group": "1.0.1",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/dsh-app-boot": "0.1.0-rc.5"
+  },
+  "modelCatalog": {
+    "note": "Model routes are content-addressed here and in every run manifest; keys never carry credentials. The provider endpoint is recorded for provenance only; live secrets live outside the repo.",
+    "providers": [
+      {
+        "id": "rsi-provider",
+        "baseUrl": "https://64.186.236.156:24635/v1",
+        "transport": "openai-compatible",
+        "credentialRef": "env:RSI_PROVIDER_API_KEY",
+        "models": [
+          { "id": "deepseek-v4-flash", "reasoningEffort": "max", "contextWindow": 1000000 }
+        ]
+      }
+    ]
+  },
+  "verification": {
+    "machineReadable": true,
+    "checker": "scripts/check-provenance.ts",
+    "checks": [
+      "each upstream path exists and is a git checkout at the recorded commit",
+      "each upstream working tree is clean (no local edits to read-only pins)",
+      "toolchain versions match the recorded values",
+      "referenced @deepseek-ai/* package versions match deepseek-harness/package.json",
+      "paper.pdf sha256 matches"
+    ]
+  }
+}

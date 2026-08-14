@@ -1,0 +1,14 @@
+# dsh-RSI root workspace.
+#
+# Only the RSI-owned packages are workspace members. The three upstream trees
+# (deepseek-harness/, harbor/, tb/) are external pinned checkouts, deliberately
+# NOT workspace members: they must stay read-only and are consumed via
+# `link:` dependencies so this project can resolve their built `lib/` without
+# editing them.
+packages:
+  - 'packages/*'
+  - 'benchmark-adapters/*'
+
+# esbuild ships a native binary download script; we need it for vitest/tsdown.
+allowBuilds:
+  esbuild: true
