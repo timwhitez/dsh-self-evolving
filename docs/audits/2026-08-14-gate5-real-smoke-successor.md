@@ -20,7 +20,9 @@ v5 completed `fix-git` through real Harbor/ACP/DSH with reward 1, no exception, 
 tokens over 112.853 seconds. Raw Harbor and DSH hashes are frozen in
 [`evidence/gate5/real-smoke-successor.json`](../../evidence/gate5/real-smoke-successor.json).
 
-This is one DEV_OBSERVED engineering smoke, not Gate 5 acceptance or a performance claim. CPA and
-Harbor do not supply a USD price, so the trial is explicitly `priced=false`; the 60x2 matrix and
-three-candidate strata calibration have not started. A concealed guard-handle evaluation broker is
-also required before the 12 DEV_GUARD tasks can be evaluated without revealing their assignment.
+This is one DEV_OBSERVED engineering smoke, not Gate 5 acceptance or a performance claim. Per the
+user's direction, pricing is frozen to the official DeepSeek-V4-Flash USD schedule: cache-hit input
+`$0.0028/M`, cache-miss input `$0.14/M`, and output `$0.28/M`. Repricing the preserved usage gives
+`$0.0031026576`; the 60x2 matrix and three-candidate strata calibration have not started. A
+concealed guard-handle evaluation broker is also required before the 12 DEV_GUARD tasks can be
+evaluated without revealing their assignment.

@@ -69,8 +69,8 @@ byte scan 为 0；successor 已改为容器内只读 secret-file launcher，并�
 用户随后明确授权继续使用原 CPA key。`gate5-real-smoke-v5` 通过容器内只读 secret-file、固定
 DSH sandbox/subprocess/bash 工具栈和真实 Zen-compatible Chat Completions，在 DEV_OBSERVED `fix-git`
 完成 12 次 bash 调用并获 reward 1；宿主 argv/env 与持久化 byte scan 的 credential 匹配均为 0。
-DSH session 保留 10 个 usage events，但 CPA/Harbor 未提供 USD price，因此仍是 `priced=false` 的单题
-工程 smoke，不能用于 Gate 5 acceptance。详见
+DSH session 保留 10 个 usage events；按用户指定的 DeepSeek-V4-Flash 官方美元价格重算为
+`$0.0031026576`，现为 `priced=true` 的单题工程 smoke，但仍不能替代 Gate 5 的完整 matrix。详见
 [`docs/audits/2026-08-14-gate5-real-smoke-successor.md`](docs/audits/2026-08-14-gate5-real-smoke-successor.md)。
 
 ## Gate 7 formal preflight

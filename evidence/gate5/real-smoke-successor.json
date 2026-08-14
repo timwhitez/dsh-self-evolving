@@ -15,8 +15,14 @@
     "cacheReadTokens": 68392,
     "outputTokens": 4367,
     "reasoningTokens": 0,
-    "costUsd": null,
-    "priced": false
+    "costUsd": 0.0031026576,
+    "priced": true
+  },
+  "officialPricingUsdPerMillionTokens": {
+    "cacheHitInput": 0.0028,
+    "cacheMissInput": 0.14,
+    "output": 0.28,
+    "source": "https://api-docs.deepseek.com/quick_start/pricing/"
   },
   "credentialPersistedFileCount": 0,
   "credentialHostCmdlineCount": 0,

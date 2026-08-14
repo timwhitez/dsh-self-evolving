@@ -30,6 +30,15 @@ const targetModel = 'deepseek-v4-flash-zen'
 const effectiveModel = 'deepseek-v4-flash'
 const contextWindow = 1_048_576
 const maxTokens = 32_768
+const officialPricing = {
+  currency: 'USD' as const,
+  unitTokens: 1_000_000,
+  cacheHitInputUsd: 0.0028,
+  cacheMissInputUsd: 0.14,
+  outputUsd: 0.28,
+  source: 'https://api-docs.deepseek.com/quick_start/pricing/',
+  model: 'deepseek-v4-flash',
+}
 const sourceFiles = [
   'src/index.ts',
   'package.json',
@@ -41,6 +50,65 @@ const sourceFiles = [
 interface InventoryTask {
   taskId: string
   agentTimeoutSec: number
+}
+
+interface DshUsageTotal {
+  inputTokens: number
+  cacheReadTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  events: number
+}
+
+async function findNamedFiles(root: string, name: string): Promise<string[]> {
+  const found: string[] = []
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) found.push(...(await findNamedFiles(path, name)))
+    else if (entry.name === name) found.push(path)
+  }
+  return found.sort()
+}
+
+async function readDshUsage(trialDir: string): Promise<DshUsageTotal> {
+  const sessions = await findNamedFiles(join(trialDir, 'agent', 'dsh-sessions'), 'session.jsonl')
+  if (sessions.length !== 1) throw new Error(`expected one DSH session log; got ${sessions.length}`)
+  const rows = (await readFile(sessions[0]!, 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          data?: { chunk?: { type?: string; usage?: Partial<DshUsageTotal> } }
+        },
+    )
+  const total: DshUsageTotal = {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    events: 0,
+  }
+  for (const row of rows) {
+    if (row.data?.chunk?.type !== 'usage') continue
+    const usage = row.data.chunk.usage ?? {}
+    total.inputTokens += usage.inputTokens ?? 0
+    total.cacheReadTokens += usage.cacheReadTokens ?? 0
+    total.outputTokens += usage.outputTokens ?? 0
+    total.reasoningTokens += usage.reasoningTokens ?? 0
+    total.events++
+  }
+  if (total.events === 0) throw new Error('DSH session has no usage events')
+  return total
+}
+
+function priceUsage(usage: DshUsageTotal): number {
+  return (
+    (usage.inputTokens * officialPricing.cacheMissInputUsd +
+      usage.cacheReadTokens * officialPricing.cacheHitInputUsd +
+      usage.outputTokens * officialPricing.outputUsd) /
+    officialPricing.unitTokens
+  )
 }
 
 function execResult(
@@ -383,14 +451,14 @@ async function main(): Promise<void> {
         JSON.stringify({ candidate_id: receipt.candidateId, attempt_index: attemptIndex }) + '\n',
         { flag: 'wx' },
       )
-      normalized.push(
-        await normalizeTrial({
-          trialDir,
-          expectedCandidateId: receipt.candidateId,
-          taskId,
-          requireAcpEvidence: true,
-        }),
-      )
+      const record = await normalizeTrial({
+        trialDir,
+        expectedCandidateId: receipt.candidateId,
+        taskId,
+        requireAcpEvidence: true,
+      })
+      const usage = await readDshUsage(trialDir)
+      normalized.push({ ...record, usage, costUsd: priceUsage(usage), priced: true })
     }
     const summary = {
       schemaVersion: 1,
@@ -406,6 +474,7 @@ async function main(): Promise<void> {
         maxTokens,
         wireApi: 'chat-completions-compatible',
       },
+      officialPricing,
       plannedTrials: taskIds.length * attempts,
       collectedTrials: normalized.length,
       wallSec,
