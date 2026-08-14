@@ -114,6 +114,9 @@
 > Unix gateway 与 `ProposalGatewayAdapter` 现已通过 4 个 E2E：networkless sandbox 可达固定 socket、
 > 同 request 只调用 provider 一次、route override/额外 headers 在 provider 前拒绝、sandbox 无 key。
 > 尚缺真实 DSH composition 在 Bubblewrap 内经此 adapter 的有凭据复验，故验收状态不变。
+> 随后 model-free 集成 E2E 已使 immutable runtime 内的真实 agent-spine、baseline propose candidate、
+> session loop、GatewayAdapter 与 parser 在 Bubblewrap 内生成 1 个 admitted child。仅剩将 trusted
+> handler 接真实 provider adapter 的同拓扑复验；无 credential 时继续 fail closed。
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 

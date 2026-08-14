@@ -13,6 +13,8 @@ export interface ProposalSandboxMounts {
 
 export interface ProposalSandboxInput {
   mounts: ProposalSandboxMounts
+  /** Trusted immutable runtime closure, mounted read-only at /runtime. */
+  runtimeRoot?: string
   /** Absolute path as seen inside the sandbox. */
   command: string
   args: string[]
@@ -59,7 +61,11 @@ function overlaps(left: string, right: string): boolean {
 function validateCommand(command: string): void {
   if (!isAbsolute(command)) throw new Error('proposal sandbox: command must be absolute')
   const allowed = new Set(['/usr/bin/node', '/bin/sh', '/usr/bin/env'])
-  if (!allowed.has(command) && !command.startsWith('/input/contracts/')) {
+  if (
+    !allowed.has(command) &&
+    !command.startsWith('/input/contracts/') &&
+    !command.startsWith('/runtime/')
+  ) {
     throw new Error(`proposal sandbox: command is outside the executable allowlist: ${command}`)
   }
 }
@@ -79,6 +85,17 @@ export async function runProposalSandbox(
     childrenRoot: await assertTreeHasNoSymlink(resolve(input.mounts.childrenRoot), 'childrenRoot'),
   }
   const allRoots = Object.entries(resolved)
+  const runtimeRoot =
+    input.runtimeRoot === undefined
+      ? undefined
+      : await assertTreeHasNoEscapingSymlink(resolve(input.runtimeRoot), 'runtime')
+  if (runtimeRoot !== undefined) {
+    for (const [label, root] of allRoots) {
+      if (overlaps(runtimeRoot, root)) {
+        throw new Error(`proposal sandbox: runtime overlaps ${label}`)
+      }
+    }
+  }
   for (let left = 0; left < allRoots.length; left += 1) {
     for (let right = left + 1; right < allRoots.length; right += 1) {
       if (overlaps(allRoots[left]![1], allRoots[right]![1])) {
@@ -152,6 +169,7 @@ export async function runProposalSandbox(
     if (!socketStat.isSocket()) throw new Error('proposal sandbox: gateway must be a Unix socket')
     args.push('--ro-bind', socket, '/run/proposer-gateway.sock')
   }
+  if (runtimeRoot !== undefined) args.push('--ro-bind', runtimeRoot, '/runtime')
   args.push('--', input.command, ...input.args)
 
   const maxOutputBytes = input.maxOutputBytes ?? 1024 * 1024
@@ -212,4 +230,25 @@ export async function runProposalSandbox(
   // Re-canonicalize outside the sandbox and reject link/special-file output.
   await assertTreeHasNoSymlink(resolved.childrenRoot, 'childrenRoot output')
   return result
+}
+
+async function assertTreeHasNoEscapingSymlink(root: string, label: string): Promise<string> {
+  const canonicalRoot = await realpath(root)
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      const info = await lstat(path)
+      if (info.isSymbolicLink()) {
+        const target = await realpath(path)
+        if (target !== canonicalRoot && !target.startsWith(canonicalRoot + sep)) {
+          throw new Error(`proposal sandbox: escaping symlink rejected in ${label}: ${path}`)
+        }
+      } else if (info.isDirectory()) await walk(path)
+      else if (!info.isFile()) {
+        throw new Error(`proposal sandbox: special file rejected in ${label}: ${path}`)
+      }
+    }
+  }
+  await walk(canonicalRoot)
+  return canonicalRoot
 }

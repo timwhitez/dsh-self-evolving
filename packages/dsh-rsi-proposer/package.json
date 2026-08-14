@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Agentic proposal runner: boots the real DSH Loader, drives the verified deepseek-v4-flash model via ctx.agents.create to generate child candidate proposals from a parent + filtered evidence, then validates them through the candidate-SDK builder + proposal protocol. Gate 4 vertical slice.",
   "main": "lib/index.js",
+  "files": [
+    "lib"
+  ],
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
@@ -16,6 +19,7 @@
     "clean": "rm -rf lib .tsbuildinfo"
   },
   "dependencies": {
+    "@dsh-rsi/candidate-baseline": "workspace:*",
     "@dsh-rsi/candidate-sdk": "workspace:*",
     "@dsh-rsi/core": "workspace:*"
   },

@@ -37,12 +37,15 @@ export class ProposalGatewayAdapter extends LlmAdapter {
     if (
       options.provider !== this.config.route.provider ||
       options.model !== this.config.route.model ||
-      options.reasoningEffort !== this.config.route.reasoningEffort ||
-      options.maxTokens !== this.config.route.maxTokens
+      (options.reasoningEffort !== undefined &&
+        options.reasoningEffort !== this.config.route.reasoningEffort) ||
+      (options.maxTokens !== undefined && options.maxTokens > this.config.route.maxTokens)
     ) {
       throw new Error('proposal gateway adapter: request does not match locked route')
     }
     const payload = wirePayload(options)
+    payload['reasoningEffort'] = this.config.route.reasoningEffort
+    payload['maxTokens'] = this.config.route.maxTokens
     const request: ProposalGatewayRequest = {
       schemaVersion: 1,
       requestId: `llm-${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,

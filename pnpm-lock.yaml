@@ -75,16 +75,16 @@ importers:
       '@dsh-rsi/candidate-baseline':
         specifier: workspace:*
         version: link:../candidate-baseline
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.1
       ajv:
         specifier: ^8.17.0
         version: 8.20.0
       ajv-formats:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.20.0)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -183,6 +183,9 @@ importers:
 
   packages/dsh-rsi-proposer:
     dependencies:
+      '@dsh-rsi/candidate-baseline':
+        specifier: workspace:*
+        version: link:../candidate-baseline
       '@dsh-rsi/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk

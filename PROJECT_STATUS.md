@@ -30,6 +30,12 @@ credential，可信宿主 handler 锁 provider/endpoint/model/reasoning/maxToken
 transport 字段，并按 request hash 幂等返回、记录 content-free receipt。剩余集成点进一步收窄为：
 在 Bubblewrap 内启动真实 DSH proposer composition，并通过该 adapter 完成有凭据 successor turn。
 
+该集成点的 model-free 路径现已闭合：immutable runtime 中的真实 Cordis agent-spine、baseline
+propose-mode candidate、GatewayAdapter、session loop 和 proposal parser 已在 Bubblewrap 内通过固定
+Unix gateway 生成 1 个 admitted child；sandbox 仍无 IP network、无 credential。Gate 4 唯一剩余
+验收项是把 trusted handler 换成真实 provider adapter 后复验同一拓扑。当前无 credential，故仍不
+宣称 Gate 4 accepted。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP
