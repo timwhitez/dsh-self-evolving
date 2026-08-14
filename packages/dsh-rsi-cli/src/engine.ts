@@ -158,12 +158,16 @@ function eventPayload<T>(events: JournalEvent[], eventId: string): T | undefined
   return events.find((event) => event.eventId === eventId)?.payload as T | undefined
 }
 
-function isBaselineFailure(row: {
+function isBaselineNonPassingSignal(row: {
   candidateId: string
   status: 'pass' | 'fail' | 'invalid'
   reward: number | null
 }): boolean {
-  return row.candidateId === 'baseline' && row.status === 'fail' && row.reward === 0
+  return (
+    row.candidateId === 'baseline' &&
+    (row.status === 'fail' || row.status === 'invalid') &&
+    row.reward === 0
+  )
 }
 
 async function writeFailurePool(config: ProjectConfig, pool: FailurePool): Promise<void> {
@@ -310,12 +314,12 @@ export async function runStableDemo(
           evaluated += 1
         }
         events = await readAll(service.journal)
-        const failures = replay(events).observations.filter(isBaselineFailure)
+        const failures = replay(events).observations.filter(isBaselineNonPassingSignal)
         if (failures.length > 0) break
       }
       events = await readAll(service.journal)
       const taskIds = replay(events)
-        .observations.filter(isBaselineFailure)
+        .observations.filter(isBaselineNonPassingSignal)
         .map((row) => row.taskId)
         .sort()
       const pool: FailurePool = {

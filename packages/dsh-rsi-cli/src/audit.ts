@@ -59,6 +59,25 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
       const taskIds = new Set(
         freeze.taskIds.filter((value): value is string => typeof value === 'string'),
       )
+      const baselineByTask = new Map(
+        state.observations
+          .filter((row) => row.candidateId === 'baseline')
+          .map((row) => [row.taskId, row]),
+      )
+      if (
+        [...taskIds].some((taskId) => {
+          const row = baselineByTask.get(taskId)
+          return (
+            row === undefined ||
+            (row.status !== 'fail' && row.status !== 'invalid') ||
+            row.reward !== 0
+          )
+        })
+      ) {
+        reasons.push(
+          'failure pool contains a task without an attributable reward-zero baseline signal',
+        )
+      }
       if (candidateObservations.some((row) => !taskIds.has(row.taskId))) {
         reasons.push('candidate observation escaped the frozen failure pool')
       }

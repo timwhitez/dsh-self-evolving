@@ -158,6 +158,28 @@ describe('stable-demo engine', () => {
     expect(counters.builds).toBe(0)
   })
 
+  it('accepts a reward-zero attributable invalid as a non-passing baseline signal', async () => {
+    const { config, capabilities } = await fixture()
+    const original = capabilities.evaluationProvider
+    capabilities.evaluationProvider = (spec) => {
+      const provider = original(spec)
+      const collect = provider.collect.bind(provider)
+      provider.collect = async (externalJobId) => {
+        const observation = await collect(externalJobId)
+        return spec.candidate.candidateId === 'baseline' && spec.taskId === 'task-2'
+          ? { ...observation, status: 'invalid' as const, reward: 0 }
+          : observation
+      }
+      return provider
+    }
+    const result = await runStableDemo(config, capabilities)
+    expect(result.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(result.baselineTrials).toBe(6)
+    await expect(readFile(join(config.stateDir, 'failure-pool.json'), 'utf8')).resolves.toContain(
+      'task-2',
+    )
+  })
+
   it('records a build reject and admits a bounded replacement proposal', async () => {
     const { config, counters, capabilities } = await fixture()
     const originalBuild = capabilities.build

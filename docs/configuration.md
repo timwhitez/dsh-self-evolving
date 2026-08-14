@@ -28,6 +28,8 @@ the bounded multi-file candidate-tree protocol, exact-parent Loader proposal mod
 candidate-owned tests, admission receipts and mechanism-outcome feedback. Its failure-discovery order is frozen
 outcome-blind from published inventory metadata: `hard` before `medium` before `easy`, then shortest timeout and task
 ID. This increases the chance of finding a real failed task without reading candidate rewards or sealed data.
+The pool accepts `fail/0` and attributable `invalid/0` non-passes; `invalid/null` and any unknown reward remain
+excluded. The evaluator's retry/reconciliation layer settles retryable infrastructure outcomes before this filter.
 
 The provider URL is read from `[model_providers.deepseek]` in private `~/.codex/config.toml`; the bearer is read
 from private `~/.codex/auth.json`. `doctor` fails before a paid request if either file, Docker, Harbor, task material,
