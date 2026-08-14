@@ -130,6 +130,40 @@ async function retainProposalRejection(
   )
 }
 
+export async function retainV011BuildRejection(input: {
+  stateDir: string
+  generation: number
+  attempt: number
+  proposalId: string
+  message: string
+}): Promise<string> {
+  const path = join(
+    input.stateDir,
+    'v011',
+    'actions',
+    `proposal-${input.generation}-${input.attempt}`,
+    'build',
+    'rejection.json',
+  )
+  const bytes =
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        classification: 'BUILD_REJECT',
+        proposalId: input.proposalId,
+        reason: diagnosticTail(input.message),
+        reasonDigest: sha(input.message),
+        retained: true,
+      },
+      null,
+      2,
+    ) + '\n'
+  const existing = await readFile(path, 'utf8').catch(() => null)
+  if (existing === null) await writeExclusive(path, bytes)
+  else if (existing !== bytes) throw new Error('v0.1.1 build rejection: conflicting evidence')
+  return path
+}
+
 async function walk(root: string): Promise<string[]> {
   const output: string[] = []
   async function visit(directory: string): Promise<void> {
@@ -763,7 +797,7 @@ async function realV011Proposal(
   return stableProposal
 }
 
-async function realV011Build(
+async function realV011BuildUnretained(
   config: V011DemoConfig,
   catalog: FrozenCapabilityCatalog,
   baseUrl: string,
@@ -839,6 +873,27 @@ async function realV011Build(
   await mkdir(dirname(root), { recursive: true, mode: 0o700 })
   await rename(staging, root)
   return built
+}
+
+async function realV011Build(
+  config: V011DemoConfig,
+  catalog: FrozenCapabilityCatalog,
+  baseUrl: string,
+  input: StableBuildInput,
+): Promise<BuiltCandidate> {
+  try {
+    return await realV011BuildUnretained(config, catalog, baseUrl, input)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown build rejection'
+    await retainV011BuildRejection({
+      stateDir: config.stateDir,
+      generation: input.generation,
+      attempt: input.attempt,
+      proposalId: input.proposal.proposalId,
+      message,
+    })
+    throw error
+  }
 }
 
 async function observedTaskIds(config: V011DemoConfig): Promise<string[]> {
