@@ -1,6 +1,6 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 + 3 COMPLETE — Awaiting Gate 4**  
+**状态：GATE 0 + 1 + 2 + 3 COMPLETE; Gate 4 工程地基 COMPLETE（真实模型生成待集成）**  
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
@@ -137,11 +137,38 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 共 103 单元 + 7 E2E（loader/capsule/harbor）。三上游 clean；AGENTS/CLAUDE 字节一致。
 
+## 已完成 — Gate 4 工程地基（proposal safety + protocol）
+
+> 注：Gate 4 的**安全工程地基**已完成并通过测试。最后一步——parent candidate 经真实 DSH Loader
+> （`ctx.agents.create`）+ 真实模型生成 ≥1 个 admitted child——是把已验证的 proposal protocol/sandbox
+> 接入 DSH agent spine + ACP 的集成工作，留给后续。provider 连通性已验证（`PONG` probe 成功）。
+
+### Proposal 模块（`packages/dsh-rsi/src/proposal/`）
+
+- **proposal sandbox policy**（`sandbox.ts`）：纯函数 fs/network/model-firewall 决策；parent/archive/
+  evidence/contracts 只读、childrenRoot 唯一可写；host 敏感路径（home/SSH/docker.sock/controller IPC/
+  .aws）一律拒；traversal 拒；build phase 全禁网；model firewall 锁 provider/endpoint/model，拒 candidate
+  自定 route/billing tags。**决策是纯函数 → prompt-injection 不能改变 policy**。
+- **label-filtered evidence export**（`export.ts`）：proposer 视图只含 allowed labels（PUBLIC_SPEC/
+  DEV_OBSERVED），GUARDED/SEALED 永不进入；Merkle root 防篡改；canary absence receipt 记录 excluded
+  数量与 hash。
+- **canary leak scan**：sealed/guard canary token 若泄漏进 proposer transcript 即被检出（information-
+  flow incident）。
+- **proposal output protocol validator**（`protocol.ts`）：width=3、hypothesis dedup、donor provenance 校验；
+  拒绝 no-change / test-only / 空 hypothesis / 缺测试 / 超 width / 坏 donor。
+
+### Gate 4 测试证据（23 绿）
+
+- sandbox fs policy（6）：read-only 输入、唯一可写、host 敏感拒、traversal 拒、纯函数。
+- network policy（2）：proposal allowlist、build 全禁。
+- model firewall（4）：locked route、拒 model/endpoint override、拒 billing tags。
+- evidence export（3）：GUARDED/SEALED 不进入 proposer 视图、Merkle 防篡改、canary leak 检出。
+- proposal protocol（8）：良构接受、no-change/test-only/空 hypothesis/缺测试/duplicate/超 width/坏 donor 全拒。
+
 ## 尚未完成（后续 Gate）
 
-- Gate 4：proposal sandbox（filesystem/network/model gateway policy）、parent candidate propose
-  mode 经真实 Loader、label-filtered evidence export、proposer 信息流安全测试。**需要真实模型调用**
-  （提供的 provider）生成一个 child candidate。
+- Gate 4 剩余：parent candidate propose mode 经真实 DSH Loader（`ctx.agents.create` + ACP）+ 真实模型
+  生成 ≥1 个 admitted child 的端到端集成；builder handoff；rejected proposal 证据保留。
 - Gate 5+：search/split/sealed、calibration、pilot、formal 80-candidate、sealed/full evaluation。
   **需要付费 benchmark 运行**。
 
@@ -150,5 +177,5 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 ## 下一个验收门
 
-执行 `specs/07-implementation-plan.md` 的 Gate 4（agentic proposal 垂直切片）。该 Gate 需要真实
-模型调用；在显式授权前不启动付费运行。逐项执行清单见 `docs/phase-todolist.md`。
+完成 Gate 4 的真实模型生成集成（DSH agent spine + ACP + 已验证 provider），或推进 Gate 5
+（需要付费 baseline/calibration 运行）。逐项执行清单见 `docs/phase-todolist.md`。
