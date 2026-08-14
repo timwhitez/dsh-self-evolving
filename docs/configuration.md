@@ -1,6 +1,6 @@
 # Configuration
 
-`dsh-rsi init` writes a private, no-replace `config.json` with schema version 2. The file contains no credential.
+`dsh-rsi init` writes a private, no-replace `config.json` with schema version 3. The file contains no credential.
 Changing an identity or limit requires a new state directory and run ID.
 
 | Field                      | Stable-demo value                       |

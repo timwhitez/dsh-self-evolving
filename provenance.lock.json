@@ -2,7 +2,7 @@
   "$schema": "./schemas/provenance.lock.schema.json",
   "version": 1,
   "generatedAt": "2026-08-14T00:00:00+09:00",
-  "generatedBy": "Gate 0 manual lock; verify with `pnpm provenance:check`",
+  "generatedBy": "Gate 0 lock with v0.1 stable-demo route successor; verify with `pnpm provenance:check`",
   "upstreams": {
     "deepseek-harness": {
       "path": "./deepseek-harness",
@@ -62,7 +62,14 @@
         "transport": "openai-compatible",
         "credentialRef": "env:RSI_PROVIDER_API_KEY",
         "models": [
-          { "id": "deepseek-v4-flash", "reasoningEffort": "max", "contextWindow": 1000000 }
+          {
+            "requestedId": "deepseek-v4-flash-zen",
+            "effectiveId": "deepseek-v4-flash",
+            "reasoningEffort": "high",
+            "contextWindow": 1048576,
+            "maxOutputTokens": 32768,
+            "wireApi": "chat-completions-compatible"
+          }
         ]
       }
     ]

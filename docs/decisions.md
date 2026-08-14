@@ -127,3 +127,17 @@ stopped and marked `QUARANTINED_PROTOCOL_BUG`; it cannot be resumed or used for 
 
 **Consequence:** the successor uses a new run ID and schema. This correction does not change the model route, sealed
 boundary, candidate rewards or any benchmark promotion rule.
+
+## ADR-013 — Admitted source diff is the candidate behavior
+
+**Decision:** stable-demo config schema v3 requires the trusted builder to apply the admitted unified diff to the
+canonical parent's `src/index.ts`, compile it twice, and atomically publish only a successful candidate. Patch headers
+and paths outside that single editable file are rejected.
+
+**Why:** the v2 builder preserved `sourceDiff` as evidence but compiled a prompt section derived only from the
+hypothesis. That produced unique artifacts without implementing the proposed mechanism, so it could not prove real
+self-modification. Run `stable-demo-20260814-v2` was stopped before candidate generation and marked
+`QUARANTINED_BUILDER_SEMANTIC_MISMATCH`; its baseline evidence is not reused.
+
+**Consequence:** incomplete staging directories fail closed, and every successor candidate's source digest covers the
+actual model-proposed production patch.

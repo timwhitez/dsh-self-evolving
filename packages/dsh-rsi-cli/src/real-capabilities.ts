@@ -1,6 +1,17 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, cp, mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { buildCandidate, packCapsule } from '@dsh-rsi/candidate-sdk'
 import { runProposalSandbox, type EvaluationObservation } from '@dsh-rsi/core'
@@ -231,13 +242,17 @@ async function realBuild(
   const receiptPath = join(candidateRoot, 'stable-build.json')
   const existing = await readFile(receiptPath, 'utf8').catch(() => null)
   if (existing !== null) return JSON.parse(existing) as BuiltCandidate
-  await mkdir(join(candidateRoot, 'src'), { recursive: true, mode: 0o700 })
+  if ((await stat(candidateRoot).catch(() => null)) !== null) {
+    throw new Error(`real builder: incomplete prior candidate directory ${candidateRoot}`)
+  }
+  const stagingRoot = `${candidateRoot}.staging`
+  await mkdir(join(stagingRoot, 'src'), { recursive: true, mode: 0o700 })
   for (const relative of SOURCE_FILES) {
     if (relative === 'src/index.ts' || relative === 'tsconfig.json') continue
-    await cp(join(input.parent.sourceRoot, relative), join(candidateRoot, relative))
+    await cp(join(input.parent.sourceRoot, relative), join(stagingRoot, relative))
   }
   await writeFile(
-    join(candidateRoot, 'tsconfig.json'),
+    join(stagingRoot, 'tsconfig.json'),
     JSON.stringify(
       {
         extends: join(config.repoRoot, 'tsconfig.json'),
@@ -264,22 +279,10 @@ async function realBuild(
     ) + '\n',
   )
   const parentSource = await readFile(join(input.parent.sourceRoot, 'src', 'index.ts'), 'utf8')
-  const close = parentSource.lastIndexOf('\n}')
-  if (close === -1) throw new Error('real builder: parent candidate apply function is malformed')
-  const behavior = [
-    '',
-    '  ctx.systemPrompt.section({',
-    `    name: ${JSON.stringify(`candidate:generation-${input.generation}`)},`,
-    `    order: ${100 + input.generation},`,
-    `    text: ${JSON.stringify(`Candidate hypothesis: ${input.proposal.hypothesis}`)},`,
-    '  })',
-  ].join('\n')
-  await writeFile(
-    join(candidateRoot, 'src', 'index.ts'),
-    parentSource.slice(0, close) + behavior + parentSource.slice(close),
-  )
+  await writeFile(join(stagingRoot, 'src', 'index.ts'), parentSource)
+  await applyCandidateSourceDiff(stagingRoot, input.proposal.sourceDiff)
   const receipt = await buildCandidate({
-    sourceRoot: candidateRoot,
+    sourceRoot: stagingRoot,
     sourceFiles: SOURCE_FILES,
     tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
   })
@@ -298,8 +301,48 @@ async function realBuild(
     sourceRoot: candidateRoot,
     evidenceRefs: input.proposal.evidenceRefs,
   }
-  await writeExclusive(receiptPath, JSON.stringify(built, null, 2) + '\n')
+  await writeExclusive(
+    join(stagingRoot, 'stable-build.json'),
+    JSON.stringify(built, null, 2) + '\n',
+  )
+  await mkdir(join(config.stateDir, 'candidates'), { recursive: true, mode: 0o700 })
+  await rename(stagingRoot, candidateRoot)
   return built
+}
+
+export async function applyCandidateSourceDiff(
+  candidateRoot: string,
+  sourceDiff: string,
+): Promise<void> {
+  if (Buffer.byteLength(sourceDiff) > 256 * 1024 || sourceDiff.includes('\0')) {
+    throw new Error('real builder: source diff exceeds containment limits')
+  }
+  const trimmed = sourceDiff.trim()
+  if (trimmed.length === 0 || trimmed.includes('diff --git')) {
+    throw new Error('real builder: source diff must be a single hunk-only patch')
+  }
+  const headerLines = trimmed
+    .split('\n')
+    .filter((line) => line.startsWith('--- ') || line.startsWith('+++ '))
+  if (headerLines.some((line) => line !== '--- a/src/index.ts' && line !== '+++ b/src/index.ts')) {
+    throw new Error('real builder: source diff escapes src/index.ts')
+  }
+  const patch = trimmed.startsWith('@@')
+    ? `--- a/src/index.ts\n+++ b/src/index.ts\n${trimmed}\n`
+    : `${trimmed}\n`
+  if (!patch.includes('--- a/src/index.ts\n+++ b/src/index.ts\n')) {
+    throw new Error('real builder: source diff has no exact src/index.ts header')
+  }
+  const patchPath = join(candidateRoot, '.candidate.patch')
+  await writeFile(patchPath, patch, { mode: 0o600, flag: 'wx' })
+  try {
+    await exec('/usr/bin/git', ['apply', '--check', '--recount', patchPath], {
+      cwd: candidateRoot,
+    })
+    await exec('/usr/bin/git', ['apply', '--recount', patchPath], { cwd: candidateRoot })
+  } finally {
+    await rm(patchPath, { force: true })
+  }
 }
 
 function evaluatorRunId(config: StableDemoConfig, spec: StableEvaluationSpec): string {
