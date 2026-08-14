@@ -111,6 +111,9 @@
 > 与 digest 不可变。Bubblewrap E2E 强制只读 inputs、唯一 child write root、空 credential 环境、
 > 独立 PID/network namespace、timeout drain 与 symlink 拒绝。剩余：将真实 DSH model turn 接到该
 > sandbox 的 brokered Unix gateway；当前无 provider credential，Gate 4 仍 fail closed。
+> Unix gateway 与 `ProposalGatewayAdapter` 现已通过 4 个 E2E：networkless sandbox 可达固定 socket、
+> 同 request 只调用 provider 一次、route override/额外 headers 在 provider 前拒绝、sandbox 无 key。
+> 尚缺真实 DSH composition 在 Bubblewrap 内经此 adapter 的有凭据复验，故验收状态不变。
 
 ## Phase 5 — 搜索算法、split、sealed 与校准（Gate 5，5–8 天）
 

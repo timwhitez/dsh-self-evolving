@@ -25,6 +25,11 @@ sandbox 的工程缺口，但现有 `runProposalTurn` 尚未改为通过该外�
 运行；本进程也没有 provider credential 进行真实模型 successor 复验。因此 Gate 4 继续
 `GATE_4_ACCEPTANCE_FAILED`，不得把两个分离测试拼接成已通过的生产路径。
 
+固定 route 的 Unix-socket gateway 与 DSH `LlmAdapter` 已实现：sandbox 保持无 IP network/无
+credential，可信宿主 handler 锁 provider/endpoint/model/reasoning/maxTokens，拒绝 headers 等额外
+transport 字段，并按 request hash 幂等返回、记录 content-free receipt。剩余集成点进一步收窄为：
+在 Bubblewrap 内启动真实 DSH proposer composition，并通过该 adapter 完成有凭据 successor turn。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP

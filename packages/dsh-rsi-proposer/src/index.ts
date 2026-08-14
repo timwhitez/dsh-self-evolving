@@ -12,3 +12,18 @@ export {
   type ParsedProposal,
   type RejectedProposalRecord,
 } from './parse.js'
+export {
+  startProposalGateway,
+  requestProposalGateway,
+  type ProposalGatewayRoute,
+  type ProposalGatewayRequest,
+  type ProposalGatewayResponse,
+  type ProposalGatewayReceipt,
+  type ProposalGatewayOptions,
+  type ProposalGatewayHandle,
+} from './gateway.js'
+export {
+  ProposalGatewayAdapter,
+  createProposalGatewayLlmHandler,
+  type ProposalGatewayAdapterConfig,
+} from './gateway-adapter.js'
