@@ -1,8 +1,8 @@
 /**
- * Calibration evidence test — verifies the recorded calibration artifacts are
- * internally consistent (spec 07 §7: "baseline 波动/成本测量 + 可行性判定书面结论").
+ * Historical calibration fixture test — verifies preserved artifact bytes are
+ * internally consistent without granting Gate 5 acceptance.
  *
- * This reads the real calibration evidence produced by scripts/run-calibration.ts
+ * This reads the quarantined historical artifacts formerly produced by the runner
  * and asserts: the split commitment is well-formed, the samples are non-empty
  * with valid wall/cost, and the budget-model verdict is present. It does NOT
  * assert feasibility (that's a measurement, not a correctness property) — it
@@ -21,7 +21,7 @@ async function readJson(p: string): Promise<unknown> {
   return JSON.parse(await readFile(p, 'utf8'))
 }
 
-describe('calibration evidence (real pilot artifacts)', () => {
+describe('quarantined historical calibration fixture', () => {
   it('the split commitment is a well-formed 48/12/29 Merkle commitment', async () => {
     const commitment = (await readJson(
       join(evidenceDir, 'split-commitment.json'),

@@ -124,38 +124,46 @@
 - [x] golden tests：small-tree CMP 手算、UCB-Air 边界、seeded RNG replay、duplicate/donor 不重复计数
 - [x] shortlist tournament + 合格节点不足时的确定性降级路径（spec 03 §11）
 - [x] deterministic split ceremony：48/12/29、seed commitment、Merkle root；difficulty bin 按 spec 04 §3.2 两种合法来源之一或放弃
-- [x] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
-- [x] candidate lock 事务：lock 后 selector/proposer 永久拒绝
+- [ ] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
+- [ ] candidate lock 事务：lock 后 selector/proposer 永久拒绝
 - [x] paired cluster-bootstrap 统计 + report generator（固定 seed、固定分析容器 hash）
-- [x] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
-- [x] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
+- [ ] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
+- [ ] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
 
 **退出证据**：算法测试全绿 + baseline 波动/成本测量 + 可行性判定书面结论。
 
-> **已完成（2026-08-14）**：校准 pilot 经真实 Harbor job 测量 3 个 dev task（wall 31.1/41.8/76.9s）。
+> **历史 fixture（2026-08-14，非验收）**：Harbor `nop` job 测量 3 个 dev task
+> （wall 31.1/41.8/76.9s）。
 > 证据：`evidence/calibration/{split-commitment,calibration-samples,budget-model}.json` +
 > `tb21-inventory.json`（89 task）。**CALIBRATION_FEASIBLE**：p90 cost $41.96（≤$500）、p90 wall 2.38h（≤16h）；
 > frozen `B_eval=760 / B_prop=$40 / k_sealed=1 / concurrency=4 / reserve=20%`。
 > calibration-evidence test 验证 artifact 自洽（4 绿）。
-> 注：完整 60-task ×≥2 baseline 是 Gate 6+ 正式 search 的一部分；校准 pilot 用代表性 task stratum
-> 测量成本/wall 外推预算模型，符合 spec 07 §7 的 pilot 定义。
+> 这不是完整 baseline、real candidate calibration 或有效 concealed split，不满足 spec 07 §7。
+>
+> **独立审计更正（2026-08-14）**：以上 3 个 `nop` trial 仅是 pipeline overhead，不满足 Gate 5。
+> 公共常量 seed 也不能作为 concealed split。原 artifact 保留并标记
+> `QUARANTINED_NOT_ACCEPTED`；Gate 5 verifier 当前如实拒绝，需新 sealed ceremony、120+ real baseline
+> trials 与 real 3-candidate calibration successor。
 
 ## Phase 6 — 10-candidate pilot（Gate 6，1–3 天 + runtime）
 
-- [x] 新 pilot run ID，`K=10`，development-only，无 sealed reveal，代码路径与正式 run 完全一致
-- [x] 无人工干预完成 10 个 admitted candidates
-- [x] 至少一次真实 crash/resume，事后 evidence 完整、replay 一致
+- [ ] 新 pilot run ID，`K=10`，development-only，无 sealed reveal，代码路径与正式 run 完全一致
+- [ ] 无人工干预完成 10 个 admitted candidates
+- [ ] 至少一次真实 crash/resume，事后 evidence 完整、replay 一致
 - [x] build reject/runtime fail/infra retry/duplicate child 至少各覆盖一次（fixture 或真实事件）
-- [x] proposer 实际引用历史 raw evidence（而非只看摘要）的记录
+- [ ] proposer 实际引用历史 raw evidence（而非只看摘要）的记录
 - [ ] 成本预测误差 ≤ ±20%；audit 无 critical finding
 - [x] pilot 结果隔离，不并入正式 Archive；据此冻结实现与 manifest 参数
 
-> **已完成（2026-08-14）**：`packages/dsh-rsi-pilot/` loop driver + `scripts/run-pilot.ts`。
+> **历史 fixture（2026-08-14，非验收）**：`packages/dsh-rsi-pilot/` loop driver 与原始
+> `evidence/pilot/pilot-result.json`。
 > pilot 跑通 terminal state（`evidence/pilot/pilot-result.json`，10 admitted，39 observations）。
 > loop tests（6 绿）覆盖 SEARCH_COMPLETE / B_EVAL_EXHAUSTED / dedup / build-reject / eval-fail / attribution；
 > evidence+crash/resume 测试（2 绿）证明同 seed resume → 同 lineage。
-> 注：pilot 用 deterministic stub capabilities 证明 loop 端到端；real-model-driven pilot（proposer + Harbor
-> per trial）是 Gate 7 formal run 路径。成本预测误差项需 real-model pilot 数据（Gate 7）。
+> 原运行用 stub capabilities 与 `Math.random`，不是 deterministic evidence，也不是 Gate 6。
+> 原 `pilot-001` 已标记 `QUARANTINED_NOT_ACCEPTED`；当前 `scripts/run-pilot.ts` 只向
+> `evidence/fixtures/pilot-loop/` 写确定性 fixture。新增 verifier 要求
+> real proposer/builder/Harbor、完整 identities、真实 crash、raw refs、audit 与 ±20% cost error。
 
 ## Phase 7 — 正式 80-candidate evolution（Gate 7，runtime ≤16h + audit）
 

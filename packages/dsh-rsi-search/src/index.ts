@@ -37,6 +37,12 @@ export {
   type TaskStratum,
 } from './calibration.js'
 export {
+  verifyGate5Acceptance,
+  type Gate5TrialEvidence,
+  type Gate5AcceptanceInput,
+  type Gate5AcceptanceVerdict,
+} from './acceptance.js'
+export {
   buildBudgetModel,
   DEFAULT_TARGETS,
   type CalibrationSample,

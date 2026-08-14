@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "status": "QUARANTINED_NOT_ACCEPTED",
+  "supersedesClaimOnly": true,
+  "artifactsPreserved": true,
+  "reasons": [
+    "Only 3 nop Harbor trials exist; the required 60 development tasks x at least 2 real baseline attempts are absent.",
+    "No 3-candidate real proposer/builder/Harbor task-strata calibration exists.",
+    "Recorded costUsd=0 is pipeline overhead from nop trials, not priced model usage.",
+    "The split seed was a public source constant, so that split cannot serve as a concealed formal assignment."
+  ],
+  "claimBoundary": [
+    "ENGINEERING_EVIDENCE_ONLY",
+    "CALIBRATION_FEASIBILITY_NOT_ACCEPTED",
+    "FORMAL_SEARCH_NOT_STARTED",
+    "SEALED_NOT_ACCESSED"
+  ]
+}

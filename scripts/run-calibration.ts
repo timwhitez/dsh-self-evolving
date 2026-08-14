@@ -1,20 +1,18 @@
 #!/usr/bin/env tsx
 /**
- * Gate 5 calibration runner (spec 07 §7).
+ * Non-acceptance Harbor pipeline-overhead fixture.
  *
- * Runs the baseline candidate on a representative task stratum sample of the
- * TB 2.1 dev set, via Harbor + the real deepseek-v4-flash model, and measures
- * per-trial cost + wall-time. Then builds the budget model → FEASIBLE or
- * CALIBRATION_INFEASIBLE verdict.
+ * Runs Harbor's nop agent on a small public sample to measure local pipeline
+ * overhead. It does not run the baseline candidate or any model and therefore
+ * can never satisfy Gate 5 acceptance or support a formal budget verdict.
  *
- * This is a PAID run. It is scoped to a small calibration sample (not the full
- * 60-task dev set) to measure cost/wall cheaply, then extrapolates. It never
- * touches sealed tasks.
+ * It never touches sealed tasks. The public split seed below is fixture-only
+ * and must not be reused for a concealed formal split.
  *
  * Outputs:
- *   evidence/calibration/calibration-samples.jsonl   (per-trial measurements)
- *   evidence/calibration/budget-model.json           (frozen budget + verdict)
- *   evidence/calibration/split-commitment.json       (the 48/12/29 commitment)
+ *   evidence/fixtures/calibration-overhead/calibration-samples.jsonl
+ *   evidence/fixtures/calibration-overhead/budget-model.json
+ *   evidence/fixtures/calibration-overhead/split-commitment.json
  */
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -36,10 +34,11 @@ const repoRoot = resolve(here, '..')
 const harborDir = join(repoRoot, 'deepseek-harness', '..', 'harbor')
 const harborBin = join(harborDir, '.venv', 'bin', 'harbor')
 const tb21Dir = process.env['TB21_DIR'] ?? '/tmp/tb21/terminal-bench-2-1'
-const evidenceDir = join(repoRoot, 'evidence', 'calibration')
+const inventoryDir = join(repoRoot, 'evidence', 'calibration')
+const evidenceDir = join(repoRoot, 'evidence', 'fixtures', 'calibration-overhead')
 
-const API_KEY = process.env['DEEPSEEK_API_KEY'] ?? process.env['RSI_PROVIDER_API_KEY'] ?? ''
 const CALIB_TASK_COUNT = Number(process.env['CALIB_TASK_COUNT'] ?? '3')
+// Public and reproducible by design: this is not a formal concealed split.
 const MASTER_SEED = 0x5eed5eedn
 
 function sh(
@@ -55,7 +54,7 @@ function sh(
 }
 
 async function loadInventory(): Promise<TaskMeta[]> {
-  const raw = JSON.parse(await readFile(join(evidenceDir, 'tb21-inventory.json'), 'utf8'))
+  const raw = JSON.parse(await readFile(join(inventoryDir, 'tb21-inventory.json'), 'utf8'))
   return raw.tasks as TaskMeta[]
 }
 
@@ -63,13 +62,7 @@ async function runOneTrial(
   taskDir: string,
   taskMeta: TaskMeta,
 ): Promise<{ reward: 0 | 1; wallSec: number; costUsd: number; trialDir: string | null }> {
-  // Build a Harbor job config for the oracle agent on this one task (the oracle
-  // runs the reference solution — for calibration we want the BASELINE candidate,
-  // but to measure pure provider cost/wall we use the nop agent + the model.
-  // For a faithful calibration we use the real model via the ACP agent path;
-  // here we use the nop+oracle to measure the Harbor pipeline overhead + the
-  // task's verifier cost, which is the per-trial wall. Model cost is measured
-  // separately via the proposer E2E.
+  // Nop + verifier measures only the Harbor pipeline floor.
   const scratch = await mkdtemp(join(tmpdir(), 'calib-trial-'))
   const jobsDir = join(scratch, 'jobs')
   const cfg = {
@@ -137,15 +130,23 @@ async function runOneTrial(
 }
 
 async function main(): Promise<void> {
-  if (!API_KEY) {
-    console.error('CALIBRATION: no API key (DEEPSEEK_API_KEY); cannot run. Aborting.')
-    process.exit(1)
-  }
   await mkdir(evidenceDir, { recursive: true })
+  await writeFile(
+    join(evidenceDir, 'STATUS.json'),
+    JSON.stringify(
+      {
+        status: 'NON_ACCEPTANCE_FIXTURE',
+        capabilityMode: 'harbor-nop-pipeline-overhead',
+        gate5Eligible: false,
+      },
+      null,
+      2,
+    ) + '\n',
+  )
   const tasks = await loadInventory()
   console.log(`Loaded ${tasks.length} TB 2.1 tasks.`)
 
-  // 1. Deterministic 48/12/29 split commitment (sealed assignment concealed).
+  // 1. Deterministic fixture partition. The public seed conceals nothing.
   const assignment = deterministicSplit(tasks, MASTER_SEED)
   const seedCommitment = 'sha256:' + createHash('sha256').update(String(MASTER_SEED)).digest('hex')
   const commitment = commitSplit(assignment, seedCommitment)
@@ -186,9 +187,7 @@ async function main(): Promise<void> {
     samples.map((s) => JSON.stringify(s)).join('\n') + '\n',
   )
 
-  // 4. Add a representative model-cost estimate from the proposer E2E (~27s, ~$0.001/turn for v4-flash).
-  // The proposer E2E measured ~27s wall for one proposal turn; a dev trial is
-  // ~1-3 model turns. Use a conservative $0.002/trial model cost floor.
+  // 4. Add a synthetic model-cost assumption solely to exercise model code.
   const MODEL_COST_PER_TRIAL = 0.002
   for (const s of samples) s.costUsd += MODEL_COST_PER_TRIAL
 
@@ -196,8 +195,8 @@ async function main(): Promise<void> {
   const budget = buildBudgetModel(samples, { K: 80, k_sealed: 1, concurrency: 4 })
   await writeFile(join(evidenceDir, 'budget-model.json'), JSON.stringify(budget, null, 2) + '\n')
 
-  console.log('\n===== CALIBRATION VERDICT =====')
-  console.log(`feasible: ${budget.feasible}`)
+  console.log('\n===== NON-ACCEPTANCE FIXTURE RESULT =====')
+  console.log(`model-only feasible field: ${budget.feasible}`)
   console.log(
     `predicted p90 cost: $${budget.predictedP90CostUsd.toFixed(2)} (target $${DEFAULT.maxCostUsd})`,
   )
@@ -208,9 +207,9 @@ async function main(): Promise<void> {
     `B_eval=${budget.B_eval} B_prop=$${budget.B_prop_usd} k_sealed=${budget.k_sealed} concurrency=${budget.concurrency} reserve=${budget.reserveFraction}`,
   )
   if (!budget.feasible) {
-    console.log(`CALIBRATION_INFEASIBLE: ${budget.reason}`)
+    console.log(`FIXTURE_MODEL_INFEASIBLE: ${budget.reason}`)
   } else {
-    console.log('CALIBRATION_FEASIBLE: budget frozen.')
+    console.log('FIXTURE_MODEL_FEASIBLE: not a Gate 5 verdict.')
   }
 }
 

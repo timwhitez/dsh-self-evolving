@@ -36,6 +36,14 @@ Unix gateway 生成 1 个 admitted child；sandbox 仍无 IP network、无 crede
 验收项是把 trusted handler 换成真实 provider adapter 后复验同一拓扑。当前无 credential，故仍不
 宣称 Gate 4 accepted。
 
+## Gate 5/6 历史证据隔离
+
+现有 calibration 只有 3 个 `nop` Harbor trial，不是 60 tasks × ≥2 attempts 的 real baseline，
+也没有 real 3-candidate × task-strata；现有 `pilot-001` 使用 stub capabilities 与 `Math.random`，
+不是正式路径。两组原 artifact 均保留，并通过各自 `STATUS.json` 标记
+`QUARANTINED_NOT_ACCEPTED`。新增 Gate 5/6 fail-closed verifier；完整审计见
+[`docs/audits/2026-08-14-gate5-gate6-evidence-audit.md`](docs/audits/2026-08-14-gate5-gate6-evidence-audit.md)。
+
 ## Gate 2 successor（已验收）
 
 真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP
@@ -281,24 +289,24 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
   48/12/29 Merkle 承诺 + tamper 检测、sealed info-flow abort、candidate lock 拒绝、
   bootstrap CI 提升/平局/确定性。
 
-### Gate 5 付费校准（已执行，artifact-backed）
+### Gate 5 历史 pipeline fixture（已隔离，不是验收）
 
 - **TB 2.1 task inventory**（`evidence/calibration/tb21-inventory.json`）：89 task，
   difficulty 4 easy/55 medium/30 hard、16 category。
-- **deterministic split commitment**（`evidence/calibration/split-commitment.json`）：
+- **可公开重放的 fixture split**（`evidence/calibration/split-commitment.json`）：
   48/12/29 size 校验通过、Merkle root `sha256:6ce0972a…`、seed commitment 记录；
-  sealed assignment 未离开 sealed service。
+  但 seed 已公开，不能证明 sealed assignment 隔离。
 - **calibration pilot**（`evidence/calibration/calibration-samples.jsonl`）：3 个 dev task
   经真实 Harbor job（docker build → verifier）测量 wall = 31.1s / 41.8s / 76.9s。
-- **budget model**（`evidence/calibration/budget-model.json`）：**CALIBRATION_FEASIBLE**。
+- **历史 budget 输出**（`evidence/calibration/budget-model.json`）：记录为 `CALIBRATION_FEASIBLE`，
+  但当前权威状态是 `QUARANTINED_NOT_ACCEPTED`。
   predicted p90 cost = **$41.96**（target $500），predicted p90 wall = **2.38h**（target 16h）。
   frozen: `B_eval=760, B_prop=$40, k_sealed=1, concurrency=4, reserve=20%`。
-  注：pilot 用 nop agent 测 Harbor pipeline 成本下界（reward=0 预期）；model cost 按 proposer
-  E2E（~27s/turn）保守估计 $0.002/trial 加入。budget 远低于限制 → feasible。
-- calibration-evidence test（4 绿）验证 split commitment 良构、samples 非空、budget verdict
-  自洽、rebuild 复现 verdict。
+  注：fixture 用 nop agent 测 Harbor pipeline 成本下界；model cost 是人工假设，不能据此判定
+  real baseline/model 路径 feasible。
+- calibration-evidence test（4 绿）只验证历史 bytes 自洽，不是 Gate 5 acceptance。
 
-## 已完成 — Gate 6（10-candidate development-only pilot）
+## Gate 6 历史 loop fixture（已隔离，不是 pilot 验收）
 
 ### Pilot search loop（`packages/dsh-rsi-pilot/`）
 
@@ -307,7 +315,7 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
   cold-start enforcement、**dedup-by-digest（duplicate edge，不新建 candidate）**、build-reject/eval-fail
   记账、B_eval exhaustion、K-admitted 终止；iteration cap liveness guard。crash/resume via journal。
 
-### Gate 6 pilot 证据
+### 非验收 fixture 证据
 
 - **pilot 跑通 terminal state**（`evidence/pilot/pilot-result.json`）：`K=10, B_eval=40`，
   **SEARCH_COMPLETE: 10 admitted**，39 observations，0 dedup/reject/fail，wall <1s。

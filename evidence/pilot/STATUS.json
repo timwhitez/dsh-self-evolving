@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "status": "QUARANTINED_NOT_ACCEPTED",
+  "supersedesClaimOnly": true,
+  "artifactsPreserved": true,
+  "reasons": [
+    "Pilot capabilities were synthetic stubs rather than the frozen proposer, builder, and Harbor provider path.",
+    "Rewards used Math.random and have no normalized Harbor trajectory or cost receipts.",
+    "No real process crash/reconcile receipt, raw historical evidence reference audit, or cost prediction error audit exists."
+  ],
+  "claimBoundary": [
+    "LOOP_FIXTURE_ONLY",
+    "GATE_6_NOT_ACCEPTED",
+    "FORMAL_SEARCH_NOT_STARTED",
+    "SEALED_NOT_ACCESSED"
+  ]
+}

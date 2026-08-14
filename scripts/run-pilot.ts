@@ -1,14 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Gate 6 pilot run (spec 07 §8).
+ * Non-acceptance pilot-loop fixture.
  *
- * Drives the pilot search loop with REAL capabilities (model proposer + trusted
- * builder + Harbor evaluator) to admit K candidates on the dev set, dev-only.
- * This is the paid pilot. Scoped to a small K and few evals per candidate to
- * fit a single run; the loop logic is identical to the formal search.
+ * Exercises the pilot state machine with deterministic stub capabilities. It
+ * does not call a model, build a runnable capsule, or invoke Harbor, so its
+ * output can never satisfy Gate 6 acceptance.
  *
- * Outputs evidence/pilot/pilot-result.json with admitted candidates, observations,
- * dedup/build-reject/eval-fail counts, and the terminal reason.
+ * Outputs evidence/fixtures/pilot-loop/pilot-result.json. Formal Gate 6 evidence
+ * belongs under evidence/pilot and must pass verifyGate6Acceptance.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -27,7 +26,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
-const evidenceDir = join(repoRoot, 'evidence', 'pilot')
+const evidenceDir = join(repoRoot, 'evidence', 'fixtures', 'pilot-loop')
 const baselineRoot = join(repoRoot, 'packages', 'candidate-baseline')
 
 const K = Number(process.env['PILOT_K'] ?? '3')
@@ -50,10 +49,8 @@ async function main(): Promise<void> {
     .map((a) => a.taskId)
     .slice(0, 6)
 
-  // STUB capabilities that exercise the loop with deterministic synthetic
-  // proposals/evals. A full real-model pilot (proposer + Harbor per trial) is
-  // the formal-run path; this proves the pilot loop runs end-to-end to terminal
-  // state with real proposal/build shapes and dedup/reject accounting.
+  // Stub capabilities exercise loop mechanics only. They deliberately cannot
+  // produce an acceptance envelope.
   let propId = 0
   const caps: PilotCapabilities = {
     async propose(_parentDigest: string, _parentSource: string): Promise<ProposedChild[]> {
@@ -74,9 +71,11 @@ async function main(): Promise<void> {
       const digest = 'sha256:' + createHash('sha256').update(child.sourceDiff).digest('hex')
       return { candidateId: digest, digest }
     },
-    async evaluate(_candidateId: string, _taskId: string, _attempt: number) {
-      // Synthetic reward: 60% pass, measured cost/wall from calibration.
-      const reward = (Math.random() < 0.6 ? 1 : 0) as 0 | 1
+    async evaluate(candidateId: string, taskId: string, attempt: number) {
+      const sample = createHash('sha256')
+        .update(`${candidateId}\0${taskId}\0${attempt}`)
+        .digest()[0]!
+      const reward = (sample < 153 ? 1 : 0) as 0 | 1
       return { reward, costUsd: 0.002, wallSec: 50 }
     },
   }
@@ -99,7 +98,9 @@ async function main(): Promise<void> {
   const wallSec = (Date.now() - start) / 1000
 
   const result = {
-    runId: 'pilot-001',
+    runId: 'fixture-pilot-loop-001',
+    status: 'NON_ACCEPTANCE_FIXTURE',
+    capabilityMode: 'stub-fixture',
     K,
     B_eval: B_EVAL,
     admittedCount: state.admittedCount,
