@@ -5,7 +5,8 @@
  * policy switches after manifest freeze. The RNG streams are deterministic so
  * resume does not re-sample.
  */
-import { RngStream, sampleBeta } from './rng.js'
+import { sampleBeta } from './rng.js'
+import type { RngStream } from './rng.js'
 
 /** A candidate node's utility counts (spec 03 §4). */
 export interface NodeUtility {
