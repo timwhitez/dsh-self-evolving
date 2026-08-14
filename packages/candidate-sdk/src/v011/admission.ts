@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { buildCandidate, type BuildArtifactFile, type BuildReceipt } from '../builder-sandbox.js'
 import { packCapsule, type CapsuleOutput, type RuntimeClosureInput } from '../capsule.js'
@@ -112,6 +112,10 @@ async function runCandidateTests(
     .filter((file) => file.path.startsWith('tests/') && file.path.endsWith('.spec.ts'))
     .map((file) => `/work/${file.path}`)
   if (tests.length === 0) throw new Error('v0.1.1 admission: candidate has no tests')
+  const dshRoot = join(resolve(toolchainRoot), 'deepseek-harness')
+  const standardSchema = await realpath(
+    join(dshRoot, 'vendor', 'schemastery', 'node_modules', '@standard-schema', 'spec'),
+  )
   const args = [
     '--die-with-parent',
     '--new-session',
@@ -148,6 +152,27 @@ async function runCandidateTests(
     '--ro-bind',
     resolve(sourceRoot),
     '/work',
+    '--dir',
+    '/node_modules',
+    '--dir',
+    '/node_modules/@deepseek-ai',
+    '--dir',
+    '/node_modules/@standard-schema',
+    '--ro-bind',
+    join(dshRoot, 'vendor', 'cordis'),
+    '/node_modules/@deepseek-ai/cordis',
+    '--ro-bind',
+    join(dshRoot, 'vendor', 'schemastery'),
+    '/node_modules/@deepseek-ai/schemastery',
+    '--ro-bind',
+    join(dshRoot, 'vendor', 'cosmokit'),
+    '/node_modules/@deepseek-ai/cosmokit',
+    '--ro-bind',
+    join(dshRoot, 'packages', 'core', 'system-prompt'),
+    '/node_modules/@deepseek-ai/dsh-system-prompt',
+    '--ro-bind',
+    standardSchema,
+    '/node_modules/@standard-schema/spec',
     '--dir',
     '/toolchain',
     '--ro-bind',

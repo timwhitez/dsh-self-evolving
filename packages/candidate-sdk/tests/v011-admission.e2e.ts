@@ -61,9 +61,11 @@ async function childFixture(failingTest = false): Promise<string> {
     join(child, 'tests', 'retry.spec.ts'),
     [
       "import { describe, expect, it } from 'vitest'",
+      "import { Config as RootConfig } from '../src/index.js'",
       "import { boundedRetryLimit } from '../src/retry/bounded-retry.js'",
       "describe('bounded retry', () => {",
       `  it('is exactly one', () => expect(boundedRetryLimit).toBe(${failingTest ? 2 : 1}))`,
+      "  it('loads the candidate root with its runtime schema dependency', () => expect(RootConfig).toBeDefined())",
       '})',
       '',
     ].join('\n'),

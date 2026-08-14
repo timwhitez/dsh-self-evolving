@@ -35,7 +35,7 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     'Use write_file/remove_file only inside the preassigned child tree.',
     'Create at least one new production module under src/** and update src/index.ts to use it.',
     'The new module must be a namespace-form Cordis component (name/inject/apply, no default export) mounted from the candidate root with ctx.plugin().',
-    'Import that namespace-form module with `import * as componentName`; do not invent a named wrapper export.',
+    'Import that namespace-form module with `import * as componentName` and a relative `.js` specifier; do not invent a named wrapper export or omit the NodeNext extension.',
     'Write candidate-owned mechanism and preservation tests under tests/**/*.spec.ts.',
     'Write the slot metadata files with write_file paths analysis.json and proposal.json.',
     'Citations must resolve to exact exported object digests and JSON Pointer or JSONL line spans.',
