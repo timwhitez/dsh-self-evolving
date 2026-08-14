@@ -21,7 +21,8 @@
   "dependencies": {
     "@dsh-rsi/candidate-baseline": "workspace:*",
     "@dsh-rsi/candidate-sdk": "workspace:*",
-    "@dsh-rsi/core": "workspace:*"
+    "@dsh-rsi/core": "workspace:*",
+    "typescript": "^5.7.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
@@ -37,7 +38,6 @@
     "@deepseek-ai/dsh-session": "link:../../deepseek-harness/packages/core/session",
     "@deepseek-ai/dsh-tools": "link:../../deepseek-harness/packages/core/tools",
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
 }

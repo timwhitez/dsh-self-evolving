@@ -3,6 +3,13 @@ import { dirname, join, posix, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import {
+  DiagnosticCategory,
+  ModuleKind,
+  ScriptTarget,
+  flattenDiagnosticMessageText,
+  transpileModule,
+} from 'typescript'
+import {
   assertV011,
   snapshotV011Tree,
   type FrozenCapabilityCatalog,
@@ -99,6 +106,45 @@ function safeRelative(path: string): string {
     throw new Error(`v0.1.1 tool: unsafe relative path ${JSON.stringify(path)}`)
   }
   return path
+}
+
+export async function validateV011TypeScriptSyntax(
+  root: string,
+  relativePaths: string[],
+): Promise<void> {
+  const failures: string[] = []
+  for (const relative of relativePaths.filter((path) => path.endsWith('.ts')).sort()) {
+    const source = await readFile(join(root, relative), 'utf8')
+    const result = transpileModule(source, {
+      fileName: relative,
+      reportDiagnostics: true,
+      compilerOptions: {
+        module: ModuleKind.NodeNext,
+        target: ScriptTarget.ES2022,
+      },
+    })
+    for (const diagnostic of result.diagnostics ?? []) {
+      if (diagnostic.category !== DiagnosticCategory.Error) continue
+      const position =
+        diagnostic.start === undefined
+          ? ''
+          : (() => {
+              const { line, character } = diagnostic.file?.getLineAndCharacterOfPosition(
+                diagnostic.start,
+              ) ?? {
+                line: 0,
+                character: diagnostic.start,
+              }
+              return `:${line + 1}:${character + 1}`
+            })()
+      failures.push(
+        `${relative}${position} ${flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`,
+      )
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`v0.1.1 tool: TypeScript syntax preflight failed:\n${failures.join('\n')}`)
+  }
 }
 
 function inside(root: string, relative: string): string {
@@ -284,10 +330,15 @@ export function installV011Tools(
   ctx.tools.register(
     defineContentToolFixture({
       name: 'validate_child',
-      description: 'Run containment and successor-schema checks on the current child tree.',
+      description:
+        'Run containment, TypeScript syntax, and successor-schema checks on the current child tree.',
       parameters: {},
       execute: controlled(async () => {
         const snapshot = await snapshotV011Tree(roots.childTree)
+        await validateV011TypeScriptSyntax(
+          roots.childTree,
+          snapshot.files.map((file) => file.path),
+        )
         const candidate = JSON.parse(
           await readFile(join(roots.childTree, 'candidate.json'), 'utf8'),
         ) as unknown

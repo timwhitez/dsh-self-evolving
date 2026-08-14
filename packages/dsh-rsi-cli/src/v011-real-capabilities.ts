@@ -631,7 +631,6 @@ async function realV011Proposal(
         }) + '\n',
       )
     }
-    throw new Error('v0.1.1 deterministic rejection fixture: undeclared output')
   }
   const exported = await exportForProposal(config, input.generation, input.attempt)
   const requiredParentEvidence = await exactParentEvidenceBinding(config, input, exported.manifest)
