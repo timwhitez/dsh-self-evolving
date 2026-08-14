@@ -171,6 +171,24 @@ describe('stable-demo engine', () => {
     expect(counters.builds).toBe(4)
   })
 
+  it('records an invalid proposal and continues with the next bounded attempt', async () => {
+    const { config, counters, capabilities } = await fixture()
+    const originalPropose = capabilities.propose
+    let rejected = false
+    capabilities.propose = async (input) => {
+      if (!rejected) {
+        rejected = true
+        counters.proposals += 1
+        throw new Error('fixture protocol reject')
+      }
+      return originalPropose(input)
+    }
+    const result = await runStableDemo(config, capabilities)
+    expect(result.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(counters.proposals).toBe(4)
+    expect(counters.builds).toBe(3)
+  })
+
   it('fails before any external effect when preflight is not ready', async () => {
     const { config, counters, capabilities } = await fixture()
     capabilities.preflight = async () => ({

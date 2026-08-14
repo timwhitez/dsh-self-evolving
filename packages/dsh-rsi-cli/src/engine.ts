@@ -323,20 +323,33 @@ export async function runStableDemo(
             events = await readAll(service.journal)
             let proposal = eventPayload<StableProposal>(events, proposalEventId)
             if (proposal === undefined) {
-              proposal = await caps.propose({
-                generation,
-                attempt,
-                parent,
-                evidenceRefs,
-                idempotencyKey: `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`,
-              })
-              if (
-                proposal.parentCandidateId !== parent.candidateId ||
-                proposal.evidenceRefs.length === 0
-              ) {
-                throw new Error('stable engine: proposer did not bind parent and raw evidence')
+              const proposalRejectionId = `proposal:${generation}:${attempt}:rejected`
+              if (eventPayload(events, proposalRejectionId) !== undefined) continue
+              try {
+                proposal = await caps.propose({
+                  generation,
+                  attempt,
+                  parent,
+                  evidenceRefs,
+                  idempotencyKey: `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`,
+                })
+                if (
+                  proposal.parentCandidateId !== parent.candidateId ||
+                  proposal.evidenceRefs.length === 0
+                ) {
+                  throw new Error('proposer did not bind parent and raw evidence')
+                }
+                await recordOnce(service, proposalEventId, 'proposal.completed', proposal)
+              } catch (error) {
+                const message =
+                  error instanceof Error ? error.message : 'unknown proposal rejection'
+                await recordOnce(service, proposalRejectionId, 'proposal.rejected', {
+                  generation,
+                  attempt,
+                  errorDigest: `sha256:${createHash('sha256').update(message).digest('hex')}`,
+                })
+                continue
               }
-              await recordOnce(service, proposalEventId, 'proposal.completed', proposal)
             }
             const buildEventId = `build:${generation}:${attempt}:completed`
             events = await readAll(service.journal)
