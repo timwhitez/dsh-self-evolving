@@ -1,7 +1,20 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTANCE_FAILED`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTANCE_FAILED`**
 **更新时间：2026-08-14（Asia/Tokyo）**
+
+## Gate 2 successor（已验收）
+
+真实 baseline candidate 已被打包为带 root launcher、bundled Node 和确定性 SHA-256 的 ACP
+binary archive，并经本地 immutable HTTPS endpoint 交给 Harbor generic ACP agent。Harbor 完成
+initialize/prompt/verifier，生成原生 `agent/trajectory.json`、`acp-events.jsonl`、
+`acp-summary.json`；normalizer 强制消费三者并得到可复现、可归因的 `reward=0` 有效失败。
+这证明执行链路，不构成策略或 benchmark capability 通过。
+
+完整证据见
+[`docs/audits/2026-08-14-gate2-successor.md`](docs/audits/2026-08-14-gate2-successor.md)。
+当前最早失败门推进为 Gate 3：controller 尚非 DSH bundle/`ctx.rsi` service，已有 crash 测试
+仍是内存级边界模拟，且 journal lock 的检查与创建不是原子的。
 
 ## Gate 1 successor（已验收）
 
@@ -31,7 +44,8 @@ initialize/session/prompt。验收同时在独立 network namespace 与 fresh `F
 ```text
 GATE_0_ACCEPTED
 GATE_1_ACCEPTED
-GATE_2_ACCEPTANCE_FAILED
+GATE_2_ACCEPTED
+GATE_3_ACCEPTANCE_FAILED
 FORMAL_SEARCH_NOT_STARTED
 SEALED_NOT_ACCESSED
 NO_PERFORMANCE_CLAIM

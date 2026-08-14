@@ -1,7 +1,7 @@
 # Gate 1 successor acceptance — 2026-08-14
 
 **Predecessor audit:** `docs/audits/2026-08-14-gate-acceptance-audit.md`  
-**Status:** `GATE_1_ACCEPTED`; Gate 2 remains the earliest failed gate  
+**Status at acceptance:** `GATE_1_ACCEPTED`; later superseded by the Gate 2 successor
 **Sealed access:** none
 
 ## Successor changes
@@ -10,6 +10,8 @@
   closure under `runtime/node_modules` plus `runtime/package-closure.json`.
 - Added an immutable `runtime/bin/dsh-rsi-acp` entry and mirrored runner configuration inside
   the closure; no source-checkout resolution is needed at runtime.
+- Added a root-level launcher and bundled Node runtime so Harbor's binary installer does not rely
+  on Node being present in the task image.
 - Generated a content-bound SPDX 2.3 package inventory from the actual closure rather than
   trusting caller-provided placeholder JSON.
 - Removed the `SHA256SUMS` self-reference/capsule-manifest cycle. Data files are covered by
@@ -33,8 +35,8 @@ The current successor passed:
 - provenance, upstream-clean, AGENTS/CLAUDE byte equality, and UTF-8 replacement-character
   guards.
 
-The Harbor script-agent smoke is still Gate 2 engineering evidence only. It does not satisfy the
-Gate 2 requirement that the packed DSH candidate run through Harbor's ACP client.
+The Harbor script-agent smoke was Gate 2 engineering evidence only. Gate 2 was later closed by
+`docs/audits/2026-08-14-gate2-successor.md` using a real packed candidate and Harbor ACP client.
 
 ## Current claim boundary
 

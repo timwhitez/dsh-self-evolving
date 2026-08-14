@@ -158,6 +158,26 @@ describe('normalizer — nop/broken/golden fixtures', () => {
     expect(rec.trajectoryHash).not.toBeNull()
   })
 
+  it('accepts Harbor ACP evidence under agent/ only when trajectory, events, and summary exist', async () => {
+    const dir = await makeTrial('harbor-acp-layout', {
+      'result.json': harborResult(0.0),
+      'attribution.json': attribution(),
+      'agent/trajectory.json': JSON.stringify({ schema_version: 'ATIF-v1.5', steps: [] }),
+      'agent/acp-events.jsonl': '{"direction":"agent_to_client"}\n',
+      'agent/acp-summary.json': JSON.stringify({ agent_info: { name: 'deepseek-harness-acp' } }),
+    })
+    const rec = await normalizeTrial({
+      trialDir: dir,
+      expectedCandidateId: CANDIDATE,
+      taskId: 'smoke',
+      requireAcpEvidence: true,
+    })
+    expect(rec.status).toBe('fail')
+    expect(rec.trajectoryHash).not.toBeNull()
+    expect(rec.acpEventsHash).not.toBeNull()
+    expect(rec.acpSummaryHash).not.toBeNull()
+  })
+
   it('infra-classified exception is retry-eligible (reward-independent)', async () => {
     const dir = await makeTrial('infra-oom', {
       'result.json': harborResult(0.0, { type: 'EnvironmentError', classification: 'oom-crash' }),

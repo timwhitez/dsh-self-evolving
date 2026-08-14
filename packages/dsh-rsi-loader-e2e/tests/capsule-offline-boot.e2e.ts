@@ -126,7 +126,9 @@ async function copyAbsoluteFile(source: string, rootfs: string): Promise<void> {
 }
 
 async function materializeScratchNodeRootfs(rootfs: string, capsuleDir: string): Promise<void> {
-  await copyAbsoluteFile(process.execPath, rootfs)
+  // The capsule owns Node; the scratch rootfs supplies only the POSIX launcher
+  // shell and the dynamic libraries that any Linux process requires.
+  await copyAbsoluteFile('/bin/sh', rootfs)
   const nativeModules: string[] = []
   async function findNative(dir: string): Promise<void> {
     for (const entry of await import('node:fs/promises').then((fs) =>
@@ -138,7 +140,7 @@ async function materializeScratchNodeRootfs(rootfs: string, capsuleDir: string):
     }
   }
   await findNative(join(capsuleDir, 'runtime'))
-  const binaries = [process.execPath, ...nativeModules]
+  const binaries = [join(capsuleDir, 'runtime', 'node'), '/bin/sh', ...nativeModules]
   const libraries = new Set<string>()
   for (const binary of binaries) {
     const output = await execFileResult('/usr/bin/ldd', [binary])
@@ -198,6 +200,8 @@ describe('Gate 1 — packed capsule offline boot', () => {
       // INSTALL.md promise that resolves packages from the source checkout.
       await expect(stat(join(capsuleDir, 'runtime', 'package-closure.json'))).resolves.toBeDefined()
       await expect(stat(join(capsuleDir, 'runtime', 'bin', 'dsh-rsi-acp'))).resolves.toBeDefined()
+      await expect(stat(join(capsuleDir, 'runtime', 'dsh-rsi-acp'))).resolves.toBeDefined()
+      await expect(stat(join(capsuleDir, 'runtime', 'node'))).resolves.toBeDefined()
       await expect(stat(join(capsuleDir, 'runtime', 'INSTALL.md'))).rejects.toMatchObject({
         code: 'ENOENT',
       })
@@ -362,7 +366,7 @@ describe('Gate 1 — packed capsule offline boot', () => {
 
       const isolatedCwd = join(scratch!, 'acp-workspace')
       await mkdir(isolatedCwd)
-      const capsuleBin = join(capsuleDir, 'runtime', 'bin', 'dsh-rsi-acp')
+      const capsuleBin = join(capsuleDir, 'runtime', 'dsh-rsi-acp')
       child = spawn('/usr/bin/unshare', ['-n', '--', capsuleBin], {
         cwd: isolatedCwd,
         env: {
@@ -471,7 +475,7 @@ describe('Gate 1 — packed capsule offline boot', () => {
           'COPY rootfs /',
           'COPY capsule /capsule',
           'WORKDIR /work',
-          'ENTRYPOINT ["/usr/bin/node", "/capsule/runtime/bin/dsh-rsi-acp"]',
+          'ENTRYPOINT ["/capsule/runtime/dsh-rsi-acp"]',
           '',
         ].join('\n'),
       )

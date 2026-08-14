@@ -36,3 +36,4 @@ export {
   type IdempotencyRecord,
 } from './idempotency.js'
 export { reconcileCost, type ReconciledCost, type HarborUsage } from './reconcile.js'
+export { packAcpBinaryArchive, type PackedAcpBinaryArchive } from './artifact.js'

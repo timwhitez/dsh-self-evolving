@@ -421,6 +421,16 @@ async function materializeRuntimeClosure(input: {
     version: '0.0.0',
     contentHash: await hashDirectory(runtimeCandidate),
   })
+  const bundledNode = join(runtimeDir, 'node')
+  await copyFile(process.execPath, bundledNode)
+  await chmod(bundledNode, 0o755)
+  packages.push({
+    name: 'node-runtime',
+    version: process.version,
+    contentHash: createHash('sha256')
+      .update(await readFile(bundledNode))
+      .digest('hex'),
+  })
   packages.sort((a, b) => a.name.localeCompare(b.name))
 
   const closureRecord = {
@@ -450,19 +460,43 @@ async function materializeRuntimeClosure(input: {
   }
   const binDir = join(runtimeDir, 'bin')
   await mkdir(binDir, { recursive: true })
-  const wrapper = join(binDir, 'dsh-rsi-acp')
-  const wrapperSource = [
-    '#!/usr/bin/env node',
-    "import { dirname, join } from 'node:path'",
-    "import { fileURLToPath, pathToFileURL } from 'node:url'",
-    'const runtime = join(dirname(fileURLToPath(import.meta.url)), "..")',
-    `const entry = join(runtime, ${JSON.stringify(join('node_modules', ...closure.entryPackage.split('/'), closure.entryBin))})`,
-    'process.argv = [process.execPath, entry, "--config", join(runtime, "cordis.yml")]',
-    'await import(pathToFileURL(entry).href)',
-    '',
-  ].join('\n')
-  await writeFile(wrapper, wrapperSource, { mode: 0o755 })
-  await chmod(wrapper, 0o755)
+  await writeFile(
+    join(runtimeDir, 'launcher.mjs'),
+    [
+      "import { dirname, join } from 'node:path'",
+      "import { fileURLToPath, pathToFileURL } from 'node:url'",
+      'const runtime = dirname(fileURLToPath(import.meta.url))',
+      `const entry = join(runtime, ${JSON.stringify(join('node_modules', ...closure.entryPackage.split('/'), closure.entryBin))})`,
+      'process.argv = [process.execPath, entry, "--config", join(runtime, "cordis.yml")]',
+      'await import(pathToFileURL(entry).href)',
+      '',
+    ].join('\n'),
+  )
+  const makeWrapper = (parent: boolean): string =>
+    [
+      '#!/bin/sh',
+      'set -eu',
+      'script_dir=${0%/*}',
+      '[ "$script_dir" != "$0" ] || script_dir=.',
+      'script_dir="$(CDPATH= cd -- "$script_dir" && pwd)"',
+      parent ? 'runtime="$(CDPATH= cd -- "$script_dir/.." && pwd)"' : 'runtime="$script_dir"',
+      'exec "$runtime/node" "$runtime/launcher.mjs" "$@"',
+      '',
+    ].join('\n')
+  const wrappers = [
+    {
+      path: join(binDir, 'dsh-rsi-acp'),
+      parent: true,
+    },
+    {
+      path: join(runtimeDir, 'dsh-rsi-acp'),
+      parent: false,
+    },
+  ]
+  for (const wrapper of wrappers) {
+    await writeFile(wrapper.path, makeWrapper(wrapper.parent), { mode: 0o755 })
+    await chmod(wrapper.path, 0o755)
+  }
   return { packages, closureHash }
 }
 

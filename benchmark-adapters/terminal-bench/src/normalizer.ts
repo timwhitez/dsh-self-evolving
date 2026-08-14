@@ -29,6 +29,8 @@ export interface RawTrialArtifacts {
   expectedCandidateId: string
   /** The task id this trial was planned for. */
   taskId: string
+  /** Require Harbor's real ACP/ATIF evidence set, not a script stand-in. */
+  requireAcpEvidence?: boolean
 }
 
 export interface NormalizedTrial {
@@ -42,6 +44,9 @@ export interface NormalizedTrial {
   reward: number | null
   /** sha256 of the trajectory file, or null when missing (→ invalid). */
   trajectoryHash: string | null
+  /** Hashes of Harbor's raw ACP wire events and summary. */
+  acpEventsHash: string | null
+  acpSummaryHash: string | null
   /** sha256 of the normalized record itself (content-addressed). */
   recordHash: string
   /** True if the trial is retry-eligible per the infra classification. */
@@ -68,6 +73,22 @@ async function readJsonOrNull(path: string): Promise<unknown | null> {
   }
 }
 
+async function firstHash(paths: string[]): Promise<string | null> {
+  for (const path of paths) {
+    const hash = await hashFile(path)
+    if (hash !== null) return hash
+  }
+  return null
+}
+
+async function firstJson(paths: string[]): Promise<unknown | null> {
+  for (const path of paths) {
+    const parsed = await readJsonOrNull(path)
+    if (parsed !== null) return parsed
+  }
+  return null
+}
+
 /**
  * Normalize one trial. The denominator (planned inventory) is fixed by the
  * caller; this function never drops a trial — a missing artifact yields an
@@ -90,11 +111,26 @@ export async function normalizeTrial(raw: RawTrialArtifacts): Promise<Normalized
     candidate_id?: string
     attempt_index?: number
   } | null
-  // Trajectory: prefer trajectory.json, fall back to acp-events.jsonl.
-  let trajectoryHash = await hashFile(join(raw.trialDir, 'trajectory.json'))
-  if (trajectoryHash === null) {
-    trajectoryHash = await hashFile(join(raw.trialDir, 'acp-events.jsonl'))
-  }
+  // Harbor stores installed-agent evidence below trial/agent/. Retain the old
+  // root fallback for imported fixtures, but prefer the real layout.
+  const trajectoryHash = await firstHash([
+    join(raw.trialDir, 'agent', 'trajectory.json'),
+    join(raw.trialDir, 'trajectory.json'),
+    join(raw.trialDir, 'agent', 'acp-events.jsonl'),
+    join(raw.trialDir, 'acp-events.jsonl'),
+  ])
+  const acpEventsHash = await firstHash([
+    join(raw.trialDir, 'agent', 'acp-events.jsonl'),
+    join(raw.trialDir, 'acp-events.jsonl'),
+  ])
+  const acpSummaryHash = await firstHash([
+    join(raw.trialDir, 'agent', 'acp-summary.json'),
+    join(raw.trialDir, 'acp-summary.json'),
+  ])
+  const acpSummary = await firstJson([
+    join(raw.trialDir, 'agent', 'acp-summary.json'),
+    join(raw.trialDir, 'acp-summary.json'),
+  ])
 
   // Candidate attribution: the controller-written sidecar MUST match the plan.
   const recordedCandidateId = attribution?.candidate_id ?? null
@@ -120,6 +156,15 @@ export async function normalizeTrial(raw: RawTrialArtifacts): Promise<Normalized
   } else if (trajectoryHash === null) {
     status = 'invalid'
     reason = 'trajectory missing (no trajectory.json or acp-events.jsonl)'
+  } else if (raw.requireAcpEvidence === true && acpEventsHash === null) {
+    status = 'invalid'
+    reason = 'ACP events missing (no agent/acp-events.jsonl)'
+  } else if (raw.requireAcpEvidence === true && acpSummaryHash === null) {
+    status = 'invalid'
+    reason = 'ACP summary missing (no agent/acp-summary.json)'
+  } else if (raw.requireAcpEvidence === true && acpSummary === null) {
+    status = 'invalid'
+    reason = 'ACP summary is not valid JSON'
   } else {
     status = reward >= 1.0 ? 'pass' : 'fail'
     reason = reward >= 1.0 ? 'reward >= 1.0' : `reward ${reward} < 1.0`
@@ -144,6 +189,8 @@ export async function normalizeTrial(raw: RawTrialArtifacts): Promise<Normalized
     status,
     reward,
     trajectoryHash,
+    acpEventsHash,
+    acpSummaryHash,
     retryEligible,
     infraClass,
     reason,
@@ -158,6 +205,8 @@ export async function normalizeTrial(raw: RawTrialArtifacts): Promise<Normalized
     status,
     reward,
     trajectoryHash,
+    acpEventsHash,
+    acpSummaryHash,
     recordHash,
     retryEligible,
     infraClass,

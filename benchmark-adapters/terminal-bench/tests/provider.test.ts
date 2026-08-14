@@ -1,7 +1,7 @@
 /**
  * Adapter unit tests: registry entry, job config, idempotency.
  */
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -12,11 +12,30 @@ import {
   idempotencyKey,
   reserveKey,
   isReserved,
+  packAcpBinaryArchive,
 } from '../src/index.js'
 
 const sha = 'a'.repeat(64)
 
 describe('ACP registry entry', () => {
+  it('packs a deterministic tar.gz whose root contains the Harbor launcher', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-rsi-acp-archive-'))
+    try {
+      const runtime = join(dir, 'runtime')
+      await mkdir(join(runtime, 'node_modules'), { recursive: true })
+      await writeFile(join(runtime, 'dsh-rsi-acp'), '#!/usr/bin/env node\n')
+      await chmod(join(runtime, 'dsh-rsi-acp'), 0o755)
+      await writeFile(join(runtime, 'package-closure.json'), '{}\n')
+      const first = await packAcpBinaryArchive(runtime, join(dir, 'first.tar.gz'))
+      const second = await packAcpBinaryArchive(runtime, join(dir, 'second.tar.gz'))
+      expect(first.sha256).toBe(second.sha256)
+      expect(await readFile(first.archivePath)).toEqual(await readFile(second.archivePath))
+      expect((await readFile(first.archivePath)).subarray(0, 2).toString('hex')).toBe('1f8b')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('builds a linux-x86_64 entry with HTTPS + sha256 checksum', () => {
     const entry = buildRegistryEntry({
       candidateId: 'c_abc123',

@@ -61,6 +61,11 @@
 > reward）三 fixture 通过 TS adapter normalizer（`harbor-smoke.e2e.ts`，golden→1.0 PASS、nop→0.0 FAIL、
 > broken→0.0 FAIL，3 绿）；adapter 单元 22 绿。注：smoke 用脚本解（oracle/nop agent）而非付费模型，
 > 验证 verifier pipeline 与 normalizer，未声称 benchmark capability。
+>
+> **successor 验收（2026-08-14）**：packed baseline capsule（含 root ACP launcher、bundled Node、
+> immutable HTTPS archive + sha256）经 Harbor generic ACP agent 完成真实 initialize/prompt/verifier；
+> Harbor 原生写出 trajectory/events/summary，normalizer 强制消费并得到可复现、可归因的
+> `reward=0` 有效失败。证据：`harbor-acp-candidate.e2e.ts` 1 绿；不构成 capability 声明。
 
 ## Phase 3 — 持久化 controller 核心（Gate 3，5–8 天）
 
