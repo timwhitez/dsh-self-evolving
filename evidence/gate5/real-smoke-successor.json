@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "status": "REAL_OBSERVED_SMOKE_ACCEPTED_NOT_GATE5",
+  "runId": "gate5-real-smoke-v5",
+  "taskId": "fix-git",
+  "candidateId": "c_mnqw4zdjmrqxizjonjzw63qaaa",
+  "capsuleSha256": "2818e41f14a4de0a3a300cd0868d2ee9f924105fdfd6439f2e5e2669d64cd189",
+  "reward": 1,
+  "normalizedStatus": "pass",
+  "wallSec": 112.853,
+  "bashToolCalls": 12,
+  "usage": {
+    "events": 10,
+    "inputTokens": 12060,
+    "cacheReadTokens": 68392,
+    "outputTokens": 4367,
+    "reasoningTokens": 0,
+    "costUsd": null,
+    "priced": false
+  },
+  "credentialPersistedFileCount": 0,
+  "credentialHostCmdlineCount": 0,
+  "hashes": {
+    "summary": "sha256:e95ea9ae0a8c5fe9fe544916b58cdafb22a33ad06f4192c570dab237070fd77e",
+    "result": "sha256:0fea4b53ac83e5316ae7fea6fb116aad2791476b960e0582fcb159fb01f03963",
+    "acpEvents": "sha256:615e3f5b0240d850f53990d495188499abcb42a96b0b3022674eb18135f342d3",
+    "acpSummary": "sha256:86605f3543109581576e3d42a0d7a99902db1f704740af04da7279361ffff246",
+    "trajectory": "sha256:c2c720b9707576a6129b72079cc1014fee0fbf1b3d91c536fe65db150320a8ee",
+    "dshSession": "sha256:20b91efe4b69e6edbe9da9ce28600dde83ca13f9885ae4c829d414b7d4d9917b"
+  },
+  "sealedAccessCount": 0,
+  "gate5Accepted": false
+}

@@ -66,6 +66,13 @@ byte scan 为 0；successor 已改为容器内只读 secret-file launcher，并�
 `agentEnv`。暴露的 CPA client key 尚未轮换，轮换前禁止新的真实 provider 调用。详见
 [`docs/audits/2026-08-14-gate5-real-smoke-security-incident.md`](docs/audits/2026-08-14-gate5-real-smoke-security-incident.md)。
 
+用户随后明确授权继续使用原 CPA key。`gate5-real-smoke-v5` 通过容器内只读 secret-file、固定
+DSH sandbox/subprocess/bash 工具栈和真实 Zen-compatible Chat Completions，在 DEV_OBSERVED `fix-git`
+完成 12 次 bash 调用并获 reward 1；宿主 argv/env 与持久化 byte scan 的 credential 匹配均为 0。
+DSH session 保留 10 个 usage events，但 CPA/Harbor 未提供 USD price，因此仍是 `priced=false` 的单题
+工程 smoke，不能用于 Gate 5 acceptance。详见
+[`docs/audits/2026-08-14-gate5-real-smoke-successor.md`](docs/audits/2026-08-14-gate5-real-smoke-successor.md)。
+
 ## Gate 7 formal preflight
 
 新增 detached-Ed25519、外部 trusted key 验证的 formal manifest/pre-start verifier，绑定 Git tag/commit、
