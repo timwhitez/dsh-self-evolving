@@ -15,7 +15,7 @@ mkdir -m 0700 /var/lib/dsh-rsi-controller/RESTORED_RUN_ID
 tar --numeric-owner -C /var/lib/dsh-rsi-controller -xzf /root/dsh-rsi-state-backup.tgz
 ```
 
-Restore to the same absolute state path because schema v8 binds `stateDir`. Run `status` and `audit` before any
+Restore to the same absolute state path because schema v9 binds `stateDir`. Run `status` and `audit` before any
 resume. Never merge two state directories.
 
 ## Release rollback

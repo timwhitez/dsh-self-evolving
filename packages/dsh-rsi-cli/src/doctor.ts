@@ -78,6 +78,35 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
     'rev-parse',
     'HEAD',
   ])
+  const codePaths = [
+    'packages',
+    'benchmark-adapters',
+    'scripts',
+    'package.json',
+    'pnpm-lock.yaml',
+    'tsconfig.json',
+    'provenance.lock.json',
+  ]
+  const trackedCodeClean = await commandOk('/usr/bin/git', [
+    '-C',
+    config.repoRoot,
+    'diff',
+    '--quiet',
+    'HEAD',
+    '--',
+    ...codePaths,
+  ])
+  const untrackedCode = await commandOutput('/usr/bin/git', [
+    '-C',
+    config.repoRoot,
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '--',
+    'packages',
+    'benchmark-adapters',
+    'scripts',
+  ])
   const checks = [
     check(
       'private-auth',
@@ -105,6 +134,11 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
     ),
     check('budget', config.limits.budgetUsd > 0, `reserved budget $${config.limits.budgetUsd}`),
     check('code-identity', currentCommit === config.codeCommit, `Git commit ${config.codeCommit}`),
+    check(
+      'code-worktree',
+      trackedCodeClean && untrackedCode === '',
+      'executable source paths match the frozen commit',
+    ),
   ]
   return { ready: checks.every((item) => item.status === 'PASS'), checks }
 }

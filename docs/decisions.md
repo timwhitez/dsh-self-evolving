@@ -204,3 +204,16 @@ crash evidence and marked `QUARANTINED_CANONICAL_REPLAY_COMPARISON_BUG`.
 
 **Consequence:** a dedicated mid-run interruption test must resume from a nonterminal journal and prove launch and
 collect counts remain exactly once before the next commit-bound real run.
+
+## ADR-019 — Frozen commit plus clean executable source scope
+
+**Decision:** stable-demo config schema v9 requires both the frozen HEAD and a clean executable source scope:
+`packages/`, `benchmark-adapters/`, `scripts/` and root build/provenance manifests. Documentation-only work may remain
+outside that runtime scope without changing candidate or evaluator behavior.
+
+**Why:** a matching HEAD alone does not exclude dirty TypeScript or scripts being compiled into ignored `lib/` output.
+The check is restricted to executable paths so independently authored release documentation does not alter or block a
+running evidence lineage.
+
+**Consequence:** `doctor`, `run` and `resume` fail before mutation if tracked or untracked executable source differs
+from the bound commit.
