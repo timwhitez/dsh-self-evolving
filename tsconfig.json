@@ -28,6 +28,7 @@
     { "path": "./packages/candidate-baseline" },
     { "path": "./packages/candidate-sdk" },
     { "path": "./packages/dsh-rsi" },
+    { "path": "./packages/dsh-rsi-cli" },
     { "path": "./packages/dsh-rsi-loader-e2e" },
     { "path": "./packages/dsh-rsi-proposer" },
     { "path": "./packages/dsh-rsi-pilot" },

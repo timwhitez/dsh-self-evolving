@@ -22,9 +22,13 @@ const repoRoot = resolve(here, '..')
 const harborDir = join(repoRoot, 'harbor')
 const harborBin = join(harborDir, '.venv', 'bin', 'harbor')
 const dshRoot = join(repoRoot, 'deepseek-harness')
-const baselineRoot = join(repoRoot, 'packages', 'candidate-baseline')
+const candidateRoot = resolve(
+  process.env['DSH_RSI_CANDIDATE_ROOT'] ?? join(repoRoot, 'packages', 'candidate-baseline'),
+)
 const tscBin = join(repoRoot, 'node_modules', '.bin', 'tsc')
-const controllerRoot = '/var/lib/dsh-rsi-controller/gate5-real'
+const controllerRoot = resolve(
+  process.env['DSH_RSI_EVALUATOR_ROOT'] ?? '/var/lib/dsh-rsi-controller/gate5-real',
+)
 const tb21Dir = process.env['TB21_DIR'] ?? '/tmp/tb21/terminal-bench-2-1'
 const targetModel = 'deepseek-v4-flash-zen'
 const effectiveModel = 'deepseek-v4-flash'
@@ -227,7 +231,7 @@ async function startArtifactServer(
 }
 
 async function buildBaselineRuntime(workDir: string, baseUrl: string) {
-  const receipt = await buildCandidate({ sourceRoot: baselineRoot, sourceFiles, tscBin })
+  const receipt = await buildCandidate({ sourceRoot: candidateRoot, sourceFiles, tscBin })
   const capsuleDir = join(workDir, 'capsule')
   await packCapsule({
     outDir: capsuleDir,
