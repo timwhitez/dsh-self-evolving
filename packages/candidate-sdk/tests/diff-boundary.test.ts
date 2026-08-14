@@ -97,7 +97,6 @@ describe('capsule packing', () => {
     const out = await packCapsule({
       outDir: capsuleDir,
       receipt,
-      candidateSourceRoot: baselineRoot,
       runnerOverlay: '- insert: []\n',
       provenanceJson: '{}',
       sbomJson: '{}',
@@ -138,7 +137,6 @@ describe('capsule packing', () => {
     const out2 = await packCapsule({
       outDir: join(scratch!, 'capsule2'),
       receipt,
-      candidateSourceRoot: baselineRoot,
       runnerOverlay: '- insert: []\n',
       provenanceJson: '{}',
       sbomJson: '{}',

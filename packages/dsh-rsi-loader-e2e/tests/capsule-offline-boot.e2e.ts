@@ -167,7 +167,6 @@ describe('Gate 1 — packed capsule offline boot', () => {
       await packCapsule({
         outDir: capsuleDir,
         receipt,
-        candidateSourceRoot: baselineRoot,
         runnerOverlay: [
           '- id: mock-llm',
           "  name: './mock-llm.mjs'",
@@ -335,7 +334,6 @@ describe('Gate 1 — packed capsule offline boot', () => {
       await packCapsule({
         outDir: capsuleDir,
         receipt,
-        candidateSourceRoot: baselineRoot,
         runnerOverlay: [
           '- id: mock-llm',
           "  name: './mock-llm.mjs'",
@@ -437,7 +435,6 @@ describe('Gate 1 — packed capsule offline boot', () => {
       await packCapsule({
         outDir: capsuleDir,
         receipt,
-        candidateSourceRoot: baselineRoot,
         runnerOverlay: [
           '- id: mock-llm',
           "  name: './mock-llm.mjs'",

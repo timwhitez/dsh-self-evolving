@@ -14,8 +14,9 @@
  */
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { readFile, readdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import {
   buildCanonicalArchive,
   declareFiles,
@@ -42,6 +43,14 @@ export interface BuildReceipt {
   scan: ScanResult
   schemaValidation: ValidationResult
   doubleBuildIdentical: boolean
+  /** Immutable source/bundle bytes consumed by the capsule packer. */
+  sourceFiles: BuildArtifactFile[]
+  bundleFiles: BuildArtifactFile[]
+}
+
+export interface BuildArtifactFile {
+  path: string
+  bytes: Uint8Array
 }
 
 /** sha256 of all files under a dir, concatenated as `relpath:hash\n` sorted. */
@@ -64,6 +73,30 @@ async function hashTree(root: string): Promise<string> {
   return createHash('sha256').update(entries.join('\n')).digest('hex')
 }
 
+async function snapshotTree(root: string): Promise<BuildArtifactFile[]> {
+  const files: BuildArtifactFile[] = []
+  async function walk(directory: string): Promise<void> {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )
+    for (const entry of entries) {
+      const absolute = join(directory, entry.name)
+      if (entry.isDirectory()) await walk(absolute)
+      else if (entry.isFile()) {
+        files.push({
+          path: absolute
+            .slice(root.length + 1)
+            .split('\\')
+            .join('/'),
+          bytes: new Uint8Array(await readFile(absolute)),
+        })
+      }
+    }
+  }
+  await walk(root)
+  return files
+}
+
 function execTsc(tscBin: string, projectDir: string): Promise<void> {
   return new Promise((resolveExec, rejectExec) => {
     execFile(tscBin, ['-b', '--force'], { cwd: projectDir }, (err, _stdout, stderr) => {
@@ -71,6 +104,75 @@ function execTsc(tscBin: string, projectDir: string): Promise<void> {
       else resolveExec()
     })
   })
+}
+
+async function processStartTicks(pid: number): Promise<string | null> {
+  try {
+    const raw = await readFile(`/proc/${pid}/stat`, 'utf8')
+    const close = raw.lastIndexOf(') ')
+    if (close === -1) return null
+    return (
+      raw
+        .slice(close + 2)
+        .trim()
+        .split(/\s+/)[19] ?? null
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+async function acquireBuildLock(sourceRoot: string): Promise<() => Promise<void>> {
+  const lockDir = join(tmpdir(), 'dsh-rsi-candidate-build-locks')
+  await mkdir(lockDir, { recursive: true, mode: 0o700 })
+  const key = createHash('sha256').update(resolve(sourceRoot)).digest('hex')
+  const lockPath = join(lockDir, `${key}.lock`)
+  const startTicks = await processStartTicks(process.pid)
+  if (startTicks === null) throw new Error('builder lock: cannot verify current process identity')
+  const record = JSON.stringify({ pid: process.pid, processStartTicks: startTicks }) + '\n'
+  const deadline = Date.now() + 120_000
+
+  while (Date.now() < deadline) {
+    let file
+    try {
+      file = await open(lockPath, 'wx', 0o600)
+      await file.writeFile(record)
+      await file.sync()
+      await file.close()
+      return async () => {
+        const current = await readFile(lockPath, 'utf8').catch(() => null)
+        if (current !== record) throw new Error('builder lock: ownership changed before release')
+        await rm(lockPath)
+      }
+    } catch (error) {
+      await file?.close().catch(() => {})
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const existing = await readFile(lockPath, 'utf8').catch(() => null)
+      if (existing !== null) {
+        try {
+          const owner = JSON.parse(existing) as {
+            pid?: number
+            processStartTicks?: string
+          }
+          if (typeof owner.pid === 'number' && typeof owner.processStartTicks === 'string') {
+            const ownerStart = await processStartTicks(owner.pid)
+            if (ownerStart !== owner.processStartTicks) {
+              const stalePath = `${lockPath}.stale-${createHash('sha256').update(existing).digest('hex').slice(0, 16)}`
+              await rename(lockPath, stalePath).catch((renameError) => {
+                if ((renameError as NodeJS.ErrnoException).code !== 'ENOENT') throw renameError
+              })
+              continue
+            }
+          }
+        } catch (parseError) {
+          if (!(parseError instanceof SyntaxError)) throw parseError
+        }
+      }
+      await new Promise<void>((done) => setTimeout(done, 50))
+    }
+  }
+  throw new Error(`builder lock: timed out waiting for ${resolve(sourceRoot)}`)
 }
 
 /**
@@ -88,6 +190,12 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
   // Step 1+2: containment + canonical archive (also validates paths/symlinks/limits).
   const declared = declareFiles(sourceRoot, sourceFiles)
   const archive = await buildCanonicalArchive(declared)
+  const immutableSourceFiles = await Promise.all(
+    declared.map(async (file) => ({
+      path: file.path,
+      bytes: new Uint8Array(await readFile(file.absPath)),
+    })),
+  )
 
   // Step 2b: schema validation of candidate.json.
   const schemaValidation = await validateManifestFile(
@@ -116,15 +224,26 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
   }
 
   // Step 5: reproducible build — two clean builds must produce identical lib/.
-  const libDir = join(sourceRoot, 'lib')
-  await rm(libDir, { recursive: true, force: true })
-  await execTsc(tscBin, sourceRoot)
-  const build1 = await hashTree(libDir)
-  await rm(libDir, { recursive: true, force: true })
-  await execTsc(tscBin, sourceRoot)
-  const build2 = await hashTree(libDir)
-  const bundleHash = build2
-  const doubleBuildIdentical = build1 === build2
+  const releaseBuildLock = await acquireBuildLock(sourceRoot)
+  let bundleHash: string
+  let doubleBuildIdentical: boolean
+  let build1: string
+  let build2: string
+  let immutableBundleFiles: BuildArtifactFile[]
+  try {
+    const libDir = join(sourceRoot, 'lib')
+    await rm(libDir, { recursive: true, force: true })
+    await execTsc(tscBin, sourceRoot)
+    build1 = await hashTree(libDir)
+    await rm(libDir, { recursive: true, force: true })
+    await execTsc(tscBin, sourceRoot)
+    build2 = await hashTree(libDir)
+    immutableBundleFiles = await snapshotTree(libDir)
+    bundleHash = build2
+    doubleBuildIdentical = build1 === build2
+  } finally {
+    await releaseBuildLock()
+  }
   if (!doubleBuildIdentical) {
     throw new Error(`reproducible build failed: build1=${build1} build2=${build2}`)
   }
@@ -148,5 +267,7 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
     scan,
     schemaValidation,
     doubleBuildIdentical,
+    sourceFiles: immutableSourceFiles,
+    bundleFiles: immutableBundleFiles,
   }
 }

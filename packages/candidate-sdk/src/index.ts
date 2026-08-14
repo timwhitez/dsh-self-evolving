@@ -39,6 +39,11 @@ export {
   type DiffEntry,
 } from './builder.js'
 
-export { buildCandidate, type BuildInput, type BuildReceipt } from './builder-sandbox.js'
+export {
+  buildCandidate,
+  type BuildInput,
+  type BuildReceipt,
+  type BuildArtifactFile,
+} from './builder-sandbox.js'
 
 export { packCapsule, type CapsuleInput, type CapsuleOutput } from './capsule.js'

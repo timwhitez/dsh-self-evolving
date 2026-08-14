@@ -18,6 +18,9 @@
   `SHA256SUMS`; manifest and sums bytes are jointly bound by the returned capsule hash.
 - Limited pinned DSH packages to their declared published surface; package-internal `src/` and
   `tests/` directories are excluded from the runtime closure.
+- Serialized same-source clean builds across processes and froze source/bundle bytes into the
+  BuildReceipt. Capsule packing consumes that immutable snapshot, so another concurrent build
+  cannot delete or replace `lib/` between admission and packaging.
 
 ## Acceptance evidence
 

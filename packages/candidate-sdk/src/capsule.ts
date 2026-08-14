@@ -47,8 +47,6 @@ export interface CapsuleInput {
   outDir: string
   /** Build receipt from the deterministic builder. */
   receipt: BuildReceipt
-  /** Candidate source root (for copying the compiled bundle). */
-  candidateSourceRoot: string
   /** Runner overlay content (the stable runner's final row restatement). */
   runnerOverlay: string
   /** Additional immutable runner-local modules referenced by the overlay. */
@@ -101,26 +99,18 @@ async function writeSha256sums(
   return { entries: map, hash }
 }
 
-/** Copy a candidate's compiled bundle (src + lib + manifest files) into capsule/candidate. */
-async function copyCandidate(src: string, dest: string): Promise<void> {
+/** Materialize the immutable source + compiled bytes frozen in BuildReceipt. */
+async function copyCandidate(receipt: BuildReceipt, dest: string): Promise<void> {
   await mkdir(dest, { recursive: true })
-  const items = [
-    'src',
-    'lib',
-    'package.json',
-    'candidate.json',
-    'cordis.patch.yml',
-    'tsconfig.json',
-  ]
-  for (const item of items) {
-    const from = join(src, item)
-    const st = await stat(from).catch(() => null)
-    if (!st) continue
-    if (st.isDirectory()) {
-      await copyDir(from, join(dest, item))
-    } else {
-      await copyFile(from, join(dest, item))
-    }
+  for (const file of receipt.sourceFiles) {
+    const destination = join(dest, ...file.path.split('/'))
+    await mkdir(dirname(destination), { recursive: true })
+    await writeFile(destination, file.bytes)
+  }
+  for (const file of receipt.bundleFiles) {
+    const destination = join(dest, 'lib', ...file.path.split('/'))
+    await mkdir(dirname(destination), { recursive: true })
+    await writeFile(destination, file.bytes)
   }
 }
 
@@ -336,11 +326,11 @@ async function hashDirectory(root: string): Promise<string> {
 async function materializeRuntimeClosure(input: {
   runtimeDir: string
   closure: RuntimeClosureInput
-  candidateSourceRoot: string
+  receipt: BuildReceipt
   runnerOverlay: string
   runnerFiles: Record<string, string>
 }): Promise<{ packages: ClosurePackage[]; closureHash: string }> {
-  const { runtimeDir, closure, candidateSourceRoot, runnerOverlay, runnerFiles } = input
+  const { runtimeDir, closure, receipt, runnerOverlay, runnerFiles } = input
   const catalog = await scanPackageCatalog(closure.catalogRoots)
   const pinnedCatalogNames = new Set(catalog.keys())
   const wanted = new Map<string, string>()
@@ -415,7 +405,7 @@ async function materializeRuntimeClosure(input: {
   // Candidate bytes are duplicated into the runtime's ordinary resolution
   // path. Their canonical copy remains capsule/candidate for audit/release.
   const runtimeCandidate = join(nodeModules, '@dsh-rsi', 'candidate-baseline')
-  await copyCandidate(candidateSourceRoot, runtimeCandidate)
+  await copyCandidate(receipt, runtimeCandidate)
   packages.push({
     name: '@dsh-rsi/candidate-baseline',
     version: '0.0.0',
@@ -524,7 +514,6 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
   const {
     outDir,
     receipt,
-    candidateSourceRoot,
     runnerOverlay,
     provenanceJson,
     sbomJson,
@@ -540,13 +529,13 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
   const runtime = await materializeRuntimeClosure({
     runtimeDir,
     closure: runtimeClosure,
-    candidateSourceRoot,
+    receipt,
     runnerOverlay,
     runnerFiles,
   })
 
   // candidate/
-  await copyCandidate(candidateSourceRoot, join(outDir, 'candidate'))
+  await copyCandidate(receipt, join(outDir, 'candidate'))
 
   // runner/
   const runnerDir = join(outDir, 'runner')

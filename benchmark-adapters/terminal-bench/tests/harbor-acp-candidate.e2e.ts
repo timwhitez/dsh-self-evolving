@@ -170,7 +170,6 @@ describe.skipIf(
       await packCapsule({
         outDir: capsuleDir,
         receipt,
-        candidateSourceRoot: baselineRoot,
         runnerOverlay: [
           '- id: mock-llm',
           "  name: './mock-llm.mjs'",

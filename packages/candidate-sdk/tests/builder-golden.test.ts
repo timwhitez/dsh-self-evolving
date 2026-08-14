@@ -85,4 +85,22 @@ describe('golden candidate build (Gate 1)', () => {
       expect(receipt.scan.hits.filter((h) => h.severity === 'reject')).toEqual([])
     },
   )
+
+  it(
+    'serializes concurrent clean builds of the same source root across callers',
+    BUILD_TIMEOUT,
+    async () => {
+      const receipts = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          buildCandidate({
+            sourceRoot: baselineRoot,
+            sourceFiles: baselineSourceFiles,
+            tscBin,
+          }),
+        ),
+      )
+      expect(new Set(receipts.map((receipt) => receipt.bundleHash))).toHaveLength(1)
+      expect(receipts.every((receipt) => receipt.doubleBuildIdentical)).toBe(true)
+    },
+  )
 })
