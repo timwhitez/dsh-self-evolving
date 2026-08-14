@@ -51,7 +51,8 @@ Harbor 是可替换 benchmark provider，而不是 RSI 的所有者。
   与最终 state hash 一致。
 - 默认最多运行 12 个 baseline failure-discovery trials 和 3 个 candidate trials；模型保持
   `high + 1M context + 32k output ceiling`，不通过截断 token 降耗。
-- fresh profile 可安装并运行同一 demo；发布物包含文档、测试、SBOM、provenance、checksums 和回滚说明。
+- fresh profile 可从 source archive 安装并运行同一 demo；发布物包含文档、测试、SBOM、provenance、
+  checksums 和回滚说明。v0.1 不发布独立 npm package，避免把 workspace/link 依赖误称为可安装包。
 - 搜索阶段不得修改 DSH 上游、benchmark、verifier、模型路由、计分器、切分或安全策略。
 
 ## 发布后可选目标

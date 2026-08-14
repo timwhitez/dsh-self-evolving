@@ -151,7 +151,8 @@
 - [ ] README/quickstart/config/troubleshooting/architecture/evidence interpretation 与当前实现一致
 - [ ] 用户确认 OSI license；补齐 CONTRIBUTING、SECURITY、code of conduct、CHANGELOG
 - [ ] fresh-profile 安装后运行真实 Loader 与 K=3 demo smoke
-- [ ] 生成 source/package、SBOM、provenance、checksums、dependency/license scan、secret/leak scan
+- [ ] 生成 source archive、SBOM、provenance、checksums、dependency/license scan、secret/leak scan；独立 npm
+      package 明确为 `NOT_INCLUDED`
 - [ ] full unit/E2E/typecheck/lint/format/provenance/upstream-clean/UTF-8 全绿
 - [ ] 实测 uninstall/rollback 与一次 state backup/restore
 - [ ] 发布审计只声明 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`，不声明 benchmark 提升

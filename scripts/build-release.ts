@@ -123,7 +123,6 @@ async function main(): Promise<void> {
     join(outDir, sourceName),
     'HEAD',
   ])
-  await exec('pnpm', ['--filter', '@dsh-rsi/cli', 'pack', '--pack-destination', outDir])
   const licensesRaw = (await exec('pnpm', ['licenses', 'list', '--json'])).stdout
   const licenses = JSON.parse(licensesRaw) as Record<string, LicensePackage[]>
   const sbom = buildSpdxSbom(commit, licenses)
@@ -143,6 +142,10 @@ async function main(): Promise<void> {
     commit,
     artifacts: [...primaryArtifacts, 'release-receipt.json', 'SHA256SUMS'],
     trackedUtf8AndSecretScan: { ...safety, passed: true },
+    distribution: {
+      installation: 'SOURCE_ARCHIVE',
+      standaloneNpmPackage: 'NOT_INCLUDED',
+    },
     benchmarkClaim: 'NONE',
   }
   const receiptFile = await open(join(outDir, 'release-receipt.json'), 'wx', 0o644)
