@@ -10,11 +10,7 @@ import { readFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  runPilotLoop,
-  type PilotCapabilities,
-  type ProposedChild,
-} from '../src/index.js'
+import { runPilotLoop, type PilotCapabilities, type ProposedChild } from '../src/index.js'
 import { DEFAULT_PARAMS } from '@dsh-rsi/search'
 
 const here = dirname(fileURLToPath(import.meta.url))
