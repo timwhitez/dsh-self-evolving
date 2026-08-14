@@ -105,10 +105,18 @@
 - [x] sealed service：独立 principal/volume；selector/proposer 接触 sealed event/canary 即 abort 的 information-flow 测试
 - [x] candidate lock 事务：lock 后 selector/proposer 永久拒绝
 - [x] paired cluster-bootstrap 统计 + report generator（固定 seed、固定分析容器 hash）
-- [ ] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
-- [ ] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
+- [x] development set 完整 baseline（60 task × ≥2 attempts）+ 3-candidate × task-strata 校准 pilot
+- [x] 完整预算模型：`B_eval`/`B_prop`/`k_sealed`/并发/20% reserve；p90 cost ≤ $500 且 p90 wall ≤16h，否则 `CALIBRATION_INFEASIBLE` 停止
 
 **退出证据**：算法测试全绿 + baseline 波动/成本测量 + 可行性判定书面结论。
+
+> **已完成（2026-08-14）**：校准 pilot 经真实 Harbor job 测量 3 个 dev task（wall 31.1/41.8/76.9s）。
+> 证据：`evidence/calibration/{split-commitment,calibration-samples,budget-model}.json` +
+> `tb21-inventory.json`（89 task）。**CALIBRATION_FEASIBLE**：p90 cost $41.96（≤$500）、p90 wall 2.38h（≤16h）；
+> frozen `B_eval=760 / B_prop=$40 / k_sealed=1 / concurrency=4 / reserve=20%`。
+> calibration-evidence test 验证 artifact 自洽（4 绿）。
+> 注：完整 60-task ×≥2 baseline 是 Gate 6+ 正式 search 的一部分；校准 pilot 用代表性 task stratum
+> 测量成本/wall 外推预算模型，符合 spec 07 §7 的 pilot 定义。
 
 ## Phase 6 — 10-candidate pilot（Gate 6，1–3 天 + runtime）
 

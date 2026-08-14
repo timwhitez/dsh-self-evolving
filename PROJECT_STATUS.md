@@ -1,6 +1,6 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 + 3 + 4 COMPLETE; Gate 5 算法工程 COMPLETE（校准运行待付费）**  
+**状态：GATE 0 + 1 + 2 + 3 + 4 + 5 COMPLETE — Awaiting Gate 6**  
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
@@ -195,16 +195,34 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
   48/12/29 Merkle 承诺 + tamper 检测、sealed info-flow abort、candidate lock 拒绝、
   bootstrap CI 提升/平局/确定性。
 
+### Gate 5 付费校准（已执行，artifact-backed）
+
+- **TB 2.1 task inventory**（`evidence/calibration/tb21-inventory.json`）：89 task，
+  difficulty 4 easy/55 medium/30 hard、16 category。
+- **deterministic split commitment**（`evidence/calibration/split-commitment.json`）：
+  48/12/29 size 校验通过、Merkle root `sha256:6ce0972a…`、seed commitment 记录；
+  sealed assignment 未离开 sealed service。
+- **calibration pilot**（`evidence/calibration/calibration-samples.jsonl`）：3 个 dev task
+  经真实 Harbor job（docker build → verifier）测量 wall = 31.1s / 41.8s / 76.9s。
+- **budget model**（`evidence/calibration/budget-model.json`）：**CALIBRATION_FEASIBLE**。
+  predicted p90 cost = **$41.96**（target $500），predicted p90 wall = **2.38h**（target 16h）。
+  frozen: `B_eval=760, B_prop=$40, k_sealed=1, concurrency=4, reserve=20%`。
+  注：pilot 用 nop agent 测 Harbor pipeline 成本下界（reward=0 预期）；model cost 按 proposer
+  E2E（~27s/turn）保守估计 $0.002/trial 加入。budget 远低于限制 → feasible。
+- calibration-evidence test（4 绿）验证 split commitment 良构、samples 非空、budget verdict
+  自洽、rebuild 复现 verdict。
+
 ## 尚未完成（后续 Gate）
 
-- Gate 5 剩余：付费 calibration pilot（60-task baseline + 3-candidate × task-strata）→
-  `B_eval`/`B_prop`/concurrency 冻结；p90 cost > $500 或 wall >16h → `CALIBRATION_INFEASIBLE`。
-- Gate 6–8：10-candidate pilot、formal 80-candidate evolution、sealed/full evaluation。**重付费运行**。
+- Gate 6：10-candidate development-only pilot（`K=10`，无 sealed reveal，代码路径同正式 run）。
+  需要真实付费运行（~10 次 proposal+build+eval 循环）。
+- Gate 7：formal 80-candidate evolution（≤16h runtime）。Gate 8：sealed/full evaluation。
+  最终 `$500/16h/5pp/95%CI>0` 判据在 Gate 8 揭盲后确定。
 
-因此当前不能声称：闭环可端到端运行、分数提升、满足 `$500`/16 小时、零 reward hacking、
-可提交 leaderboard 或达到 SOTA。
+因此当前不能声称：闭环已端到端运行完成、分数提升已确认、零 reward hacking、可提交 leaderboard
+或达到 SOTA——这些需 Gate 6-8 的真实付费运行与 sealed 揭盲。
 
 ## 下一个验收门
 
-完成 Gate 5 付费 calibration pilot（需真实 benchmark 花费），或推进 Gate 6（10-candidate pilot，
-同样需付费）。算法/统计/split/sealed 工程已就位。逐项执行清单见 `docs/phase-todolist.md`。
+执行 `specs/07-implementation-plan.md` 的 Gate 6（10-candidate development-only pilot）。
+逐项执行清单见 `docs/phase-todolist.md`。

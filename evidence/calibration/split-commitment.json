@@ -1,0 +1,9 @@
+{
+  "sizes": {
+    "devObserved": 48,
+    "devGuard": 12,
+    "sealed": 29
+  },
+  "seedCommitment": "sha256:400bcf5d222dbfb63149e555f6420898fba241b6d247bf2ac49fc6c562a618e7",
+  "merkleRoot": "sha256:6ce0972a340ef8abf6fbfa8e48d8fcfe8075389b525b80098800fa3713d6fbd4"
+}

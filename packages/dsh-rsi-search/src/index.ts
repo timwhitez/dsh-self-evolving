@@ -29,3 +29,17 @@ export {
   type BootstrapResult,
   type PromotionState,
 } from './stats.js'
+export {
+  stratify,
+  deterministicSplit,
+  sampleCalibrationStratum,
+  type TaskMeta,
+  type TaskStratum,
+} from './calibration.js'
+export {
+  buildBudgetModel,
+  DEFAULT_TARGETS,
+  type CalibrationSample,
+  type BudgetTargets,
+  type FrozenBudget,
+} from './budget-model.js'

@@ -1,0 +1,806 @@
+{
+  "count": 89,
+  "tasks": [
+    {
+      "taskId": "adaptive-rejection-sampler",
+      "difficulty": "medium",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "bn-fit-modify",
+      "difficulty": "hard",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "break-filter-js-from-html",
+      "difficulty": "medium",
+      "category": "security",
+      "agentTimeoutSec": 1200.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "build-cython-ext",
+      "difficulty": "medium",
+      "category": "debugging",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "build-pmars",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "build-pov-ray",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 12000.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "caffe-cifar-10",
+      "difficulty": "medium",
+      "category": "machine-learning",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 4,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "cancel-async-tasks",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "chess-best-move",
+      "difficulty": "medium",
+      "category": "games",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "circuit-fibsqrt",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "cobol-modernization",
+      "difficulty": "easy",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "code-from-image",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 1200.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "compile-compcert",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 2400.0,
+      "allowInternet": true,
+      "cpus": 2,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "configure-git-webserver",
+      "difficulty": "hard",
+      "category": "system-administration",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "constraints-scheduling",
+      "difficulty": "medium",
+      "category": "personal-assistant",
+      "agentTimeoutSec": 1200.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "count-dataset-tokens",
+      "difficulty": "medium",
+      "category": "model-training",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "crack-7z-hash",
+      "difficulty": "medium",
+      "category": "security",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "custom-memory-heap-crash",
+      "difficulty": "medium",
+      "category": "debugging",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "db-wal-recovery",
+      "difficulty": "medium",
+      "category": "file-operations",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "distribution-search",
+      "difficulty": "medium",
+      "category": "machine-learning",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "dna-assembly",
+      "difficulty": "hard",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "dna-insert",
+      "difficulty": "medium",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "extract-elf",
+      "difficulty": "medium",
+      "category": "file-operations",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "extract-moves-from-video",
+      "difficulty": "hard",
+      "category": "file-operations",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "feal-differential-cryptanalysis",
+      "difficulty": "hard",
+      "category": "mathematics",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "feal-linear-cryptanalysis",
+      "difficulty": "hard",
+      "category": "mathematics",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "filter-js-from-html",
+      "difficulty": "medium",
+      "category": "security",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "financial-document-processor",
+      "difficulty": "medium",
+      "category": "data-processing",
+      "agentTimeoutSec": 1200.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "fix-code-vulnerability",
+      "difficulty": "hard",
+      "category": "security",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "fix-git",
+      "difficulty": "easy",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "fix-ocaml-gc",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "gcode-to-text",
+      "difficulty": "medium",
+      "category": "file-operations",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "git-leak-recovery",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "git-multibranch",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "gpt2-codegolf",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "headless-terminal",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "hf-model-inference",
+      "difficulty": "medium",
+      "category": "data-science",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "install-windows-3.11",
+      "difficulty": "hard",
+      "category": "system-administration",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 2,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "kv-store-grpc",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "large-scale-text-editing",
+      "difficulty": "medium",
+      "category": "file-operations",
+      "agentTimeoutSec": 1200.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "largest-eigenval",
+      "difficulty": "medium",
+      "category": "mathematics",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "llm-inference-batching-scheduler",
+      "difficulty": "hard",
+      "category": "machine-learning",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "log-summary-date-ranges",
+      "difficulty": "medium",
+      "category": "data-processing",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "mailman",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "make-doom-for-mips",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "make-mips-interpreter",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "mcmc-sampling-stan",
+      "difficulty": "hard",
+      "category": "data-science",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 4,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "merge-diff-arc-agi-task",
+      "difficulty": "medium",
+      "category": "debugging",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "model-extraction-relu-logits",
+      "difficulty": "hard",
+      "category": "mathematics",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "modernize-scientific-stack",
+      "difficulty": "medium",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "mteb-leaderboard",
+      "difficulty": "medium",
+      "category": "data-science",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "mteb-retrieve",
+      "difficulty": "medium",
+      "category": "data-science",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "multi-source-data-merger",
+      "difficulty": "medium",
+      "category": "data-processing",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "nginx-request-logging",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "openssl-selfsigned-cert",
+      "difficulty": "medium",
+      "category": "security",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "overfull-hbox",
+      "difficulty": "easy",
+      "category": "debugging",
+      "agentTimeoutSec": 750.0,
+      "allowInternet": true,
+      "cpus": 2,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "password-recovery",
+      "difficulty": "hard",
+      "category": "security",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "path-tracing",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "path-tracing-reverse",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "polyglot-c-py",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "polyglot-rust-c",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "portfolio-optimization",
+      "difficulty": "medium",
+      "category": "optimization",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "protein-assembly",
+      "difficulty": "hard",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "prove-plus-comm",
+      "difficulty": "easy",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "pypi-server",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "pytorch-model-cli",
+      "difficulty": "medium",
+      "category": "model-training",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "pytorch-model-recovery",
+      "difficulty": "medium",
+      "category": "model-training",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "qemu-alpine-ssh",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "qemu-startup",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "query-optimize",
+      "difficulty": "medium",
+      "category": "data-science",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "raman-fitting",
+      "difficulty": "medium",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "regex-chess",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "regex-log",
+      "difficulty": "medium",
+      "category": "data-processing",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "reshard-c4-data",
+      "difficulty": "medium",
+      "category": "data-science",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "rstan-to-pystan",
+      "difficulty": "medium",
+      "category": "data-science",
+      "agentTimeoutSec": 1800.0,
+      "allowInternet": true,
+      "cpus": 4,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "sam-cell-seg",
+      "difficulty": "hard",
+      "category": "data-science",
+      "agentTimeoutSec": 7200.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "sanitize-git-repo",
+      "difficulty": "medium",
+      "category": "security",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "schemelike-metacircular-eval",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 2400.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "sparql-university",
+      "difficulty": "hard",
+      "category": "data-querying",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "sqlite-db-truncate",
+      "difficulty": "medium",
+      "category": "debugging",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "sqlite-with-gcov",
+      "difficulty": "medium",
+      "category": "system-administration",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "torch-pipeline-parallelism",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "torch-tensor-parallelism",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 8192
+    },
+    {
+      "taskId": "train-fasttext",
+      "difficulty": "hard",
+      "category": "model-training",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 4096
+    },
+    {
+      "taskId": "tune-mjcf",
+      "difficulty": "medium",
+      "category": "scientific-computing",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "video-processing",
+      "difficulty": "hard",
+      "category": "video-processing",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "vulnerable-secret",
+      "difficulty": "medium",
+      "category": "security",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "winning-avg-corewars",
+      "difficulty": "medium",
+      "category": "software-engineering",
+      "agentTimeoutSec": 3600.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    },
+    {
+      "taskId": "write-compressor",
+      "difficulty": "hard",
+      "category": "software-engineering",
+      "agentTimeoutSec": 900.0,
+      "allowInternet": true,
+      "cpus": 1,
+      "memoryMb": 2048
+    }
+  ]
+}

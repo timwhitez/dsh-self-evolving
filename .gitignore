@@ -10,7 +10,12 @@ node_modules/
 **/.tsbuildinfo
 
 # Evidence and run artifacts (created in later gates).
-evidence/
+# Frozen calibration evidence (split commitment, budget model, samples) IS
+# tracked — it is a spec-required auditable artifact. Per-run mutable evidence
+# stays ignored.
+evidence/*
+!evidence/calibration/
+!evidence/calibration/**
 runs/
 
 # Editor / OS noise.

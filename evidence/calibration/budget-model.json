@@ -1,0 +1,11 @@
+{
+  "B_eval": 760,
+  "B_prop_usd": 40,
+  "k_sealed": 1,
+  "concurrency": 4,
+  "reserveFraction": 0.2,
+  "predictedP90CostUsd": 41.9632,
+  "predictedP90WallSec": 8552.599,
+  "feasible": true,
+  "reason": null
+}
