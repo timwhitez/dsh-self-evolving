@@ -53,7 +53,10 @@ import type {
 } from './engine.js'
 import { runDoctor } from './doctor.js'
 import { loadTrustedRoute } from './trusted-route.js'
-import { createRealEvaluationProvider, selectEfficientObservedTasks } from './real-capabilities.js'
+import {
+  createRealEvaluationProvider,
+  selectFailureSeekingObservedTasks,
+} from './real-capabilities.js'
 
 const V1_SOURCE_FILES = [
   'src/index.ts',
@@ -796,9 +799,13 @@ async function observedTaskIds(config: V011DemoConfig): Promise<string[]> {
   if (!Array.isArray(split.observedTaskIds) || !Array.isArray(inventory.tasks)) {
     throw new Error('v0.1.1 capabilities: split/inventory invalid')
   }
-  return selectEfficientObservedTasks(
+  return selectFailureSeekingObservedTasks(
     split.observedTaskIds as string[],
-    inventory.tasks as Array<{ taskId: string; agentTimeoutSec: number }>,
+    inventory.tasks as Array<{
+      taskId: string
+      agentTimeoutSec: number
+      difficulty: 'easy' | 'medium' | 'hard'
+    }>,
   )
 }
 

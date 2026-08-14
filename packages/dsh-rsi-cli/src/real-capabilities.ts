@@ -394,6 +394,41 @@ export function selectEfficientObservedTasks(
     .map((task) => task.taskId)
 }
 
+export function selectFailureSeekingObservedTasks(
+  observedTaskIds: string[],
+  inventory: Array<{
+    taskId: string
+    agentTimeoutSec: number
+    difficulty: 'easy' | 'medium' | 'hard'
+  }>,
+): string[] {
+  if (new Set(observedTaskIds).size !== observedTaskIds.length) {
+    throw new Error('real capabilities: duplicate observed task id')
+  }
+  const byId = new Map(inventory.map((task) => [task.taskId, task]))
+  const difficultyRank = { hard: 0, medium: 1, easy: 2 } as const
+  return observedTaskIds
+    .map((taskId) => {
+      const task = byId.get(taskId)
+      if (
+        task === undefined ||
+        !Number.isSafeInteger(task.agentTimeoutSec) ||
+        task.agentTimeoutSec <= 0 ||
+        difficultyRank[task.difficulty] === undefined
+      ) {
+        throw new Error(`real capabilities: invalid inventory task ${taskId}`)
+      }
+      return task
+    })
+    .sort(
+      (left, right) =>
+        difficultyRank[left.difficulty] - difficultyRank[right.difficulty] ||
+        left.agentTimeoutSec - right.agentTimeoutSec ||
+        left.taskId.localeCompare(right.taskId),
+    )
+    .map((task) => task.taskId)
+}
+
 export function createRealEvaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec) {
   const runId = evaluatorRunId(config, spec)
   return {

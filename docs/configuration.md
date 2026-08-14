@@ -25,7 +25,9 @@ Changing an identity, profile or limit requires a new state directory and run ID
 
 `v011-stable-demo` keeps the same K=3/task/budget/model limits while replacing the single-file patch proposal with
 the bounded multi-file candidate-tree protocol, exact-parent Loader proposal mode, raw evidence citations,
-candidate-owned tests, admission receipts and mechanism-outcome feedback.
+candidate-owned tests, admission receipts and mechanism-outcome feedback. Its failure-discovery order is frozen
+outcome-blind from published inventory metadata: `hard` before `medium` before `easy`, then shortest timeout and task
+ID. This increases the chance of finding a real failed task without reading candidate rewards or sealed data.
 
 The provider URL is read from `[model_providers.deepseek]` in private `~/.codex/config.toml`; the bearer is read
 from private `~/.codex/auth.json`. `doctor` fails before a paid request if either file, Docker, Harbor, task material,
