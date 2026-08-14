@@ -1,6 +1,6 @@
 {
   "name": "@dsh-rsi/cli",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "type": "module",
   "description": "Product CLI for the bounded, crash-resumable DSH RSI stable-demo profile.",
   "main": "lib/index.js",

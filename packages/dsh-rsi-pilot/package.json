@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Gate 6 pilot search loop driver: autonomously runs propose→build→evaluate for K=10 admitted candidates on the dev set, with crash/resume, dedup, and full evidence. Dev-only (no sealed reveal). Reuses the proposer + builder + search + controller modules.",
+  "description": "Optional post-release pilot search loop; the v0.1 product path is the bounded K=3 stable-demo CLI.",
   "main": "lib/index.js",
   "exports": {
     ".": {

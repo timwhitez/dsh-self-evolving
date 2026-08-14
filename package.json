@@ -1,9 +1,9 @@
 {
   "name": "@dsh-rsi/root",
-  "version": "0.0.0",
+  "version": "0.1.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "Recursive self-improvement as standard DSH Cordis bundles/services. Specification-first; no benchmark claims without sealed artifacts.",
+  "description": "A bounded, crash-resumable DSH Cordis self-iteration engine with auditable Harbor evaluation.",
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -22,7 +22,8 @@
     "byteequal:check": "tsx scripts/check-byte-equal.ts",
     "bootstrap:upstreams": "node scripts/bootstrap-upstreams.mjs",
     "dsh-rsi": "node packages/dsh-rsi-cli/lib/cli.js",
-    "release:build": "tsx scripts/build-release.ts"
+    "release:build": "tsx scripts/build-release.ts",
+    "release:check": "tsx scripts/check-release-readiness.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
