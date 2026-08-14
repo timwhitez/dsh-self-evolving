@@ -217,6 +217,14 @@ function doctorFailures(report: DoctorReport): DoctorCheck[] {
   return report.checks.filter((item) => item.status !== 'PASS')
 }
 
+function classifyBuildRejection(message: string): string {
+  if (message.includes('patch does not apply')) return 'PATCH_DOES_NOT_APPLY'
+  if (message.includes('source diff')) return 'PATCH_CONTAINMENT_REJECT'
+  if (message.includes('tsc failed')) return 'COMPILE_REJECT'
+  if (message.includes('policy scan rejected')) return 'POLICY_REJECT'
+  return 'BUILD_REJECT'
+}
+
 export async function runStableDemo(
   config: StableDemoConfig,
   caps: StableDemoCapabilities,
@@ -320,8 +328,21 @@ export async function runStableDemo(
             })
           let child: BuiltCandidate | undefined
           for (let attempt = 1; attempt <= 3 && child === undefined; attempt += 1) {
-            const proposalEventId = `proposal:${generation}:${attempt}:completed`
             events = await readAll(service.journal)
+            const rejectionEvidence = events
+              .filter(
+                (event) =>
+                  (event.type === 'build.rejected' || event.type === 'proposal.rejected') &&
+                  (event.payload as { generation?: unknown }).generation === generation,
+              )
+              .map((event) => {
+                const classification =
+                  (event.payload as { classification?: unknown }).classification ??
+                  'PROPOSAL_REJECT'
+                return `rejection:${String(classification)}:journal:${event.eventHash}`
+              })
+            const attemptEvidenceRefs = [...evidenceRefs, ...rejectionEvidence]
+            const proposalEventId = `proposal:${generation}:${attempt}:completed`
             let proposal = eventPayload<StableProposal>(events, proposalEventId)
             if (proposal === undefined) {
               const proposalRejectionId = `proposal:${generation}:${attempt}:rejected`
@@ -331,7 +352,7 @@ export async function runStableDemo(
                   generation,
                   attempt,
                   parent,
-                  evidenceRefs,
+                  evidenceRefs: attemptEvidenceRefs,
                   idempotencyKey: `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`,
                 })
                 if (
@@ -347,6 +368,7 @@ export async function runStableDemo(
                 await recordOnce(service, proposalRejectionId, 'proposal.rejected', {
                   generation,
                   attempt,
+                  classification: 'PROPOSAL_PROTOCOL_REJECT',
                   errorDigest: `sha256:${createHash('sha256').update(message).digest('hex')}`,
                 })
                 continue
@@ -374,6 +396,7 @@ export async function runStableDemo(
                 generation,
                 attempt,
                 proposalId: proposal.proposalId,
+                classification: classifyBuildRejection(message),
                 errorDigest: `sha256:${createHash('sha256').update(message).digest('hex')}`,
               })
             }

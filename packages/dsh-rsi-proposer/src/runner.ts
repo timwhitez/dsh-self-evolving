@@ -78,6 +78,8 @@ export function buildProposalPrompt(input: ProposalInput): string {
     '',
     'Constraints:',
     '- Implement exactly ONE primary hypothesis; include协同 changes only if essential.',
+    '- sourceDiff MUST apply to the exact parent source with git apply; copy context lines byte-for-byte.',
+    '- If evidence reports PATCH_DOES_NOT_APPLY, emit a smaller hunk using exact visible parent lines.',
     '- Do NOT propose a no-change or test-only change.',
     '- Do NOT reference task names, verifier files, or expected outputs.',
     '- Width is ' + input.width + '; emit exactly ONE child in this response.',

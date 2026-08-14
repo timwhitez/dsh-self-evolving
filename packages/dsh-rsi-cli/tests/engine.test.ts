@@ -161,6 +161,12 @@ describe('stable-demo engine', () => {
   it('records a build reject and admits a bounded replacement proposal', async () => {
     const { config, counters, capabilities } = await fixture()
     const originalBuild = capabilities.build
+    const originalPropose = capabilities.propose
+    const proposalEvidence: string[][] = []
+    capabilities.propose = async (input) => {
+      proposalEvidence.push(input.evidenceRefs)
+      return originalPropose(input)
+    }
     let rejected = false
     capabilities.build = async (input) => {
       if (!rejected) {
@@ -174,6 +180,9 @@ describe('stable-demo engine', () => {
     expect(result.status).toBe('STABLE_ITERATION_VERIFIED')
     expect(counters.proposals).toBe(4)
     expect(counters.builds).toBe(4)
+    expect(proposalEvidence[1]).toEqual(
+      expect.arrayContaining([expect.stringContaining('rejection:BUILD_REJECT:journal:sha256:')]),
+    )
   })
 
   it('records an invalid proposal and continues with the next bounded attempt', async () => {

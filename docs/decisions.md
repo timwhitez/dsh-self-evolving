@@ -217,3 +217,16 @@ running evidence lineage.
 
 **Consequence:** `doctor`, `run` and `resume` fail before mutation if tracked or untracked executable source differs
 from the bound commit.
+
+## ADR-020 — Feed build rejection classification to replacement attempts
+
+**Decision:** stable-demo config schema v10 adds each prior same-generation proposal/build rejection classification
+and journal hash to the next attempt's immutable evidence. Raw compiler/provider text remains outside prompts; only a
+fixed safe classification is exported.
+
+**Why:** v9 successfully recovered from SIGKILL, then generation 2 produced three hunks that did not apply. The second
+and third proposer calls did not know the earlier failure class, so the bounded replacement loop was blind. v9 is
+retained as recovery/build-reject evidence and marked `QUARANTINED_REPLACEMENT_FEEDBACK_GAP`.
+
+**Consequence:** replacement prompts explicitly require byte-exact parent context and receive
+`PATCH_DOES_NOT_APPLY` when relevant. Solver-trial selection and frozen task outcomes remain unchanged.
