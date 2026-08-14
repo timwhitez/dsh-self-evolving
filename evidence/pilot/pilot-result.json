@@ -1,0 +1,76 @@
+{
+  "runId": "pilot-001",
+  "K": 10,
+  "B_eval": 40,
+  "admittedCount": 10,
+  "N": 39,
+  "duplicateEdges": 0,
+  "buildRejects": 0,
+  "evalFailures": 0,
+  "terminal": true,
+  "reason": "SEARCH_COMPLETE: 10 admitted",
+  "wallSec": 0.001,
+  "candidates": [
+    {
+      "candidateId": "baseline",
+      "canonicalParent": null,
+      "s": 12,
+      "f": 3
+    },
+    {
+      "candidateId": "sha256:d80afd15d34d28784",
+      "canonicalParent": "baseline",
+      "s": 1,
+      "f": 2
+    },
+    {
+      "candidateId": "sha256:bee32f1c8e57fd686",
+      "canonicalParent": "baseline",
+      "s": 3,
+      "f": 0
+    },
+    {
+      "candidateId": "sha256:1b7061ea8c34f8c1c",
+      "canonicalParent": "baseline",
+      "s": 1,
+      "f": 2
+    },
+    {
+      "candidateId": "sha256:c1c8a96a57070d80d",
+      "canonicalParent": "sha256:bee32f1c8e57fd686",
+      "s": 2,
+      "f": 1
+    },
+    {
+      "candidateId": "sha256:58b4e0c2c52900fe5",
+      "canonicalParent": "sha256:bee32f1c8e57fd686",
+      "s": 2,
+      "f": 1
+    },
+    {
+      "candidateId": "sha256:706a306316420c32b",
+      "canonicalParent": "baseline",
+      "s": 1,
+      "f": 2
+    },
+    {
+      "candidateId": "sha256:c1d4fe625a60659fc",
+      "canonicalParent": "sha256:c1c8a96a57070d80d",
+      "s": 1,
+      "f": 2
+    },
+    {
+      "candidateId": "sha256:5822dc68078495255",
+      "canonicalParent": "sha256:58b4e0c2c52900fe5",
+      "s": 1,
+      "f": 2
+    },
+    {
+      "candidateId": "sha256:0b78c591d0679847b",
+      "canonicalParent": "sha256:706a306316420c32b",
+      "s": 0,
+      "f": 0
+    }
+  ],
+  "observationCount": 39
+}

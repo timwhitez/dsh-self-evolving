@@ -16,6 +16,8 @@ node_modules/
 evidence/*
 !evidence/calibration/
 !evidence/calibration/**
+!evidence/pilot/
+!evidence/pilot/**
 runs/
 
 # Editor / OS noise.

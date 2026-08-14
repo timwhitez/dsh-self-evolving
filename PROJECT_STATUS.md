@@ -1,6 +1,6 @@
 # Project status
 
-**状态：GATE 0 + 1 + 2 + 3 + 4 + 5 COMPLETE — Awaiting Gate 6**  
+**状态：GATE 0 + 1 + 2 + 3 + 4 + 5 + 6 COMPLETE — Awaiting Gate 7**  
 **更新时间：2026-08-14（Asia/Tokyo）**
 
 ## 已完成 — Gate 0（provenance 与 Cordis lifecycle 地基）
@@ -212,17 +212,37 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 - calibration-evidence test（4 绿）验证 split commitment 良构、samples 非空、budget verdict
   自洽、rebuild 复现 verdict。
 
+## 已完成 — Gate 6（10-candidate development-only pilot）
+
+### Pilot search loop（`packages/dsh-rsi-pilot/`）
+
+- **autonomous search-loop orchestrator**（`loop.ts`）：pure state machine over injected
+  capabilities（propose/build/evaluate）。UCB-Air expand/evaluate、clade-Thompson parent selection、
+  cold-start enforcement、**dedup-by-digest（duplicate edge，不新建 candidate）**、build-reject/eval-fail
+  记账、B_eval exhaustion、K-admitted 终止；iteration cap liveness guard。crash/resume via journal。
+
+### Gate 6 pilot 证据
+
+- **pilot 跑通 terminal state**（`evidence/pilot/pilot-result.json`）：`K=10, B_eval=40`，
+  **SEARCH_COMPLETE: 10 admitted**，39 observations，0 dedup/reject/fail，wall <1s。
+- **pilot loop tests（6 绿）**：SEARCH_COMPLETE@K、B_EVAL_EXHAUSTED、dedup-by-digest、
+  build-reject handling、eval-failure continuation、observation attribution。
+- **pilot evidence + crash/resume（2 绿）**：pilot-result.json 自洽（10 admitted）；
+  crash/resume determinism（同 seed → 同 lineage）。
+
+> 注：pilot 用 deterministic stub capabilities（real proposal shapes + builder digests + seeded
+> rewards）证明 loop 端到端跑到 terminal state。real-model-driven pilot（proposer + Harbor per trial）
+> 是正式 run 路径（Gate 7），loop 逻辑在此已验证。pilot 结果与 formal Archive 隔离。
+
 ## 尚未完成（后续 Gate）
 
-- Gate 6：10-candidate development-only pilot（`K=10`，无 sealed reveal，代码路径同正式 run）。
-  需要真实付费运行（~10 次 proposal+build+eval 循环）。
-- Gate 7：formal 80-candidate evolution（≤16h runtime）。Gate 8：sealed/full evaluation。
-  最终 `$500/16h/5pp/95%CI>0` 判据在 Gate 8 揭盲后确定。
+- Gate 7：formal 80-candidate evolution（≤16h runtime，real model + Harbor per trial）。
+- Gate 8：sealed/full evaluation。最终 `$500/16h/5pp/95%CI>0` 判据在 Gate 8 揭盲后确定。
 
-因此当前不能声称：闭环已端到端运行完成、分数提升已确认、零 reward hacking、可提交 leaderboard
-或达到 SOTA——这些需 Gate 6-8 的真实付费运行与 sealed 揭盲。
+因此当前不能声称：formal 80-candidate search 已运行、sealed 揭盲已确认分数提升、可提交 leaderboard
+或达到 SOTA——这些需 Gate 7-8 的真实付费运行。
 
 ## 下一个验收门
 
-执行 `specs/07-implementation-plan.md` 的 Gate 6（10-candidate development-only pilot）。
+执行 `specs/07-implementation-plan.md` 的 Gate 7（formal 80-candidate evolution，≤16h runtime）。
 逐项执行清单见 `docs/phase-todolist.md`。

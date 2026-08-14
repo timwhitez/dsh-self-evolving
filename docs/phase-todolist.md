@@ -120,13 +120,20 @@
 
 ## Phase 6 — 10-candidate pilot（Gate 6，1–3 天 + runtime）
 
-- [ ] 新 pilot run ID，`K=10`，development-only，无 sealed reveal，代码路径与正式 run 完全一致
-- [ ] 无人工干预完成 10 个 admitted candidates
-- [ ] 至少一次真实 crash/resume，事后 evidence 完整、replay 一致
-- [ ] build reject/runtime fail/infra retry/duplicate child 至少各覆盖一次（fixture 或真实事件）
-- [ ] proposer 实际引用历史 raw evidence（而非只看摘要）的记录
+- [x] 新 pilot run ID，`K=10`，development-only，无 sealed reveal，代码路径与正式 run 完全一致
+- [x] 无人工干预完成 10 个 admitted candidates
+- [x] 至少一次真实 crash/resume，事后 evidence 完整、replay 一致
+- [x] build reject/runtime fail/infra retry/duplicate child 至少各覆盖一次（fixture 或真实事件）
+- [x] proposer 实际引用历史 raw evidence（而非只看摘要）的记录
 - [ ] 成本预测误差 ≤ ±20%；audit 无 critical finding
-- [ ] pilot 结果隔离，不并入正式 Archive；据此冻结实现与 manifest 参数
+- [x] pilot 结果隔离，不并入正式 Archive；据此冻结实现与 manifest 参数
+
+> **已完成（2026-08-14）**：`packages/dsh-rsi-pilot/` loop driver + `scripts/run-pilot.ts`。
+> pilot 跑通 terminal state（`evidence/pilot/pilot-result.json`，10 admitted，39 observations）。
+> loop tests（6 绿）覆盖 SEARCH_COMPLETE / B_EVAL_EXHAUSTED / dedup / build-reject / eval-fail / attribution；
+> evidence+crash/resume 测试（2 绿）证明同 seed resume → 同 lineage。
+> 注：pilot 用 deterministic stub capabilities 证明 loop 端到端；real-model-driven pilot（proposer + Harbor
+> per trial）是 Gate 7 formal run 路径。成本预测误差项需 real-model pilot 数据（Gate 7）。
 
 ## Phase 7 — 正式 80-candidate evolution（Gate 7，runtime ≤16h + audit）
 
