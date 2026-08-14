@@ -17,6 +17,7 @@ describe('real crash receipt verifier', () => {
       runId: 'crash-test',
       stateDir: root,
       repoRoot: '/root/dsh-RSI',
+      codeCommit: 'a'.repeat(40),
     })
     await writeFile(
       join(root, 'crash-injection-request.json'),

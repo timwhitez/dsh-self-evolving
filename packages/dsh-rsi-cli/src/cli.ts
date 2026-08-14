@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
 import { auditStableRun } from './audit.js'
 import {
@@ -28,13 +29,25 @@ function required(name: string): string {
   return value
 }
 
+function gitHead(repoRoot: string): Promise<string> {
+  return new Promise((done, reject) => {
+    execFile('/usr/bin/git', ['-C', repoRoot, 'rev-parse', 'HEAD'], (error, stdout, stderr) =>
+      error
+        ? reject(new Error(`init: cannot resolve Git HEAD: ${stderr}`, { cause: error }))
+        : done(stdout.trim()),
+    )
+  })
+}
+
 async function main(): Promise<void> {
   const command = process.argv[2]
   if (command === 'init') {
+    const repoRoot = resolve(option('--repo-root') ?? process.cwd())
     const input: InitConfigInput = {
       runId: required('--run-id'),
       stateDir: resolve(required('--state-dir')),
-      repoRoot: resolve(option('--repo-root') ?? process.cwd()),
+      repoRoot,
+      codeCommit: await gitHead(repoRoot),
       ...(option('--tb-root') === undefined ? {} : { terminalBenchRoot: option('--tb-root')! }),
       ...(option('--budget-usd') === undefined
         ? {}

@@ -24,6 +24,7 @@ describe('stable-demo versioned config', () => {
       runId: 'stable-demo-test',
       stateDir,
       repoRoot: '/root/dsh-RSI',
+      codeCommit: 'a'.repeat(40),
     })
     expect(config.limits).toMatchObject({
       admittedChildren: 3,
@@ -47,6 +48,7 @@ describe('stable-demo versioned config', () => {
       runId: 'stable-demo-test',
       stateDir: '/tmp/stable-demo-test',
       repoRoot: '/root/dsh-RSI',
+      codeCommit: 'a'.repeat(40),
     })
     expect(() =>
       validateStableDemoConfig({ ...config, limits: { ...config.limits, solverTrialsMax: 16 } }),
@@ -67,6 +69,7 @@ describe('stable-demo versioned config', () => {
       runId: 'stable-demo-test',
       stateDir,
       repoRoot: '/root/dsh-RSI',
+      codeCommit: 'a'.repeat(40),
     })
     const path = await initializeState(config)
     await chmod(path, 0o640)

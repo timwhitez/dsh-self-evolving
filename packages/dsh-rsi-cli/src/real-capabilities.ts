@@ -403,8 +403,15 @@ function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec
       const directory = await stat(join(config.stateDir, 'external-evaluator', runId)).catch(
         () => null,
       )
-      if (directory !== null)
-        throw new Error(`real evaluator: incomplete prior external job ${runId}`)
+      if (directory !== null) {
+        const rawTerminal = await stat(
+          join(config.stateDir, 'external-evaluator', runId, 'jobs', runId, 'result.json'),
+        ).catch(() => null)
+        if (rawTerminal?.isFile() === true) {
+          return { status: 'terminal' as const, externalJobId: runId }
+        }
+        throw new Error(`real evaluator: ambiguous incomplete prior external job ${runId}`)
+      }
       return { status: 'absent' as const }
     },
     async launch() {
@@ -430,6 +437,25 @@ function evaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec
     },
     async collect(externalJobId: string): Promise<EvaluationObservation> {
       if (externalJobId !== runId) throw new Error('real evaluator: external job identity changed')
+      if ((await stat(summaryPath(config, runId)).catch(() => null)) === null) {
+        await exec(
+          join(config.repoRoot, 'node_modules', '.bin', 'tsx'),
+          [join(config.repoRoot, 'scripts', 'run-gate5-real-calibration.ts')],
+          {
+            cwd: config.repoRoot,
+            env: {
+              ...process.env,
+              GATE5_RUN_ID: runId,
+              GATE5_TASK_IDS: spec.taskId,
+              GATE5_ATTEMPTS: '1',
+              GATE5_CONCURRENCY: '1',
+              DSH_RSI_CANDIDATE_ROOT: spec.candidate.sourceRoot,
+              DSH_RSI_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
+              TB21_DIR: config.terminalBenchRoot,
+            },
+          },
+        )
+      }
       const bytes = await readFile(summaryPath(config, runId), 'utf8')
       const summary = JSON.parse(bytes) as {
         normalized: Array<{

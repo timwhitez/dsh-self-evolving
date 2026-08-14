@@ -335,6 +335,108 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
   return { receipt, packed }
 }
 
+async function collectRun(input: {
+  runDir: string
+  runId: string
+  plannedTrials: number
+  candidateIdHint?: string
+  capsuleSha256?: string
+  wallSec: number | null
+}) {
+  const jobDir = join(input.runDir, 'jobs', input.runId)
+  const entries = await readdir(jobDir, { withFileTypes: true })
+  const trialDirs = entries
+    .filter((entry) => entry.isDirectory() && entry.name.includes('__'))
+    .map((entry) => join(jobDir, entry.name))
+    .sort()
+  if (trialDirs.length !== input.plannedTrials) {
+    throw new Error(`reconcile: trial matrix incomplete ${trialDirs.length}/${input.plannedTrials}`)
+  }
+  const normalized = []
+  const candidateIds = new Set<string>()
+  const attemptsByTask = new Map<string, number>()
+  for (const trialDir of trialDirs) {
+    const result = await stat(join(trialDir, 'result.json')).catch(() => null)
+    if (result?.isFile() !== true)
+      throw new Error(`reconcile: terminal result missing: ${trialDir}`)
+    const configRaw = JSON.parse(await readFile(join(trialDir, 'config.json'), 'utf8')) as {
+      task: { path: string }
+    }
+    const taskId = configRaw.task.path.split('/').at(-1) ?? configRaw.task.path
+    const attemptIndex = attemptsByTask.get(taskId) ?? 0
+    attemptsByTask.set(taskId, attemptIndex + 1)
+    const attributionPath = join(trialDir, 'attribution.json')
+    let attribution = await readFile(attributionPath, 'utf8').catch(() => null)
+    if (attribution === null) {
+      if (input.candidateIdHint === undefined) {
+        throw new Error(`reconcile: attribution missing: ${trialDir}`)
+      }
+      attribution =
+        JSON.stringify({ candidate_id: input.candidateIdHint, attempt_index: attemptIndex }) + '\n'
+      await writeFile(attributionPath, attribution, { flag: 'wx' })
+    }
+    const parsed = JSON.parse(attribution) as {
+      candidate_id?: unknown
+      attempt_index?: unknown
+    }
+    if (typeof parsed.candidate_id !== 'string' || !Number.isSafeInteger(parsed.attempt_index)) {
+      throw new Error(`reconcile: attribution invalid: ${trialDir}`)
+    }
+    candidateIds.add(parsed.candidate_id)
+    const record = await normalizeTrial({
+      trialDir,
+      expectedCandidateId: parsed.candidate_id,
+      taskId,
+      requireAcpEvidence: true,
+    })
+    const usage = await readDshUsage(trialDir).catch(() => null)
+    normalized.push({
+      ...record,
+      usage,
+      costUsd: usage === null ? 0 : priceUsage(usage),
+      priced: usage !== null,
+    })
+  }
+  if (candidateIds.size !== 1) throw new Error('reconcile: candidate attribution is not unique')
+  const candidateId = [...candidateIds][0]!
+  const summary = {
+    schemaVersion: 1,
+    runId: input.runId,
+    capabilityMode: 'real-zen-harbor-acp',
+    candidateId,
+    capsuleSha256: input.capsuleSha256 ?? null,
+    route: {
+      requestedModel: targetModel,
+      effectiveModel,
+      reasoningEffort: 'high',
+      contextWindow,
+      maxTokens,
+      wireApi: 'chat-completions-compatible',
+    },
+    officialPricing,
+    plannedTrials: input.plannedTrials,
+    collectedTrials: normalized.length,
+    wallSec: input.wallSec,
+    reconciledFromTerminalRaw: input.candidateIdHint === undefined,
+    normalized,
+  }
+  const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
+  await writeFile(join(input.runDir, 'summary.json'), summaryBytes, { mode: 0o600, flag: 'wx' })
+  const output = {
+    runId: input.runId,
+    candidateId,
+    capsuleSha256: summary.capsuleSha256,
+    plannedTrials: summary.plannedTrials,
+    collectedTrials: summary.collectedTrials,
+    statuses: normalized.map((row) => row.status),
+    wallSec: input.wallSec,
+    summaryHash: `sha256:${createHash('sha256').update(summaryBytes).digest('hex')}`,
+    runDir: input.runDir,
+  }
+  process.stdout.write(JSON.stringify(output) + '\n')
+  return summary
+}
+
 async function main(): Promise<void> {
   const runId = process.env['GATE5_RUN_ID'] ?? 'gate5-real-smoke-v1'
   if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(runId)) throw new Error('unsafe run id')
@@ -371,10 +473,20 @@ async function main(): Promise<void> {
       throw new Error(`fixed TB 2.1 task materialization missing: ${task.taskId}`)
     })
   }
-  const route = await loadTrustedRoute()
   await mkdir(controllerRoot, { recursive: true, mode: 0o700 })
   await chmod(controllerRoot, 0o700)
   const runDir = join(controllerRoot, runId)
+  if ((await stat(runDir).catch(() => null)) !== null) {
+    const summaryPath = join(runDir, 'summary.json')
+    const existing = await readFile(summaryPath, 'utf8').catch(() => null)
+    if (existing !== null) {
+      process.stdout.write(existing)
+      return
+    }
+    await collectRun({ runDir, runId, plannedTrials: taskIds.length * attempts, wallSec: null })
+    return
+  }
+  const route = await loadTrustedRoute()
   await mkdir(runDir, { recursive: false, mode: 0o700 })
   const workDir = await mkdtemp(join(tmpdir(), `${runId}-`))
   const { receipt, packed } = await buildBaselineRuntime(workDir, route.baseUrl)
@@ -435,70 +547,14 @@ async function main(): Promise<void> {
       env: process.env,
     })
     const wallSec = (Date.now() - startedAt) / 1000
-    const jobDir = join(runDir, 'jobs', runId)
-    const entries = await readdir(jobDir, { withFileTypes: true })
-    const trialDirs = entries
-      .filter((entry) => entry.isDirectory() && entry.name.includes('__'))
-      .map((entry) => join(jobDir, entry.name))
-      .sort()
-    const normalized = []
-    const attemptsByTask = new Map<string, number>()
-    for (const trialDir of trialDirs) {
-      const configRaw = JSON.parse(await readFile(join(trialDir, 'config.json'), 'utf8')) as {
-        task: { path: string }
-      }
-      const taskId = configRaw.task.path.split('/').at(-1) ?? configRaw.task.path
-      const attemptIndex = attemptsByTask.get(taskId) ?? 0
-      attemptsByTask.set(taskId, attemptIndex + 1)
-      await writeFile(
-        join(trialDir, 'attribution.json'),
-        JSON.stringify({ candidate_id: receipt.candidateId, attempt_index: attemptIndex }) + '\n',
-        { flag: 'wx' },
-      )
-      const record = await normalizeTrial({
-        trialDir,
-        expectedCandidateId: receipt.candidateId,
-        taskId,
-        requireAcpEvidence: true,
-      })
-      const usage = await readDshUsage(trialDir)
-      normalized.push({ ...record, usage, costUsd: priceUsage(usage), priced: true })
-    }
-    const summary = {
-      schemaVersion: 1,
+    await collectRun({
+      runDir,
       runId,
-      capabilityMode: 'real-zen-harbor-acp',
-      candidateId: receipt.candidateId,
-      capsuleSha256: packed.sha256,
-      route: {
-        requestedModel: targetModel,
-        effectiveModel,
-        reasoningEffort: 'high',
-        contextWindow,
-        maxTokens,
-        wireApi: 'chat-completions-compatible',
-      },
-      officialPricing,
       plannedTrials: taskIds.length * attempts,
-      collectedTrials: normalized.length,
+      candidateIdHint: receipt.candidateId,
+      capsuleSha256: packed.sha256,
       wallSec,
-      normalized,
-    }
-    const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
-    await writeFile(join(runDir, 'summary.json'), summaryBytes, { mode: 0o600, flag: 'wx' })
-    process.stdout.write(
-      JSON.stringify({
-        runId,
-        candidateId: receipt.candidateId,
-        capsuleSha256: packed.sha256,
-        plannedTrials: summary.plannedTrials,
-        collectedTrials: summary.collectedTrials,
-        statuses: normalized.map((row) => row.status),
-        wallSec,
-        summaryHash: `sha256:${createHash('sha256').update(summaryBytes).digest('hex')}`,
-        runDir,
-      }) + '\n',
-    )
+    })
   } finally {
     await new Promise<void>((done, reject) =>
       artifact.server.close((error) => (error ? reject(error) : done())),

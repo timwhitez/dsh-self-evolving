@@ -22,6 +22,14 @@ async function commandOk(file: string, args: string[]): Promise<boolean> {
   })
 }
 
+async function commandOutput(file: string, args: string[]): Promise<string | null> {
+  return new Promise((done) => {
+    execFile(file, args, { timeout: 15_000 }, (error, stdout) =>
+      done(error === null ? stdout.trim() : null),
+    )
+  })
+}
+
 function check(name: string, passed: boolean, detail: string): DoctorCheck {
   return { name, status: passed ? 'PASS' : 'FAIL', detail }
 }
@@ -64,6 +72,12 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
     (await access(join(config.terminalBenchRoot, taskProbe, 'task.toml'), constants.R_OK)
       .then(() => true)
       .catch(() => false))
+  const currentCommit = await commandOutput('/usr/bin/git', [
+    '-C',
+    config.repoRoot,
+    'rev-parse',
+    'HEAD',
+  ])
   const checks = [
     check(
       'private-auth',
@@ -90,6 +104,7 @@ export async function runDoctor(config: StableDemoConfig): Promise<DoctorReport>
       'private run state is writable',
     ),
     check('budget', config.limits.budgetUsd > 0, `reserved budget $${config.limits.budgetUsd}`),
+    check('code-identity', currentCommit === config.codeCommit, `Git commit ${config.codeCommit}`),
   ]
   return { ready: checks.every((item) => item.status === 'PASS'), checks }
 }

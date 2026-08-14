@@ -180,3 +180,15 @@ second limits. Split-file order was deterministic but unnecessarily expensive fo
 
 **Consequence:** selection remains outcome-blind and preregistered while reducing worst-case first-batch wall time.
 The solver-trial ceiling and model token settings do not change.
+
+## ADR-017 — Bind stable-demo to the full execution commit
+
+**Decision:** stable-demo config schema v7 captures the full Git commit during `init`. `doctor`, `run` and `resume`
+require the checkout HEAD to match before any paid or mutating action.
+
+**Why:** v6 demonstrated terminal-raw reconciliation, but its config identified only `repoRoot`; a source edit could
+otherwise alter behavior without an identity mismatch. v6 is retained as engineering recovery evidence and is not a
+Gate 6 acceptance run.
+
+**Consequence:** the v7 acceptance run starts from a committed clean implementation. No source or documentation commit
+is made until its injected crash has resumed and its final audit receipt is written.

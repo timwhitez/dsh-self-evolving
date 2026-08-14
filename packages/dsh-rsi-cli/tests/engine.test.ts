@@ -31,7 +31,12 @@ async function fixture(): Promise<{
   roots.push(root)
   const repoRoot = join(root, 'repo')
   const stateDir = join(root, 'state')
-  const config = createStableDemoConfig({ runId: 'stable-k3', stateDir, repoRoot })
+  const config = createStableDemoConfig({
+    runId: 'stable-k3',
+    stateDir,
+    repoRoot,
+    codeCommit: 'a'.repeat(40),
+  })
   await initializeState(config)
   const counters = { proposals: 0, builds: 0, launches: 0, collects: 0 }
   const providers = new Map<string, { externalJobId: string; terminal: boolean }>()
