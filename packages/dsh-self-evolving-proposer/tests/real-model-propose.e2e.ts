@@ -5,8 +5,8 @@
  * child，preservation tests 通过，transcript/cost 完整".
  *
  * This test boots the REAL DSH Loader with a model-backed composition
- * (llm-deepseek → agent-spine-demo → agent-default-model), drives
- * ctx.agents.create with the requested deepseek-v4-flash-zen provider, and asserts
+ * (llm-responses → agent-spine-demo → agent-default-model), drives
+ * ctx.agents.create with the locked deepseek-v4-flash provider, and asserts
  * the model produces ≥1 nontrivial proposal that passes the protocol validator.
  *
  * Requires: DEEPSEEK_API_KEY env + the verified provider endpoint. Skips
@@ -35,13 +35,10 @@ const dshRoot = resolve(repoRoot, 'deepseek-harness')
 
 const ROUTE: ModelRoute = {
   provider: 'deepseek-official',
-  model: 'deepseek-v4-flash-zen',
+  model: 'deepseek-v4-flash',
   maxTokens: 32_768,
 }
-const API_KEY =
-  process.env['DEEPSEEK_API_KEY'] ?? process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] ?? ''
-const BASE_URL =
-  process.env['DSH_SELF_EVOLVING_PROVIDER_BASE_URL'] ?? 'https://64.186.236.156:24635/v1'
+const API_KEY = process.env['DEEPSEEK_API_KEY'] ?? ''
 
 let scratch: string | undefined
 
@@ -75,9 +72,14 @@ async function bootModelComposition(): Promise<Context> {
   await linkPkg('@deepseek-ai', 'cordis-plugin-group', join(dshRoot, 'vendor', 'group'))
   await linkPkg('@deepseek-ai', 'dsh-llm', join(dshRoot, 'packages', 'llm', 'llm'))
   await linkPkg(
-    '@deepseek-ai',
-    'dsh-llm-deepseek',
-    join(dshRoot, 'packages', 'llm', 'llm-deepseek'),
+    '@dsh-self-evolving',
+    'llm-responses',
+    join(repoRoot, 'packages', 'dsh-self-evolving-llm-responses'),
+  )
+  await linkPkg(
+    '@dsh-self-evolving',
+    'proposer',
+    join(repoRoot, 'packages', 'dsh-self-evolving-proposer'),
   )
   await linkPkg('@deepseek-ai', 'dsh-session', join(dshRoot, 'packages', 'core', 'session'))
   await linkPkg('@deepseek-ai', 'dsh-agent', join(dshRoot, 'packages', 'core', 'agent'))
@@ -114,17 +116,18 @@ async function bootModelComposition(): Promise<Context> {
       '- id: llm',
       "  name: '@deepseek-ai/dsh-llm'",
       '  config: {}',
-      '- id: llm-deepseek',
-      "  name: '@deepseek-ai/dsh-llm-deepseek'",
+      '- id: llm-responses',
+      "  name: '@dsh-self-evolving/llm-responses'",
       '  config:',
-      '    baseURL: ' + JSON.stringify(BASE_URL),
-      '    thinking: enabled',
+      '    apiKeyEnv: DEEPSEEK_API_KEY',
       '    reasoningEffort: high',
+      '    contextWindow: 1048576',
+      '    maxTokens: 32768',
       '- id: agent-default-model',
       "  name: '@deepseek-ai/dsh-agent-default-model'",
       '  config:',
       '    provider: deepseek-official',
-      '    model: deepseek-v4-flash-zen',
+      '    model: deepseek-v4-flash',
       '- id: agent-spine',
       "  name: '@deepseek-ai/dsh-agent-spine-demo'",
       '  config:',
@@ -165,16 +168,11 @@ async function bootModelComposition(): Promise<Context> {
 
 const MODEL_TIMEOUT = { timeout: 180_000 }
 
-describe.skipIf(!API_KEY)('Gate 4 — real-model proposal (deepseek-v4-flash-zen)', () => {
+describe.skipIf(!API_KEY)('Gate 4 — real-model proposal (deepseek-v4-flash)', () => {
   it(
     'generates >=1 nontrivial admitted child from the baseline parent + synthetic evidence',
     MODEL_TIMEOUT,
     async () => {
-      // Allow the self-signed cert on the internal provider endpoint.
-      if (BASE_URL.includes('64.186.236.156')) {
-        process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'
-      }
-
       const ctx = await bootModelComposition()
       try {
         // Parent = the baseline candidate source. Compute its canonical digest.
@@ -213,7 +211,7 @@ export function apply(ctx, config) {
         }
         expect(transcript.assistantText.length).toBeGreaterThan(0)
         expect(transcript.eventCount).toBeGreaterThan(0)
-        expect(transcript.modelRoute.model).toBe('deepseek-v4-flash-zen')
+        expect(transcript.modelRoute.model).toBe('deepseek-v4-flash')
 
         // Parse + validate: >=1 nontrivial admitted child.
         const parsed = parseAndValidate(transcript.assistantText, parentDigest, 3)

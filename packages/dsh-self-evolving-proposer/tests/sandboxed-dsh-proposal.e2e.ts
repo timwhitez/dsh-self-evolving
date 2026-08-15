@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildCandidate, packCapsule } from '@dsh-self-evolving/candidate-sdk'
 import { runProposalSandbox, type ProposalSandboxMounts } from '@dsh-self-evolving/core'
 import {
-  TrustedChatCompletionsAdapter,
+  TrustedResponsesAdapter,
   createProposalGatewayLlmHandler,
   startProposalGateway,
   type ProposalGatewayRoute,
@@ -28,19 +28,19 @@ const sourceFiles = [
 ]
 
 const route: ProposalGatewayRoute = {
-  provider: 'deepseek',
+  provider: 'deepseek-official',
   endpoint: 'https://provider.invalid/v1',
-  model: 'deepseek-v4-flash-zen',
+  model: 'deepseek-v4-flash',
   reasoningEffort: 'high',
   maxTokens: 2048,
 }
-const realApiKey = process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] ?? ''
-const realBaseUrl = process.env['DSH_SELF_EVOLVING_PROVIDER_BASE_URL'] ?? ''
-const realReceiptPath = process.env['RSI_GATE4_RECEIPT_PATH'] ?? ''
+const realApiKey = process.env['DEEPSEEK_API_KEY'] ?? ''
+const realBaseUrl = 'https://api.deepseek.com/v1'
+const realReceiptPath = process.env['DSH_SELF_EVOLVING_GATE4_RECEIPT_PATH'] ?? ''
 const realRoute: ProposalGatewayRoute = {
   provider: 'deepseek',
   endpoint: realBaseUrl,
-  model: 'deepseek-v4-flash-zen',
+  model: 'deepseek-v4-flash',
   reasoningEffort: 'high',
   maxTokens: 32_768,
 }
@@ -181,17 +181,17 @@ describe('Gate 4 — sandboxed real DSH proposal topology', () => {
   )
 })
 
-describe.skipIf(!realApiKey || !realBaseUrl)(
-  'Gate 4 — sandboxed real provider successor (deepseek-v4-flash-zen, 1m)',
+describe.skipIf(!realApiKey)(
+  'Gate 4 — sandboxed real provider successor (deepseek-v4-flash, 1m)',
   () => {
     it(
       'generates an admitted child through the exact networkless DSH + trusted gateway topology',
       { timeout: 660_000 },
       async () => {
         const { mounts, capsuleDir } = await prepareTopology(realRoute)
-        const adapter = new TrustedChatCompletionsAdapter({
+        const adapter = new TrustedResponsesAdapter({
           route: realRoute,
-          apiKeyEnv: 'DSH_SELF_EVOLVING_PROVIDER_API_KEY',
+          apiKeyEnv: 'DEEPSEEK_API_KEY',
           expectedResponseModel: 'deepseek-v4-flash',
           contextWindow: 1_048_576,
           requestMaxRetries: 12,
@@ -240,7 +240,7 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
             transcript: { eventCount: number; modelRoute: { model: string }; assistantText: string }
             parsed: { accepted: unknown[]; rejected: Array<{ reason: string }> }
           }
-          expect(output.transcript.modelRoute.model).toBe('deepseek-v4-flash-zen')
+          expect(output.transcript.modelRoute.model).toBe('deepseek-v4-flash')
           expect(output.transcript.eventCount).toBeGreaterThan(0)
           expect(
             output.parsed.accepted.length,
@@ -259,7 +259,7 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
             'replayState'
           ] as Record<string, unknown> | undefined
           expect(usage).toBeDefined()
-          expect(replayState?.['requestedModel']).toBe('deepseek-v4-flash-zen')
+          expect(replayState?.['requestedModel']).toBe('deepseek-v4-flash')
           expect(replayState?.['effectiveModel']).toBe('deepseek-v4-flash')
           if (realReceiptPath) {
             await mkdir(dirname(realReceiptPath), { recursive: true })
@@ -272,13 +272,13 @@ describe.skipIf(!realApiKey || !realBaseUrl)(
                   recordedAt: new Date().toISOString(),
                   route: {
                     provider: 'deepseek',
-                    requestedModel: 'deepseek-v4-flash-zen',
+                    requestedModel: 'deepseek-v4-flash',
                     effectiveModel: 'deepseek-v4-flash',
                     reasoningEffort: 'high',
                     contextWindowTokens: 1_048_576,
                     maxOutputTokensPerTurn: 32_768,
                     reasoningContinuationMaxTurns: 0,
-                    wireApi: 'chat-completions',
+                    wireApi: 'responses',
                   },
                   topology: {
                     sandboxIpNetwork: false,

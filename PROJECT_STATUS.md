@@ -1,11 +1,15 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-15（Asia/Tokyo）**
 
-> **v0.2 successor in progress:** live product, package, CLI, Cordis service, protocol/MIME and release identities
-> are now `dsh-self-evolving`. Historical v0.1/v0.1.1 paths and hashes remain immutable predecessor evidence. The
-> default-provider migration and low-cost measurable-effect gate are not yet accepted in this checkpoint.
+> **v0.2 release candidate:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
+> `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
+> successor proves an admitted child changes the preregistered solve replay while preserving propose replay.
+> Historical v0.1/v0.1.1 paths and hashes remain immutable predecessor evidence.
+
+v0.2 provider/effectiveness 的最终对账见
+[`docs/audits/2026-08-15-v0.2-provider-effectiveness.md`](docs/audits/2026-08-15-v0.2-provider-effectiveness.md)。
 
 v0.1.1 的最终 gate/commit/identity/test 对账见
 [`docs/audits/2026-08-15-v0.1.1-release-candidate.md`](docs/audits/2026-08-15-v0.1.1-release-candidate.md)；
@@ -425,10 +429,15 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 - Gate 8：K=10/K=80、sealed、full-set 全部为发布后 optional profiles，状态为
   `BENCHMARK_PROFILES_NOT_RUN`。
 
-当前可以声明 `STABLE_ITERATION_VERIFIED` 与 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`。不能声明
+v0.2 另已完成全量 live identity 改名、DeepSeek 官方 Responses 默认路由，以及真实低消耗
+effectiveness successor。`v0.2-official-responses-v6` 的 baseline/child 均完成 trusted admission；solve 固定
+回放 digest 改变，propose control digest 保持，状态为 `ENGINEERING_EFFECT_VERIFIED`。该结果不等于题目得分提升。
+
+当前可以声明 `STABLE_ITERATION_VERIFIED`、`ENGINEERING_EFFECT_VERIFIED` 与
+`OPEN_SOURCE_V0_2_RELEASE_CANDIDATE`。不能声明
 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA。
 
 ## 发布边界
 
-v0.1.1 已达到本地开源 release-candidate 完成口径。发布到 GitHub 仍等待 maintainer 授权。Gate 8
+v0.2 已达到本地开源 release-candidate 完成口径。发布到 GitHub 仍等待 maintainer 授权。Gate 8
 benchmark profile、K=10/K=80、sealed/full-set 和持续提分属于发布后的独立开发范围，不阻塞本次验收。

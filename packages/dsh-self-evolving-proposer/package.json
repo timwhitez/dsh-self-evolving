@@ -22,7 +22,8 @@
     "@dsh-self-evolving/candidate-baseline": "workspace:*",
     "@dsh-self-evolving/candidate-sdk": "workspace:*",
     "@dsh-self-evolving/core": "workspace:*",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
@@ -34,7 +35,6 @@
     "@deepseek-ai/dsh-agent-default-model": "link:../../deepseek-harness/packages/core/agent-default-model",
     "@deepseek-ai/dsh-agent-spine-demo": "link:../../deepseek-harness/packages/examples/agent-spine-demo",
     "@deepseek-ai/dsh-llm": "link:../../deepseek-harness/packages/llm/llm",
-    "@deepseek-ai/dsh-llm-deepseek": "link:../../deepseek-harness/packages/llm/llm-deepseek",
     "@deepseek-ai/dsh-session": "link:../../deepseek-harness/packages/core/session",
     "@deepseek-ai/dsh-tools": "link:../../deepseek-harness/packages/core/tools",
     "@types/node": "^22.10.0",

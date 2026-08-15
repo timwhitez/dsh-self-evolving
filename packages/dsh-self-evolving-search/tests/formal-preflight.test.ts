@@ -15,7 +15,7 @@ function manifest(signatureKeyId: string): FormalRunManifest {
   const route = {
     provider: 'deepseek',
     endpointHash: hash('1'),
-    model: 'deepseek-v4-flash-zen',
+    model: 'deepseek-v4-flash',
     effectiveModel: 'deepseek-v4-flash',
     reasoningEffort: 'high',
     contextWindowTokens: 1_048_576,

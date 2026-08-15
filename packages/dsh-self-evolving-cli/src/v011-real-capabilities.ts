@@ -39,7 +39,7 @@ import {
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
 import {
-  TrustedChatCompletionsAdapter,
+  TrustedResponsesAdapter,
   createProposalGatewayLlmHandler,
   startProposalGateway,
   type ProposalGatewayRoute,
@@ -286,22 +286,15 @@ async function capabilityCatalog(config: V011DemoConfig): Promise<FrozenCapabili
   return frozen
 }
 
-function solverOverlay(config: V011DemoConfig, baseUrl: string): string {
+function solverOverlay(config: V011DemoConfig): string {
   return [
-    '- id: deepseek-llm',
-    "  name: '@deepseek-ai/dsh-llm-deepseek'",
+    '- id: deepseek-responses',
+    "  name: '@dsh-self-evolving/llm-responses'",
     '  config:',
     '    apiKeyEnv: DEEPSEEK_API_KEY',
-    `    baseURL: ${JSON.stringify(baseUrl)}`,
-    '    thinking: enabled',
     '    reasoningEffort: high',
     `    maxTokens: ${config.model.maxOutputTokens}`,
     `    defaultContextWindow: ${config.model.contextWindow}`,
-    '    models:',
-    `      - id: ${config.model.requested}`,
-    `        name: ${config.model.requested}`,
-    `        contextWindow: ${config.model.contextWindow}`,
-    `        maxTokens: ${config.model.maxOutputTokens}`,
     '- id: sandbox',
     "  name: '@deepseek-ai/dsh-sandbox-local'",
     '- id: sandbox-policy',
@@ -331,7 +324,7 @@ function solverOverlay(config: V011DemoConfig, baseUrl: string): string {
     '      enabled: false',
     '    toolJobs: false',
     '    goals: false',
-    "    persona: 'DSH RSI v0.1.1 candidate. Solve autonomously with bounded tools and verify the task result.'",
+    "    persona: 'dsh-self-evolving candidate. Solve autonomously with bounded tools and verify the task result.'",
     '- id: self-evolving-candidate',
     "  name: '__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__'",
     '  config:',
@@ -347,7 +340,7 @@ function solverRuntime(config: V011DemoConfig) {
     catalogRoots: [join(config.repoRoot, 'packages'), join(dsh, 'packages'), join(dsh, 'vendor')],
     seedPackages: [
       '@deepseek-ai/dsh-acp-demo',
-      '@deepseek-ai/dsh-llm-deepseek',
+      '@dsh-self-evolving/llm-responses',
       '@deepseek-ai/dsh-sandbox-local',
       '@deepseek-ai/dsh-sandbox-policy',
       '@deepseek-ai/dsh-subprocess-local',
@@ -392,7 +385,6 @@ async function copyBaselineTree(config: V011DemoConfig, destination: string): Pr
 async function prepareBaseline(
   config: V011DemoConfig,
   catalog: FrozenCapabilityCatalog,
-  baseUrl: string,
 ): Promise<BuiltCandidate> {
   const root = join(config.stateDir, 'candidates', 'v011-baseline')
   const recordPath = join(root, 'stable-build.json')
@@ -431,7 +423,7 @@ async function prepareBaseline(
     capabilityCatalogDigest: catalog.digest,
     capsuleOutDir: join(staging, 'capsule'),
     runtimeClosure: solverRuntime(config),
-    runnerOverlay: solverOverlay(config, baseUrl),
+    runnerOverlay: solverOverlay(config),
     runnerFiles: { 'credential-launcher.sh': credentialLauncher },
     provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
     sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
@@ -742,7 +734,7 @@ async function realV011Proposal(
     )
     const previousKey = process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
     process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = route.apiKey
-    const adapter = new TrustedChatCompletionsAdapter({
+    const adapter = new TrustedResponsesAdapter({
       route: lockedRoute,
       apiKeyEnv: 'DSH_SELF_EVOLVING_PROVIDER_API_KEY',
       expectedResponseModel: config.model.effective,
@@ -900,7 +892,7 @@ async function realV011BuildUnretained(
     capabilityCatalogDigest: catalog.digest,
     capsuleOutDir: join(staging, 'capsule'),
     runtimeClosure: solverRuntime(config),
-    runnerOverlay: solverOverlay(config, baseUrl),
+    runnerOverlay: solverOverlay(config),
     runnerFiles: { 'credential-launcher.sh': credentialLauncher },
     provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
     sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
@@ -995,7 +987,7 @@ export async function createV011RealCapabilities(
 ): Promise<StableDemoCapabilities> {
   const route = await loadTrustedRoute()
   const catalog = await capabilityCatalog(config)
-  const baseline = await prepareBaseline(config, catalog, route.baseUrl)
+  const baseline = await prepareBaseline(config, catalog)
   return {
     preflight: () => runDoctor(config as never),
     baseline,

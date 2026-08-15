@@ -1,9 +1,9 @@
 import { chmod, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
-export const CONFIG_SCHEMA_VERSION = 10 as const
+export const CONFIG_SCHEMA_VERSION = 12 as const
 export const STABLE_DEMO_PROFILE = 'stable-demo' as const
-export const V011_CONFIG_SCHEMA_VERSION = 11 as const
+export const V011_CONFIG_SCHEMA_VERSION = 13 as const
 export const V011_STABLE_DEMO_PROFILE = 'v011-stable-demo' as const
 
 export interface StableDemoConfig {
@@ -15,12 +15,14 @@ export interface StableDemoConfig {
   codeCommit: string
   model: {
     provider: 'deepseek'
-    requested: 'deepseek-v4-flash-zen'
+    requested: 'deepseek-v4-flash'
     effective: 'deepseek-v4-flash'
     reasoningEffort: 'high'
     contextWindow: 1_048_576
     maxOutputTokens: 32_768
-    wireApi: 'chat-completions-compatible'
+    endpoint: 'https://api.deepseek.com/v1'
+    wireApi: 'responses'
+    credentialEnv: 'DEEPSEEK_API_KEY'
   }
   limits: {
     admittedChildren: 3
@@ -77,12 +79,14 @@ export function createStableDemoConfig(input: InitConfigInput): StableDemoConfig
     codeCommit: input.codeCommit,
     model: {
       provider: 'deepseek',
-      requested: 'deepseek-v4-flash-zen',
+      requested: 'deepseek-v4-flash',
       effective: 'deepseek-v4-flash',
       reasoningEffort: 'high',
       contextWindow: 1_048_576,
       maxOutputTokens: 32_768,
-      wireApi: 'chat-completions-compatible',
+      endpoint: 'https://api.deepseek.com/v1',
+      wireApi: 'responses',
+      credentialEnv: 'DEEPSEEK_API_KEY',
     },
     limits: {
       admittedChildren: 3,
@@ -110,7 +114,11 @@ export function createV011DemoConfig(input: InitConfigInput): V011DemoConfig {
 
 export function validateStableDemoConfig(value: unknown): StableDemoConfig {
   const c = value as Partial<StableDemoConfig> | null
-  if (c === null || c.schemaVersion !== 10 || c.profile !== STABLE_DEMO_PROFILE) {
+  if (
+    c === null ||
+    c.schemaVersion !== CONFIG_SCHEMA_VERSION ||
+    c.profile !== STABLE_DEMO_PROFILE
+  ) {
     throw new Error('config: unsupported schema/profile')
   }
   if (typeof c.runId !== 'string' || !RUN_ID.test(c.runId)) throw new Error('config: unsafe run id')
@@ -125,12 +133,14 @@ export function validateStableDemoConfig(value: unknown): StableDemoConfig {
   }
   if (
     c.model?.provider !== 'deepseek' ||
-    c.model.requested !== 'deepseek-v4-flash-zen' ||
+    c.model.requested !== 'deepseek-v4-flash' ||
     c.model.effective !== 'deepseek-v4-flash' ||
     c.model.reasoningEffort !== 'high' ||
     c.model.contextWindow !== 1_048_576 ||
     c.model.maxOutputTokens !== 32_768 ||
-    c.model.wireApi !== 'chat-completions-compatible'
+    c.model.endpoint !== 'https://api.deepseek.com/v1' ||
+    c.model.wireApi !== 'responses' ||
+    c.model.credentialEnv !== 'DEEPSEEK_API_KEY'
   ) {
     throw new Error('config: model identity drift')
   }

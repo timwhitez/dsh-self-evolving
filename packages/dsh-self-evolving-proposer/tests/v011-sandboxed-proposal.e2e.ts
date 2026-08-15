@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  admitV011Candidate,
   buildCandidate,
   canonicalV011,
   canonicalizeV011Tree,
@@ -16,13 +17,14 @@ import {
   type EvidenceCitation,
 } from '@dsh-self-evolving/candidate-sdk'
 import {
+  evaluateEngineeringEffect,
   materializeProposerExport,
   publishBytes,
   runProposalSandbox,
   type ProposalSandboxMounts,
 } from '@dsh-self-evolving/core'
 import {
-  TrustedChatCompletionsAdapter,
+  TrustedResponsesAdapter,
   createProposalGatewayLlmHandler,
   startProposalGateway,
   type ProposalGatewayRoute,
@@ -44,17 +46,31 @@ const sourceFiles = [
 const proposalId = 'p_11111111111111111111111111111111'
 const digest = (character: string) => `sha256:${character.repeat(64)}`
 const route: ProposalGatewayRoute = {
-  provider: 'deepseek',
+  provider: 'deepseek-official',
   endpoint: 'https://provider.invalid/v1',
-  model: 'deepseek-v4-flash-zen',
+  model: 'deepseek-v4-flash',
   reasoningEffort: 'high',
   maxTokens: 32_768,
 }
-const realApiKey = process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] ?? ''
-const realBaseUrl = process.env['DSH_SELF_EVOLVING_PROVIDER_BASE_URL'] ?? ''
+const realApiKey = process.env['DEEPSEEK_API_KEY'] ?? ''
+const realBaseUrl = 'https://api.deepseek.com/v1'
 const realRoute: ProposalGatewayRoute = {
   ...route,
   endpoint: realBaseUrl,
+}
+const effectReceiptPath = process.env['DSH_SELF_EVOLVING_EFFECT_RECEIPT_PATH'] ?? ''
+
+function collectUsage(chunks: Array<Record<string, unknown>>) {
+  const total = { inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, reasoningTokens: 0 }
+  for (const chunk of chunks) {
+    if (chunk['type'] !== 'usage') continue
+    const usage = chunk['usage'] as Record<string, unknown> | undefined
+    for (const key of Object.keys(total) as Array<keyof typeof total>) {
+      const value = usage?.[key]
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) total[key] += value
+    }
+  }
+  return total
 }
 
 let root: string | undefined
@@ -183,6 +199,9 @@ async function topology(selectedRoute: ProposalGatewayRoute = route): Promise<{
     exportMerkleRoot: exportManifest.merkleRoot,
     capabilityCatalogDigest: catalog.digest,
     ancestorClusters: [],
+    ...(selectedRoute.endpoint === realBaseUrl
+      ? { modeContract: { targetModes: ['solve'], preservedModes: ['propose'] } }
+      : {}),
   }
   await writeFile(join(mounts.contracts, 'request.json'), JSON.stringify(request) + '\n')
   await mkdir(join(mounts.contracts, 'schemas'), { recursive: true })
@@ -425,24 +444,31 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
   })
 })
 
-describe.skipIf(!realApiKey || !realBaseUrl)('v0.1.1 real-provider tool loop', () => {
+describe.skipIf(!realApiKey)('v0.2 official Responses tool loop', () => {
   it(
     'uses retained tools to author a schema-valid multi-file child through the trusted gateway',
     { timeout: 900_000 },
     async () => {
-      const { mounts, runtimeRoot } = await topology(realRoute)
-      const adapter = new TrustedChatCompletionsAdapter({
+      const { mounts, runtimeRoot, request } = await topology(realRoute)
+      const adapter = new TrustedResponsesAdapter({
         route: realRoute,
-        apiKeyEnv: 'DSH_SELF_EVOLVING_PROVIDER_API_KEY',
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
         expectedResponseModel: 'deepseek-v4-flash',
         contextWindow: 1_048_576,
         requestMaxRetries: 12,
         reasoningContinuationMaxTurns: 1,
       })
+      const providerChunks: Array<Record<string, unknown>> = []
+      const providerHandler = createProposalGatewayLlmHandler(adapter, realRoute)
       const gateway = await startProposalGateway({
         socketPath: join(root!, 'gateway', 'proposal.sock'),
         route: realRoute,
-        handle: createProposalGatewayLlmHandler(adapter, realRoute),
+        async handle(payload) {
+          const response = await providerHandler(payload)
+          const chunks = (response as { chunks?: Array<Record<string, unknown>> }).chunks ?? []
+          providerChunks.push(...chunks)
+          return response
+        },
       })
       try {
         const result = await runProposalSandbox({
@@ -476,8 +502,68 @@ describe.skipIf(!realApiKey || !realBaseUrl)('v0.1.1 real-provider tool loop', (
             (entry) => entry.op === 'modify' && entry.path === 'src/index.ts',
           ),
         ).toBe(true)
-        expect(gateway.receipts().length).toBeGreaterThan(0)
-        expect(gateway.receipts().length).toBeLessThanOrEqual(output.toolCallCount + 1)
+        const gatewayReceipts = gateway.receipts()
+        expect(gatewayReceipts.length).toBeGreaterThan(0)
+        expect(gatewayReceipts.length).toBeLessThanOrEqual(output.toolCallCount + 2)
+
+        const admission = async (sourceRoot: string, capsuleName: string) =>
+          admitV011Candidate({
+            sourceRoot,
+            toolchainRoot: repoRoot,
+            tscBin,
+            materializationDigest: digestV011(
+              await readFile(join(childRoot, 'worker-output.json')),
+            ),
+            capabilityCatalogDigest: request['capabilityCatalogDigest'] as `sha256:${string}`,
+            capsuleOutDir: join(root!, 'effectiveness', capsuleName),
+            runtimeClosure: {
+              catalogRoots: [
+                join(repoRoot, 'packages'),
+                join(dshRoot, 'packages'),
+                join(dshRoot, 'vendor'),
+              ],
+              seedPackages: ['@dsh-self-evolving/candidate-sdk'],
+              entryPackage: '@dsh-self-evolving/candidate-sdk',
+              entryBin: 'lib/v011/loader-probe-worker.js',
+            },
+            runnerOverlay: '\n',
+            provenanceJson: JSON.stringify({
+              provider: 'deepseek-official',
+              endpoint: realBaseUrl,
+              model: 'deepseek-v4-flash',
+              wireApi: 'responses',
+            }),
+            sbomJson: '{"spdxVersion":"SPDX-2.3"}',
+          })
+        const [baselineAdmission, childAdmission] = await Promise.all([
+          admission(join(mounts.parent, 'tree'), 'baseline'),
+          admission(join(childRoot, 'tree'), 'child'),
+        ])
+        const effect = evaluateEngineeringEffect({
+          runId: process.env['DSH_SELF_EVOLVING_EFFECT_RUN_ID'] ?? 'effectiveness-official-v1',
+          route: {
+            provider: 'deepseek-official',
+            endpoint: 'https://api.deepseek.com/v1',
+            model: 'deepseek-v4-flash',
+            wireApi: 'responses',
+            reasoningEffort: 'high',
+            contextWindow: 1_048_576,
+            store: false,
+          },
+          proposalGatewayReceipts: gatewayReceipts,
+          usage: collectUsage(providerChunks),
+          modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
+          baseline: baselineAdmission,
+          child: childAdmission,
+        })
+        expect(effect.status, JSON.stringify(effect.deltas)).toBe('ENGINEERING_EFFECT_VERIFIED')
+        if (effectReceiptPath !== '') {
+          await mkdir(dirname(effectReceiptPath), { recursive: true, mode: 0o700 })
+          await writeFile(effectReceiptPath, JSON.stringify(effect, null, 2) + '\n', {
+            mode: 0o600,
+            flag: 'wx',
+          })
+        }
       } finally {
         await gateway.close()
       }

@@ -2,7 +2,7 @@
   "name": "@dsh-self-evolving/cli",
   "version": "0.2.0",
   "type": "module",
-  "description": "Product CLI for the bounded, crash-resumable DSH RSI stable-demo profile.",
+  "description": "Product CLI for the bounded, crash-resumable dsh-self-evolving stable-demo profile.",
   "main": "lib/index.js",
   "bin": {
     "dsh-self-evolving": "./lib/cli.js"

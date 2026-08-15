@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:https'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildCandidate, packCapsule } from '../packages/candidate-sdk/src/index.js'
@@ -36,7 +36,7 @@ const controllerRoot = resolve(
     '/var/lib/dsh-self-evolving-controller/gate5-real',
 )
 const tb21Dir = process.env['TB21_DIR'] ?? '/tmp/tb21/terminal-bench-2-1'
-const targetModel = 'deepseek-v4-flash-zen'
+const targetModel = 'deepseek-v4-flash'
 const effectiveModel = 'deepseek-v4-flash'
 const contextWindow = 1_048_576
 const maxTokens = 32_768
@@ -141,37 +141,10 @@ function execResult(
   })
 }
 
-async function assertPrivate(path: string): Promise<void> {
-  const info = await stat(path)
-  if ((info.mode & 0o777) !== 0o600 || info.uid !== (process.getuid?.() ?? info.uid)) {
-    throw new Error(`gate5 runner: ${path} must be current-UID owned and mode 0600`)
-  }
-}
-
-function deepseekSection(config: string): string {
-  const section = config.match(/\[model_providers\.deepseek\]([\s\S]*?)(?:\n\[|$)/)?.[1]
-  if (section === undefined) throw new Error('gate5 runner: DeepSeek provider section missing')
-  return section
-}
-
-async function loadTrustedRoute(): Promise<{ apiKey: string; baseUrl: string }> {
-  const codexDir = join(homedir(), '.codex')
-  const authPath = join(codexDir, 'auth.json')
-  const configPath = join(codexDir, 'config.toml')
-  await Promise.all([assertPrivate(authPath), assertPrivate(configPath)])
-  const [authRaw, config] = await Promise.all([
-    readFile(authPath, 'utf8'),
-    readFile(configPath, 'utf8'),
-  ])
-  const auth = JSON.parse(authRaw) as { OPENAI_API_KEY?: unknown }
-  const baseUrl = deepseekSection(config).match(/^base_url\s*=\s*"([^"]+)"/m)?.[1]
-  if (typeof auth.OPENAI_API_KEY !== 'string' || auth.OPENAI_API_KEY.length === 0) {
-    throw new Error('gate5 runner: bearer credential unavailable')
-  }
-  if (baseUrl === undefined || !baseUrl.startsWith('https://')) {
-    throw new Error('gate5 runner: trusted compatible endpoint unavailable')
-  }
-  return { apiKey: auth.OPENAI_API_KEY, baseUrl }
+async function loadTrustedRoute(): Promise<{ apiKey: string }> {
+  const apiKey = process.env['DEEPSEEK_API_KEY'] ?? ''
+  if (apiKey.length === 0) throw new Error('gate5 runner: DEEPSEEK_API_KEY unavailable')
+  return { apiKey }
 }
 
 async function startArtifactServer(
@@ -246,7 +219,7 @@ async function startArtifactServer(
   }
 }
 
-async function buildBaselineRuntime(workDir: string, baseUrl: string) {
+async function buildBaselineRuntime(workDir: string) {
   if (prebuiltCapsuleRoot !== undefined) {
     const [manifestInfo, sumsInfo, launcherInfo] = await Promise.all([
       stat(join(prebuiltCapsuleRoot, 'capsule.json')).catch(() => null),
@@ -279,20 +252,13 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
     outDir: capsuleDir,
     receipt,
     runnerOverlay: [
-      '- id: deepseek-llm',
-      "  name: '@deepseek-ai/dsh-llm-deepseek'",
+      '- id: deepseek-responses',
+      "  name: '@dsh-self-evolving/llm-responses'",
       '  config:',
       '    apiKeyEnv: DEEPSEEK_API_KEY',
-      `    baseURL: ${JSON.stringify(baseUrl)}`,
-      '    thinking: enabled',
       '    reasoningEffort: high',
       `    maxTokens: ${maxTokens}`,
-      `    defaultContextWindow: ${contextWindow}`,
-      '    models:',
-      `      - id: ${targetModel}`,
-      `        name: ${targetModel}`,
-      `        contextWindow: ${contextWindow}`,
-      `        maxTokens: ${maxTokens}`,
+      `    contextWindow: ${contextWindow}`,
       '- id: sandbox',
       "  name: '@deepseek-ai/dsh-sandbox-local'",
       '- id: sandbox-policy',
@@ -322,7 +288,7 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
       '      enabled: false',
       '    toolJobs: false',
       '    goals: false',
-      "    persona: 'DSH RSI Terminal-Bench baseline. Use bash to inspect and modify the task environment, solve autonomously, and verify the result.'",
+      "    persona: 'dsh-self-evolving Terminal-Bench baseline. Use bash to inspect and modify the task environment, solve autonomously, and verify the result.'",
       '- id: self-evolving-candidate',
       "  name: '@dsh-self-evolving/candidate-baseline'",
       '  config:',
@@ -355,10 +321,14 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
       ].join('\n'),
     },
     runtimeClosure: {
-      catalogRoots: [join(dshRoot, 'packages'), join(dshRoot, 'vendor')],
+      catalogRoots: [
+        join(repoRoot, 'packages'),
+        join(dshRoot, 'packages'),
+        join(dshRoot, 'vendor'),
+      ],
       seedPackages: [
         '@deepseek-ai/dsh-acp-demo',
-        '@deepseek-ai/dsh-llm-deepseek',
+        '@dsh-self-evolving/llm-responses',
         '@deepseek-ai/dsh-sandbox-local',
         '@deepseek-ai/dsh-sandbox-policy',
         '@deepseek-ai/dsh-subprocess-local',
@@ -444,7 +414,7 @@ async function collectRun(input: {
   const summary = {
     schemaVersion: 1,
     runId: input.runId,
-    capabilityMode: 'real-zen-harbor-acp',
+    capabilityMode: 'real-official-responses-harbor-acp',
     candidateId,
     capsuleSha256: input.capsuleSha256 ?? null,
     route: {
@@ -453,7 +423,7 @@ async function collectRun(input: {
       reasoningEffort: 'high',
       contextWindow,
       maxTokens,
-      wireApi: 'chat-completions-compatible',
+      wireApi: 'responses',
     },
     officialPricing,
     plannedTrials: input.plannedTrials,
@@ -531,7 +501,7 @@ async function main(): Promise<void> {
   const route = await loadTrustedRoute()
   await mkdir(runDir, { recursive: false, mode: 0o700 })
   const workDir = await mkdtemp(join(tmpdir(), `${runId}-`))
-  const { receipt, packed } = await buildBaselineRuntime(workDir, route.baseUrl)
+  const { receipt, packed } = await buildBaselineRuntime(workDir)
   const artifact = await startArtifactServer(packed.archivePath, runDir)
   const secretDir = await mkdtemp('/run/dsh-self-evolving-gate5-secret-')
   await chmod(secretDir, 0o700)

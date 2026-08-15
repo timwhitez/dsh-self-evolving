@@ -1,6 +1,6 @@
 /** Bubblewrap-backed one-shot proposal process sandbox (spec 05 §§5.2, 9). */
 import { spawn } from 'node:child_process'
-import { lstat, readdir, realpath } from 'node:fs/promises'
+import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 
 export interface ProposalSandboxMounts {
@@ -130,6 +130,12 @@ export async function runProposalSandbox(
     '--ro-bind',
     '/lib64',
     '/lib64',
+    '--ro-bind',
+    '/etc/hosts',
+    '/etc/hosts',
+    '--ro-bind',
+    '/etc/nsswitch.conf',
+    '/etc/nsswitch.conf',
     '--dir',
     '/input',
     '--ro-bind',
@@ -169,7 +175,13 @@ export async function runProposalSandbox(
     if (!socketStat.isSocket()) throw new Error('proposal sandbox: gateway must be a Unix socket')
     args.push('--ro-bind', socket, '/run/proposer-gateway.sock')
   }
-  if (runtimeRoot !== undefined) args.push('--ro-bind', runtimeRoot, '/runtime')
+  if (runtimeRoot !== undefined) {
+    args.push('--ro-bind', runtimeRoot, '/runtime')
+    const runtimeModules = join(runtimeRoot, 'node_modules')
+    if ((await stat(runtimeModules).catch(() => null))?.isDirectory() === true) {
+      args.push('--ro-bind', runtimeModules, '/node_modules')
+    }
+  }
   args.push('--', input.command, ...input.args)
 
   const maxOutputBytes = input.maxOutputBytes ?? 1024 * 1024

@@ -1,18 +1,30 @@
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import {
+  createSourceFile,
   DiagnosticCategory,
+  forEachChild,
+  isCallExpression,
+  isExportDeclaration,
+  isImportDeclaration,
+  isPropertyAccessExpression,
+  isStringLiteralLike,
   ModuleKind,
   ScriptTarget,
+  SyntaxKind,
   flattenDiagnosticMessageText,
   transpileModule,
+  type Node,
 } from 'typescript'
 import {
   assertV011,
+  scanPaths,
   snapshotV011Tree,
   type FrozenCapabilityCatalog,
+  type V011TreeSnapshot,
   type V011Proposal,
 } from '@dsh-self-evolving/candidate-sdk'
 import {
@@ -32,7 +44,10 @@ const EDITABLE = [
 ]
 const MAX_AUTHORING_TOOL_CALLS = 64
 const MAX_CORRECTION_TOOL_CALLS = 16
-const MAX_CONTROL_TOOL_CALLS = 8
+// Validation may legitimately repeat after each fail-closed semantic diagnostic.
+// Keep it independently bounded, but align it with the correction budget so the
+// final successful finish call cannot be precluded by earlier rejected attempts.
+const MAX_CONTROL_TOOL_CALLS = 16
 
 export interface V011ToolRoots {
   parent: string
@@ -115,6 +130,43 @@ export async function validateV011TypeScriptSyntax(
   const failures: string[] = []
   for (const relative of relativePaths.filter((path) => path.endsWith('.ts')).sort()) {
     const source = await readFile(join(root, relative), 'utf8')
+    const sourceFile = createSourceFile(relative, source, ScriptTarget.ES2022, true)
+    let readsSourceText = false
+    const checkSpecifier = (node: Node | undefined): void => {
+      if (node === undefined || !isStringLiteralLike(node)) return
+      const specifier = node.text
+      if (
+        (specifier.startsWith('./') || specifier.startsWith('../')) &&
+        !/\.(?:js|json)$/.test(specifier)
+      ) {
+        failures.push(`${relative} relative ESM import must end in .js or .json: ${specifier}`)
+      }
+    }
+    const inspect = (node: Node): void => {
+      if (
+        isCallExpression(node) &&
+        ((isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === 'readFile') ||
+          node.expression.getText(sourceFile) === 'readFile')
+      ) {
+        readsSourceText = true
+      }
+      if (isImportDeclaration(node) || isExportDeclaration(node)) {
+        checkSpecifier(node.moduleSpecifier)
+      } else if (isCallExpression(node) && node.expression.kind === SyntaxKind.ImportKeyword) {
+        checkSpecifier(node.arguments[0])
+      }
+      if (isPropertyAccessExpression(node) && node.name.text === 'onDispose') {
+        failures.push(`${relative} Context.onDispose is not a supported Cordis API`)
+      }
+      forEachChild(node, inspect)
+    }
+    inspect(sourceFile)
+    if (relative.startsWith('tests/') && readsSourceText) {
+      failures.push(
+        `${relative} reads source files; source-text assertions are comment-sensitive, so import and test exported runtime behavior instead`,
+      )
+    }
     const result = transpileModule(source, {
       fileName: relative,
       reportDiagnostics: true,
@@ -144,6 +196,28 @@ export async function validateV011TypeScriptSyntax(
   }
   if (failures.length > 0) {
     throw new Error(`v0.1.1 tool: TypeScript syntax preflight failed:\n${failures.join('\n')}`)
+  }
+}
+
+export async function validateV011CandidatePolicy(snapshot: V011TreeSnapshot): Promise<void> {
+  const codeFiles = snapshot.files
+    .filter((file) => file.path.endsWith('.ts') || file.path.endsWith('.js'))
+    .map((file) => ({ path: file.path, absPath: file.absolutePath }))
+  const production = codeFiles.filter((file) => !file.path.startsWith('tests/'))
+  const tests = codeFiles.filter((file) => file.path.startsWith('tests/'))
+  const [productionScan, testScan] = await Promise.all([
+    scanPaths(production),
+    scanPaths(tests, { extraImportAllowlist: new Set(['vitest']) }),
+  ])
+  const rejects = [...productionScan.hits, ...testScan.hits].filter(
+    (hit) => hit.severity === 'reject',
+  )
+  if (rejects.length > 0) {
+    throw new Error(
+      `v0.1.1 tool: candidate policy scan rejected:\n${rejects
+        .map((hit) => `  ${hit.path}:${hit.line} ${hit.rule} ${hit.snippet}`)
+        .join('\n')}`,
+    )
   }
 }
 
@@ -188,6 +262,95 @@ async function files(root: string): Promise<string[]> {
   }
   await walk(root)
   return output
+}
+
+async function runCandidateTests(root: string): Promise<{ tests: number; output: string }> {
+  const relativeTests = (await files(root)).filter(
+    (path) => path.startsWith('tests/') && path.endsWith('.spec.ts'),
+  )
+  if (relativeTests.length === 0) throw new Error('v0.1.1 tool: child has no candidate-owned tests')
+  const testRoot = await mkdtemp('/tmp/dsh-self-evolving-candidate-tests-')
+  try {
+    await cp(root, testRoot, { recursive: true })
+    await writeFile(
+      join(testRoot, 'tsconfig.json'),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'NodeNext',
+            moduleResolution: 'NodeNext',
+            strict: true,
+            skipLibCheck: true,
+          },
+          include: ['src/**/*.ts', 'tests/**/*.ts'],
+        },
+        null,
+        2,
+      ) + '\n',
+      { mode: 0o600 },
+    )
+    const tests = relativeTests.map((path) => join(testRoot, path))
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>(
+      (done, reject) => {
+        const child = spawn(
+          '/runtime/node',
+          [
+            '/node_modules/vitest/vitest.mjs',
+            'run',
+            '--root',
+            testRoot,
+            '--cache=false',
+            '--no-file-parallelism',
+            ...tests,
+          ],
+          {
+            cwd: testRoot,
+            env: { PATH: '/usr/bin:/bin' },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        )
+        const stdout: Buffer[] = []
+        const stderr: Buffer[] = []
+        let bytes = 0
+        let settled = false
+        const kill = () => {
+          if (child.pid !== undefined) child.kill('SIGKILL')
+        }
+        const timer = setTimeout(kill, 120_000)
+        const collect = (target: Buffer[]) => (chunk: Buffer) => {
+          bytes += chunk.byteLength
+          if (bytes > 256 * 1024) kill()
+          else target.push(chunk)
+        }
+        child.stdout.on('data', collect(stdout))
+        child.stderr.on('data', collect(stderr))
+        child.once('error', (error) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          reject(error)
+        })
+        child.once('exit', (code) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          done({
+            code,
+            stdout: Buffer.concat(stdout).toString('utf8'),
+            stderr: Buffer.concat(stderr).toString('utf8'),
+          })
+        })
+      },
+    )
+    const output = `${result.stderr}\n${result.stdout}`.trim()
+    if (result.code !== 0) {
+      throw new Error(`v0.1.1 tool: candidate tests failed before proposal finish:\n${output}`)
+    }
+    return { tests: tests.length, output }
+  } finally {
+    await rm(testRoot, { recursive: true, force: true })
+  }
 }
 
 function render(value: unknown) {
@@ -331,7 +494,7 @@ export function installV011Tools(
     defineContentToolFixture({
       name: 'validate_child',
       description:
-        'Run containment, TypeScript syntax, and successor-schema checks on the current child tree.',
+        'Run containment, TypeScript syntax, successor-schema, and candidate tests on the current child tree.',
       parameters: {},
       execute: controlled(async () => {
         const snapshot = await snapshotV011Tree(roots.childTree)
@@ -339,14 +502,17 @@ export function installV011Tools(
           roots.childTree,
           snapshot.files.map((file) => file.path),
         )
+        await validateV011CandidatePolicy(snapshot)
         const candidate = JSON.parse(
           await readFile(join(roots.childTree, 'candidate.json'), 'utf8'),
         ) as unknown
         await assertV011('candidate-intent', candidate)
+        const tests = await runCandidateTests(roots.childTree)
         return render({
           files: snapshot.files.length,
           sourceBytes: snapshot.sourceBytes,
           schema: 'PASS',
+          candidateTests: tests.tests,
         })
       }),
     }),
@@ -401,7 +567,9 @@ export function installV011Tools(
             ? {}
             : { requiredParentEvidence: bindings.requiredParentEvidence }),
         })
-        await snapshotV011Tree(roots.childTree)
+        const snapshot = await snapshotV011Tree(roots.childTree)
+        await validateV011CandidatePolicy(snapshot)
+        await runCandidateTests(roots.childTree)
         state.finished = true
         return render({ status: 'PROPOSAL_SEMANTICS_VALID', proposalId: bindings.proposalId })
       }, true),

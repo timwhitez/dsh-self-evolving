@@ -1,10 +1,14 @@
 import { execFile } from 'node:child_process'
-import { access, readFile, stat } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ProjectConfig } from './config.js'
 import { readSourceArchiveIdentity, verifySourceArchiveIdentity } from './source-identity.js'
+import {
+  loadTrustedRoute,
+  OFFICIAL_DEEPSEEK_BASE_URL,
+  OFFICIAL_DEEPSEEK_MODEL,
+} from './trusted-route.js'
 
 export type CheckStatus = 'PASS' | 'FAIL'
 export interface DoctorCheck {
@@ -35,32 +39,30 @@ function check(name: string, passed: boolean, detail: string): DoctorCheck {
   return { name, status: passed ? 'PASS' : 'FAIL', detail }
 }
 
-async function privateFile(path: string): Promise<boolean> {
-  const info = await stat(path).catch(() => null)
-  return info?.isFile() === true && (info.mode & 0o077) === 0
+async function officialModelAvailable(apiKey: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${OFFICIAL_DEEPSEEK_BASE_URL}/models`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!response.ok) return false
+    const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
+    return body.data?.some((entry) => entry.id === OFFICIAL_DEEPSEEK_MODEL) === true
+  } catch {
+    return false
+  }
 }
 
 export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
-  const authPath = join(homedir(), '.codex', 'auth.json')
-  const codexConfigPath = join(homedir(), '.codex', 'config.toml')
-  const [authPrivate, codexConfigPrivate] = await Promise.all([
-    privateFile(authPath),
-    privateFile(codexConfigPath),
-  ])
-  let routeAvailable = false
-  let credentialAvailable = false
-  if (authPrivate && codexConfigPrivate) {
-    const [authRaw, configRaw] = await Promise.all([
-      readFile(authPath, 'utf8'),
-      readFile(codexConfigPath, 'utf8'),
-    ])
-    const auth = JSON.parse(authRaw) as { OPENAI_API_KEY?: unknown }
-    credentialAvailable =
-      typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.trim().length > 0
-    routeAvailable = /\[model_providers\.deepseek\][\s\S]*?base_url\s*=\s*"https:\/\//.test(
-      configRaw,
-    )
-  }
+  const route = await loadTrustedRoute().catch(() => null)
+  const credentialAvailable = route !== null
+  const routeAvailable =
+    config.model.endpoint === OFFICIAL_DEEPSEEK_BASE_URL &&
+    config.model.requested === OFFICIAL_DEEPSEEK_MODEL &&
+    config.model.effective === OFFICIAL_DEEPSEEK_MODEL &&
+    config.model.wireApi === 'responses'
+  const modelAvailable =
+    route !== null && routeAvailable ? await officialModelAvailable(route.apiKey) : false
   const observed = JSON.parse(await readFile(config.splitCommitmentPath, 'utf8')) as {
     observedTaskIds?: unknown
   }
@@ -125,15 +127,16 @@ export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
       : 'executable source paths match the frozen commit'
   const checks = [
     check(
-      'private-auth',
-      authPrivate && credentialAvailable,
-      'root-only Codex credential is readable',
+      'official-auth',
+      credentialAvailable,
+      'DEEPSEEK_API_KEY is available only to the trusted host process',
     ),
     check(
-      'locked-route',
-      codexConfigPrivate && routeAvailable,
-      'DeepSeek compatible HTTPS route exists',
+      'locked-responses-route',
+      routeAvailable,
+      'official DeepSeek Responses route is frozen in the run config',
     ),
+    check('official-model', modelAvailable, 'official model listing contains deepseek-v4-flash'),
     check('docker', await commandOk('/usr/bin/docker', ['info']), 'Docker daemon responds'),
     check(
       'harbor',

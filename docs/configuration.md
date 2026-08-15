@@ -1,7 +1,7 @@
 # Configuration
 
-`dsh-self-evolving init` writes a private, no-replace `config.json`. `stable-demo` uses schema 10; the v0.1.1 successor
-`v011-stable-demo` uses schema 11 and protocol `dsh-self-evolving-candidate-tree-v2`. The file contains no credential.
+`dsh-self-evolving init` writes a private, no-replace `config.json`. `stable-demo` uses schema 12; the multi-file
+`v011-stable-demo` profile uses schema 13 and protocol `dsh-self-evolving-candidate-tree-v2`. The file contains no credential.
 Changing an identity, profile or limit requires a new state directory and run ID.
 
 | Field                      | Stable-demo value                       |
@@ -14,12 +14,15 @@ Changing an identity, profile or limit requires a new state directory and run ID
 | candidate trials           | 3                                       |
 | total solver trials        | at most 15                              |
 | evaluator concurrency      | 1                                       |
-| requested model            | `deepseek-v4-flash-zen`                 |
+| requested model            | `deepseek-v4-flash`                     |
 | effective provider model   | `deepseek-v4-flash`                     |
 | reasoning                  | `high`                                  |
 | context                    | 1,048,576 tokens                        |
 | output ceiling             | 32,768 tokens                           |
-| wire API                   | compatible Chat Completions             |
+| endpoint                   | `https://api.deepseek.com/v1`           |
+| wire API                   | official Responses                      |
+| credential                 | trusted-host `DEEPSEEK_API_KEY` env     |
+| response storage           | disabled (`store=false`)                |
 | candidate feedback         | frozen `DEV_OBSERVED` baseline failures |
 | sealed access              | forbidden; required count is 0          |
 
@@ -33,6 +36,18 @@ excluded. The evaluator's retry/reconciliation layer settles retryable infrastru
 Unlike schema 10's six-task batches, schema 11 evaluates the frozen order sequentially and stops baseline discovery
 as soon as the first eligible non-pass is committed, with a hard ceiling of 12 baseline trials.
 
-The provider URL is read from `[model_providers.deepseek]` in private `~/.codex/config.toml`; the bearer is read
-from private `~/.codex/auth.json`. `doctor` fails before a paid request if either file, Docker, Harbor, task material,
-state permissions or budget is unavailable.
+The bearer is read only from `DEEPSEEK_API_KEY` in the trusted host process. Codex `auth.json`, Codex `config.toml`
+and CPA are not part of the default route. `doctor` probes the official `/models` endpoint and fails before a paid
+request if the credential, exact route, model, Docker, Harbor, task material, state permissions or budget is unavailable.
+
+For the low-consumption effectiveness gate, set a fresh run ID and no-replace receipt path, then run:
+
+```bash
+export DEEPSEEK_API_KEY='...'
+export DSH_SELF_EVOLVING_EFFECT_RUN_ID='effect-local-1'
+export DSH_SELF_EVOLVING_EFFECT_RECEIPT_PATH="$PWD/evidence/effectiveness/effect-local-1.json"
+pnpm effectiveness:official
+```
+
+The gate preregisters target and preserved modes, admits both baseline and child, then compares fixed Loader replay
+digests. It proves a measurable runtime behavior delta only; it does not prove a Terminal-Bench score improvement.

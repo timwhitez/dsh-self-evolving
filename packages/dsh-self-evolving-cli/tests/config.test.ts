@@ -8,6 +8,8 @@ import {
   initializeState,
   loadConfig,
   loadProjectConfig,
+  loadTrustedRoute,
+  OFFICIAL_DEEPSEEK_BASE_URL,
   validateV011DemoConfig,
   validateStableDemoConfig,
 } from '../src/index.js'
@@ -19,6 +21,14 @@ afterEach(async () => {
 })
 
 describe('stable-demo versioned config', () => {
+  it('uses only the official DeepSeek endpoint and explicit environment credential', async () => {
+    await expect(loadTrustedRoute({ DEEPSEEK_API_KEY: 'test-key' })).resolves.toEqual({
+      apiKey: 'test-key',
+      baseUrl: OFFICIAL_DEEPSEEK_BASE_URL,
+    })
+    await expect(loadTrustedRoute({})).rejects.toThrow(/DEEPSEEK_API_KEY/)
+  })
+
   it('freezes the v0.1.1 successor protocol in a separate schema and profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-cli-v011-config-'))
     roots.push(root)
@@ -30,7 +40,7 @@ describe('stable-demo versioned config', () => {
       codeCommit: 'b'.repeat(40),
     })
     expect(config).toMatchObject({
-      schemaVersion: 11,
+      schemaVersion: 13,
       profile: 'v011-stable-demo',
       protocol: 'dsh-self-evolving-candidate-tree-v2',
       limits: { admittedChildren: 3, solverTrialsMax: 15 },
@@ -42,7 +52,7 @@ describe('stable-demo versioned config', () => {
     )
   })
 
-  it('freezes K3, 15 solver trials, Zen/high/1M and writes a private no-replace config', async () => {
+  it('freezes K3, 15 solver trials and the official Responses route in a private config', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-cli-config-'))
     roots.push(root)
     const stateDir = join(root, 'state')
@@ -58,9 +68,12 @@ describe('stable-demo versioned config', () => {
       baselineFailureDiscoveryMax: 12,
     })
     expect(config.model).toMatchObject({
-      requested: 'deepseek-v4-flash-zen',
+      requested: 'deepseek-v4-flash',
       reasoningEffort: 'high',
       contextWindow: 1_048_576,
+      endpoint: 'https://api.deepseek.com/v1',
+      wireApi: 'responses',
+      credentialEnv: 'DEEPSEEK_API_KEY',
     })
     const path = await initializeState(config)
     expect((await stat(path)).mode & 0o777).toBe(0o600)

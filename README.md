@@ -7,9 +7,10 @@ Terminal-Bench 2.1 为首个验证环境的递归自改进（RSI）项目。
 `dsh-self-evolving`。v0.1/v0.1.1 的历史审计保留旧名称和旧绝对路径，以维持既有证据真实性；迁移说明见
 [`docs/migration-v0.2.md`](docs/migration-v0.2.md)。
 
-项目当前状态为 **`OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`**。Gate 0–7 的 Loader、candidate builder、
-Harbor ACP、durable controller、真实 Zen proposer、K=3 稳定迭代与 Apache-2.0 source release 已有验收
-证据。尚无 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA 结论。
+项目当前状态为 **`OPEN_SOURCE_V0_2_RELEASE_CANDIDATE`**。Gate 0–7 的 Loader、candidate builder、
+Harbor ACP、durable controller、真实 DeepSeek 官方 Responses proposer、K=3 稳定迭代、低消耗固定回放
+effectiveness gate 与 Apache-2.0 source release 已有验收证据。尚无 Terminal-Bench 提分、sealed
+promotion、leaderboard 或 SOTA 结论。
 
 v0.1.1 的 bounded multi-file successor 已通过 fresh real K=3、真实 Harbor candidate trials、注入式
 crash/resume 和独立审计，状态为 **`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`**。该能力声明仅证明系统能稳定
@@ -45,7 +46,8 @@ Harbor 是可替换 benchmark provider，而不是 RSI 的所有者。
 - [`docs/research-basis.md`](docs/research-basis.md)：论文/项目依据、采用方式和已纠正的旧结论。
 - [`docs/decisions.md`](docs/decisions.md)：关键架构决策记录（ADR）。
 - [`docs/phase-todolist.md`](docs/phase-todolist.md)：按 Gate 0–8 展开的落地执行清单。
-- [`docs/v0.1-release-gates.md`](docs/v0.1-release-gates.md)：当前开源发布范围的短版 Gate 定义。
+- [`docs/v0.1-release-gates.md`](docs/v0.1-release-gates.md)：已验收 predecessor 的短版 Gate 定义。
+- [`docs/v0.2-release-gates.md`](docs/v0.2-release-gates.md)：名称/provider/effectiveness successor 的验收定义。
 - [`docs/migration-v0.2.md`](docs/migration-v0.2.md)：v0.2 名称、包、CLI、协议和 state 迁移边界。
 - [`PROJECT_STATUS.md`](PROJECT_STATUS.md)：当前真实进度与最近一个验收门。
 
@@ -84,6 +86,10 @@ pnpm dsh-self-evolving run --state-dir /var/lib/dsh-self-evolving-controller/dem
 配置、恢复和证据解释分别见 [`docs/configuration.md`](docs/configuration.md)、
 [`docs/troubleshooting.md`](docs/troubleshooting.md) 和 [`docs/evidence-guide.md`](docs/evidence-guide.md)。
 备份、恢复、回滚和卸载见 [`docs/operations.md`](docs/operations.md)。
+
+默认 provider 只读取可信宿主进程中的 `DEEPSEEK_API_KEY`，固定使用 DeepSeek 官方
+`https://api.deepseek.com/v1` Responses 路由、`deepseek-v4-flash`、high、1M context 和 `store=false`。
+不会读取 Codex 的 `auth.json`/`config.toml`，也不再默认经过 CPA。
 
 ## 当前固定版本快照
 

@@ -35,7 +35,9 @@ describe('v0.1.1 proposer tool budgets', () => {
   it('bounds control calls independently', () => {
     const value = state()
     for (let index = 0; index < 8; index += 1) consumeV011ToolBudget(value, 'control')
+    expect(() => consumeV011ToolBudget(value, 'control')).not.toThrow()
+    for (let index = 9; index < 16; index += 1) consumeV011ToolBudget(value, 'control')
     expect(() => consumeV011ToolBudget(value, 'control')).toThrow(/control-call limit/)
-    expect(value.callCount).toBe(8)
+    expect(value.callCount).toBe(16)
   })
 })

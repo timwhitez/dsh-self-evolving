@@ -83,6 +83,26 @@ export interface V011MaterializationOutput {
   resolvedCitations: ResolvedCitation[]
 }
 
+export function assertV011AutonomousChildShape(operations: TreeOperation[]): void {
+  if (!operations.some((row) => row.op === 'modify' && row.path === 'src/index.ts')) {
+    throw new Error('v0.1.1 materializer: child must modify src/index.ts')
+  }
+  if (
+    !operations.some(
+      (row) => row.op === 'add' && row.path.startsWith('src/') && row.path.endsWith('.ts'),
+    )
+  ) {
+    throw new Error('v0.1.1 materializer: child must add a production module under src/**')
+  }
+  if (
+    !operations.some(
+      (row) => row.op === 'add' && row.path.startsWith('tests/') && row.path.endsWith('.spec.ts'),
+    )
+  ) {
+    throw new Error('v0.1.1 materializer: child must add a candidate-owned tests/**/*.spec.ts')
+  }
+}
+
 function uniqueCitations(rows: EvidenceCitation[]): EvidenceCitation[] {
   const byKey = new Map(
     rows.map((row) => [`${row.objectDigest}:${JSON.stringify(row.locator)}`, row]),
@@ -201,6 +221,7 @@ export async function validateV011ProposalSemantics(input: {
   }
   const diff = await deriveV011Operations(parent, child)
   assertDeclaredOperations(diff.operations, input.proposal.declaredOperations)
+  assertV011AutonomousChildShape(diff.operations)
   const citations = uniqueCitations([
     ...input.proposal.evidenceCitations,
     ...input.analysis.failureClusters.flatMap((cluster) => cluster.citations),

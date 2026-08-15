@@ -15,6 +15,7 @@ import {
 } from '@dsh-self-evolving/candidate-sdk'
 import {
   aggregateCapabilityRequests,
+  assertV011AutonomousChildShape,
   assertCapabilityRequestsDoNotWidenCurrentLineage,
   buildExport,
   deriveMechanismOutcome,
@@ -65,6 +66,28 @@ async function parentFixture(root: string): Promise<string> {
 }
 
 describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
+  it('requires a new production module, index wiring, and candidate-owned test', () => {
+    expect(() =>
+      assertV011AutonomousChildShape([
+        { op: 'modify', path: 'candidate.json' },
+        { op: 'modify', path: 'src/index.ts' },
+      ]),
+    ).toThrow(/add a production module/)
+    expect(() =>
+      assertV011AutonomousChildShape([
+        { op: 'modify', path: 'src/index.ts' },
+        { op: 'add', path: 'src/retry/bounded.ts' },
+      ]),
+    ).toThrow(/candidate-owned/)
+    expect(() =>
+      assertV011AutonomousChildShape([
+        { op: 'modify', path: 'src/index.ts' },
+        { op: 'add', path: 'src/retry/bounded.ts' },
+        { op: 'add', path: 'tests/retry.spec.ts' },
+      ]),
+    ).not.toThrow()
+  })
+
   it('binds a legal export to exact multi-file output and resolves spans', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-materializer-'))
     roots.push(root)
@@ -106,6 +129,7 @@ describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
     await materializeV011ChildSlot(parent, child)
     await mkdir(join(child, 'src', 'retry'), { recursive: true })
     await writeFile(join(child, 'src/retry/bounded.ts'), 'export const retryLimit = 1\n')
+    await writeFile(join(child, 'tests/retry.spec.ts'), 'export const retryTest = true\n')
     await writeFile(
       join(child, 'src/index.ts'),
       "export { retryLimit } from './retry/bounded.js'\n",
@@ -189,6 +213,7 @@ describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
         { op: 'modify', path: 'candidate.json' },
         { op: 'modify', path: 'src/index.ts' },
         { op: 'add', path: 'src/retry/bounded.ts' },
+        { op: 'add', path: 'tests/retry.spec.ts' },
       ],
       mechanismAssertions: ['One retry maximum.'],
       preservationAssertions: ['Success is not retried.'],

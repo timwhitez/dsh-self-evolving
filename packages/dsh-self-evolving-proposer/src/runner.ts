@@ -4,7 +4,7 @@
  *
  * Flow:
  *   1. boot the real DSH Loader with a minimal model-backed composition
- *      (llm-deepseek → agent-spine-demo → agent-default-model);
+ *      (llm-responses → agent-spine-demo → agent-default-model);
  *   2. ctx.agents.create({ agentOptions: { provider, model }, setup }) to mint
  *      a scoped proposer agent whose ONLY model route is the locked one;
  *   3. followup with the proposal prompt (parent source + filtered evidence +

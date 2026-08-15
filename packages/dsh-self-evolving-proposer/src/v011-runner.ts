@@ -11,6 +11,10 @@ export interface V011ProposalTurnInput {
   exportMerkleRoot: string
   capabilityCatalogDigest: string
   ancestorClusters: string[]
+  modeContract?: {
+    targetModes: Array<'solve' | 'propose'>
+    preservedModes: Array<'solve' | 'propose'>
+  }
   requiredParentEvidence?: V011ParentEvidenceBinding
   roots: V011ToolRoots
 }
@@ -31,6 +35,14 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     `Evidence export Merkle root: ${input.exportMerkleRoot}`,
     `Frozen capability catalog digest: ${input.capabilityCatalogDigest}`,
     `Ancestor clusters requiring reconciliation: ${JSON.stringify(input.ancestorClusters)}`,
+    ...(input.modeContract === undefined
+      ? []
+      : [
+          `Runtime modes that MUST change: ${JSON.stringify(input.modeContract.targetModes)}`,
+          `Runtime modes that MUST remain behaviorally identical to the parent: ${JSON.stringify(input.modeContract.preservedModes)}`,
+          'Gate every new runtime effect by config.mode so preserved modes retain the exact parent Loader replay.',
+          'Add a candidate-owned preservation test for the mode branch; do not change preserved-mode prompt text, component inventory, or side effects.',
+        ]),
     ...(input.requiredParentEvidence === undefined
       ? []
       : [
@@ -46,13 +58,16 @@ export function buildV011ProposalPrompt(input: V011ProposalTurnInput): string {
     'Create at least one new production module under src/** and update src/index.ts to use it.',
     'The new module must be a namespace-form Cordis component (name/inject/apply, no default export) mounted from the candidate root with ctx.plugin().',
     'Import that namespace-form module with `import * as componentName` and a relative `.js` specifier; do not invent a named wrapper export or omit the NodeNext extension.',
+    'Do not call ctx.onDispose; Cordis owns effects registered through ctx.plugin and injected services.',
     'Write candidate-owned mechanism and preservation tests under tests/**/*.spec.ts.',
+    'Candidate tests must pass against the exact final child tree. Import and test exported runtime behavior; do not read source files in tests because source-text assertions are comment-sensitive.',
+    'Candidate production code and tests must not import node:* built-ins; tests may import only vitest plus candidate-relative modules.',
     'Write the slot metadata files with write_file paths analysis.json and proposal.json.',
     'Citations must resolve to exact exported object digests and JSON Pointer or JSONL line spans.',
     'If an ancestor cluster is listed, cite its analysis and mechanism-outcome record and state your position.',
     'When exact parent evidence digests are listed, the selected failure cluster must cite that exact trajectory and normalized trial; its reconciliation must cite that exact parent analysis and mechanism-outcome.',
     'Capability requests are data-only and cannot alter this run.',
-    'Call validate_child, then finish_proposal. finish_proposal runs the same semantic validator as trusted materialization.',
+    'Call validate_child, then finish_proposal. Both execute the admission policy scan and candidate-owned tests; finish_proposal also runs the same semantic validator as trusted materialization.',
     'If finish_proposal returns an error, correct the named defect and call it again. Do not stop after only explaining the change.',
   ].join('\n')
 }

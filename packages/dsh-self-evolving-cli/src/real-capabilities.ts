@@ -16,7 +16,7 @@ import { basename, join } from 'node:path'
 import { buildCandidate, packCapsule } from '@dsh-self-evolving/candidate-sdk'
 import { runProposalSandbox, type EvaluationObservation } from '@dsh-self-evolving/core'
 import {
-  TrustedChatCompletionsAdapter,
+  TrustedResponsesAdapter,
   createProposalGatewayLlmHandler,
   startProposalGateway,
   type ProposalGatewayRoute,
@@ -178,7 +178,7 @@ async function realProposal(
         width: 3,
       }) + '\n',
     )
-    const adapter = new TrustedChatCompletionsAdapter({
+    const adapter = new TrustedResponsesAdapter({
       route: lockedRoute,
       apiKeyEnv: 'DSH_SELF_EVOLVING_PROVIDER_API_KEY',
       expectedResponseModel: config.model.effective,

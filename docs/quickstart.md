@@ -9,8 +9,9 @@
 - Python 3.12, `uv`, and the pinned Harbor virtual environment
 - Bubblewrap (`/usr/bin/bwrap`)
 
-The stable demo uses the existing root-only Codex DeepSeek credential and provider section. Credentials are never
-copied into the repository, config, candidate, command line, or durable evidence.
+The stable demo uses `DEEPSEEK_API_KEY` only in the trusted host process and calls the DeepSeek official Responses
+route. It does not read Codex credentials and does not default to CPA. Credentials are never copied into the
+repository, config, candidate, command line, or durable evidence.
 
 ## Install from a source checkout
 
@@ -27,6 +28,12 @@ builds DSH, creates the pinned Harbor environment, installs and builds the local
 It refuses an existing upstream checkout with a different remote or dirty worktree.
 
 ## Create and inspect a stable demo
+
+Set the credential in the current shell without writing it to a project file:
+
+```bash
+export DEEPSEEK_API_KEY='...'
+```
 
 ```bash
 pnpm dsh-self-evolving init \
@@ -45,8 +52,8 @@ pnpm dsh-self-evolving run \
 The development profile evaluates at most 12 baseline tasks in two fixed batches, then at most three candidates.
 It never accesses the sealed split. Run `resume` after an interruption; do not run `run` again on existing state.
 
-For the v0.1.1 multi-file successor, add `--profile v011-stable-demo` to `init`. It requires a fresh state directory
-and run ID; schema-10 state is never upgraded in place. Schema 11 freezes a public-metadata hard-task order and
+For the multi-file successor, add `--profile v011-stable-demo` to `init`. It requires a fresh state directory
+and run ID; predecessor state is never upgraded in place. Schema 13 freezes a public-metadata hard-task order and
 stops baseline discovery at the first attributable reward-zero non-pass, up to 12 trials.
 
 ```bash
@@ -57,3 +64,15 @@ pnpm dsh-self-evolving audit  --state-dir /var/lib/dsh-self-evolving-controller/
 
 `STABLE_ITERATION_VERIFIED` proves generation, build, evaluation, persistence, lineage and recovery. It is not a
 Terminal-Bench improvement or leaderboard claim.
+
+## Run the low-cost effectiveness check
+
+```bash
+export DSH_SELF_EVOLVING_EFFECT_RUN_ID='effect-local-1'
+export DSH_SELF_EVOLVING_EFFECT_RECEIPT_PATH="$PWD/evidence/effectiveness/effect-local-1.json"
+pnpm effectiveness:official
+```
+
+Success is `ENGINEERING_EFFECT_VERIFIED`: the admitted child changes the preregistered solve-mode fixed replay while
+the propose-mode control replay remains unchanged. The receipt records hashes, usage and estimated cost but no key,
+reasoning text, model body or private trajectory.

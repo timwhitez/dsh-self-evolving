@@ -117,11 +117,16 @@
 > session loop、GatewayAdapter 与 parser 在 Bubblewrap 内生成 1 个 admitted child；当时尚缺的真实
 > provider 同拓扑复验已由下述 Zen successor 完成。
 >
-> **Zen compatible successor（已验收）**：从 root-only Codex auth store 仅向可信宿主注入
+> **历史 Zen compatible successor（已由 v0.2 官方路由取代）**：从 root-only Codex auth store 仅向可信宿主注入
 > credential；冻结 requested Zen / effective Flash / high / 1,048,576 context。项目绕过 CPA 有缺陷的
 > Responses 合成层，直接使用 compatible Chat Completions 与单轮 32,768 output budget；同一
 > networkless Bubblewrap + fixed gateway 拓扑生成 1 个 admitted child。CPA 未修改，reasoning/模型正文
 > 未持久化。旧 free route 的 429 审计保留为 predecessor。
+
+> **v0.2 official Responses successor（已验收，2026-08-15）**：默认配置固定 DeepSeek 官方
+> `https://api.deepseek.com/v1`、Responses、`deepseek-v4-flash`、high、1M、32k、`store=false`，只读取可信
+> 宿主的 `DEEPSEEK_API_KEY`。真实 `v0.2-official-responses-v6` 生成并 admission 一个不同 child，solve 固定
+> 回放改变且 propose control 保持；状态 `ENGINEERING_EFFECT_VERIFIED`，不构成 Terminal-Bench 提分。
 
 ## Phase 5 — 产品化迭代闭环（Gate 5，1–3 天）
 

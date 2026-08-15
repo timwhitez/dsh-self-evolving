@@ -166,6 +166,31 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
+  packages/dsh-self-evolving-llm-responses:
+    dependencies:
+      '@dsh-self-evolving/proposer':
+        specifier: workspace:*
+        version: link:../dsh-self-evolving-proposer
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: link:../../deepseek-harness/vendor/cordis
+        version: link:../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-llm':
+        specifier: link:../../deepseek-harness/packages/llm/llm
+        version: link:../../deepseek-harness/packages/llm/llm
+      '@deepseek-ai/schemastery':
+        specifier: link:../../deepseek-harness/vendor/schemastery
+        version: link:../../deepseek-harness/vendor/schemastery
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
+
   packages/dsh-self-evolving-loader-e2e:
     dependencies:
       '@dsh-self-evolving/candidate-baseline':
@@ -248,6 +273,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: link:../../deepseek-harness/vendor/cordis
@@ -276,9 +304,6 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: link:../../deepseek-harness/packages/llm/llm
         version: link:../../deepseek-harness/packages/llm/llm
-      '@deepseek-ai/dsh-llm-deepseek':
-        specifier: link:../../deepseek-harness/packages/llm/llm-deepseek
-        version: link:../../deepseek-harness/packages/llm/llm-deepseek
       '@deepseek-ai/dsh-session':
         specifier: link:../../deepseek-harness/packages/core/session
         version: link:../../deepseek-harness/packages/core/session
@@ -288,9 +313,6 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/dsh-self-evolving-sealed-service:
     dependencies:

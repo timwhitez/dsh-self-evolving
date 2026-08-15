@@ -1,30 +1,37 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  CallId,
+  createAssistantMessage,
+  createToolResultMessage,
+  createUserMessage,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import { TrustedResponsesAdapter, type ProposalGatewayRoute } from '../src/index.js'
 
 const route: ProposalGatewayRoute = {
   provider: 'deepseek',
   endpoint: 'https://provider.example/v1',
-  model: 'deepseek-v4-flash-zen',
+  model: 'deepseek-v4-flash',
   reasoningEffort: 'high',
   maxTokens: 2048,
 }
 
-const originalCredential = process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
+const originalCredential = process.env['DEEPSEEK_API_KEY']
 
 afterEach(() => {
-  if (originalCredential === undefined) delete process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
-  else process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = originalCredential
+  if (originalCredential === undefined) delete process.env['DEEPSEEK_API_KEY']
+  else process.env['DEEPSEEK_API_KEY'] = originalCredential
 })
 
 describe('trusted Responses proposal adapter', () => {
-  it('locks the Zen 1m route, retries transport failure, and emits DSH chunks', async () => {
-    process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = 'x'
+  it('locks the official Flash 1m route, retries transport failure, and emits DSH chunks', async () => {
+    process.env['DEEPSEEK_API_KEY'] = 'x'
     let wireBody: Record<string, unknown> | undefined
     let fetchCalls = 0
     const adapter = new TrustedResponsesAdapter({
       route,
       expectedResponseModel: 'deepseek-v4-flash',
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
       contextWindow: 1_048_576,
       requestMaxRetries: 1,
       async fetchImpl(input, init) {
@@ -75,12 +82,13 @@ describe('trusted Responses proposal adapter', () => {
       chunks.push(chunk)
     }
     expect(wireBody).toMatchObject({
-      model: 'deepseek-v4-flash-zen',
+      model: 'deepseek-v4-flash',
       reasoning: { effort: 'high' },
       max_output_tokens: 2048,
+      store: false,
     })
     expect(fetchCalls).toBe(2)
-    expect(String(wireBody?.['input'])).toContain('system policy')
+    expect(wireBody?.['instructions']).toBe('system policy')
     expect(String(wireBody?.['input'])).toContain('proposal input')
     expect(chunks).toContainEqual({
       type: 'usage',
@@ -90,11 +98,137 @@ describe('trusted Responses proposal adapter', () => {
     expect(JSON.stringify(chunks)).not.toContain('authorization')
   })
 
-  it('rejects route overrides, model tools, and missing trusted-host credentials', async () => {
-    delete process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
+  it('translates stateless tool calls without exposing reasoning', async () => {
+    process.env['DEEPSEEK_API_KEY'] = 'x'
+    const wireBodies: Array<Record<string, unknown>> = []
+    let fetchCalls = 0
+    const adapter = new TrustedResponsesAdapter({
+      route,
+      contextWindow: 1_048_576,
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      async fetchImpl(_input, init) {
+        fetchCalls += 1
+        wireBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return fetchCalls === 1
+          ? Response.json({
+              id: 'response-tool',
+              model: route.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'reasoning-1',
+                  type: 'reasoning',
+                  status: 'completed',
+                  content: [{ type: 'reasoning_text', text: 'private reasoning' }],
+                },
+                {
+                  id: 'function-1',
+                  type: 'function_call',
+                  status: 'completed',
+                  call_id: 'call-1',
+                  name: 'read_file',
+                  arguments: '{"path":"x"}',
+                },
+              ],
+              usage: { input_tokens: 10, output_tokens: 5 },
+            })
+          : Response.json({
+              id: 'response-final',
+              model: route.model,
+              status: 'completed',
+              output: [
+                {
+                  type: 'message',
+                  content: [{ type: 'output_text', text: 'done' }],
+                },
+              ],
+              usage: { input_tokens: 15, output_tokens: 1 },
+            })
+      },
+    })
+    const tools = [{ name: 'read_file', description: 'Read', parameters: { type: 'object' } }]
+    const firstChunks: StreamChunk[] = []
+    for await (const chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: 'inspect' }],
+          source: { kind: 'user' },
+        }),
+      ],
+      tools,
+    })) {
+      firstChunks.push(chunk)
+    }
+    expect(firstChunks).toContainEqual({
+      type: 'block-end',
+      index: 0,
+      block: {
+        type: 'tool-call',
+        id: CallId('call-1'),
+        name: 'read_file',
+        arguments: '{"path":"x"}',
+      },
+    })
+    expect(firstChunks.at(-1)).toMatchObject({ reason: { kind: 'tool-calls' } })
+    expect(JSON.stringify(firstChunks)).not.toContain('private reasoning')
+
+    const assistant = createAssistantMessage({
+      content: [
+        {
+          type: 'tool-call',
+          id: CallId('call-1'),
+          name: 'read_file',
+          arguments: '{"path":"x"}',
+        },
+      ],
+      source: { provider: route.provider, model: route.model },
+    })
+    const result = createToolResultMessage({
+      callId: CallId('call-1'),
+      content: [{ type: 'text', text: 'contents' }],
+      isError: false,
+    })
+    for await (const _chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [assistant, result],
+      tools,
+    })) {
+      // Drain the trusted continuation.
+    }
+    expect(wireBodies[0]).toMatchObject({
+      model: route.model,
+      store: false,
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+      tools: [
+        {
+          type: 'function',
+          name: 'read_file',
+          description: 'Read',
+          parameters: { type: 'object' },
+        },
+      ],
+    })
+    expect(wireBodies[1]?.['input']).toEqual([
+      expect.objectContaining({ id: 'reasoning-1', type: 'reasoning' }),
+      expect.objectContaining({ id: 'function-1', type: 'function_call', call_id: 'call-1' }),
+      { type: 'function_call_output', call_id: 'call-1', output: 'contents' },
+    ])
+  })
+
+  it('rejects route overrides and missing trusted-host credentials', async () => {
+    delete process.env['DEEPSEEK_API_KEY']
     const adapter = new TrustedResponsesAdapter({
       route,
       expectedResponseModel: 'deepseek-v4-flash',
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
       contextWindow: 1_048_576,
     })
     const base = {
@@ -110,14 +244,7 @@ describe('trusted Responses proposal adapter', () => {
       for await (const _chunk of adapter.stream({ ...base, model: 'override' })) void _chunk
     }).rejects.toThrow(/locked route/)
     await expect(async () => {
-      for await (const _chunk of adapter.stream({
-        ...base,
-        tools: [{ name: 'forbidden', description: 'forbidden', parameters: {} }],
-      }))
-        void _chunk
-    }).rejects.toThrow(/does not permit model tool calls/)
-    await expect(async () => {
       for await (const _chunk of adapter.stream(base)) void _chunk
-    }).rejects.toThrow(/credential env DSH_SELF_EVOLVING_PROVIDER_API_KEY is unavailable/)
+    }).rejects.toThrow(/credential env DEEPSEEK_API_KEY is unavailable/)
   })
 })

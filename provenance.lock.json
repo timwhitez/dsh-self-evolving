@@ -57,18 +57,18 @@
     "note": "Model routes are content-addressed here and in every run manifest; keys never carry credentials. The provider endpoint is recorded for provenance only; live secrets live outside the repo.",
     "providers": [
       {
-        "id": "dsh-self-evolving-provider",
-        "baseUrl": "https://64.186.236.156:24635/v1",
-        "transport": "openai-compatible",
-        "credentialRef": "env:DSH_SELF_EVOLVING_PROVIDER_API_KEY",
+        "id": "deepseek-official-responses",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "transport": "openai-responses",
+        "credentialRef": "env:DEEPSEEK_API_KEY",
         "models": [
           {
-            "requestedId": "deepseek-v4-flash-zen",
+            "requestedId": "deepseek-v4-flash",
             "effectiveId": "deepseek-v4-flash",
             "reasoningEffort": "high",
             "contextWindow": 1048576,
             "maxOutputTokens": 32768,
-            "wireApi": "chat-completions-compatible"
+            "wireApi": "responses"
           }
         ]
       }

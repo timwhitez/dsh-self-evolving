@@ -89,7 +89,7 @@ export function buildRegistryEntry(input: RegistryEntryInput): AcpRegistryEntry 
     id: `dsh-self-evolving-${input.candidateId}`,
     name: input.agentName,
     version: input.version,
-    description: `DSH RSI candidate ${input.candidateId} ACP launcher (Terminal-Bench).`,
+    description: `dsh-self-evolving candidate ${input.candidateId} ACP launcher (Terminal-Bench).`,
     distribution: {
       binary: {
         'linux-x86_64': {

@@ -23,6 +23,10 @@ interface WorkerRequest {
   exportMerkleRoot: string
   capabilityCatalogDigest: string
   ancestorClusters: string[]
+  modeContract?: {
+    targetModes: Array<'solve' | 'propose'>
+    preservedModes: Array<'solve' | 'propose'>
+  }
   requiredParentEvidence?: V011ParentEvidenceBinding
 }
 
@@ -39,6 +43,17 @@ const parentEvidenceValid =
     digestPattern.test(request.requiredParentEvidence.mechanismOutcomeDigest) &&
     digestPattern.test(request.requiredParentEvidence.normalizedTrialDigest) &&
     digestPattern.test(request.requiredParentEvidence.trajectoryDigest))
+const modes = new Set(['solve', 'propose'])
+const modeContractValid =
+  request.modeContract === undefined ||
+  (Array.isArray(request.modeContract.targetModes) &&
+    request.modeContract.targetModes.length > 0 &&
+    request.modeContract.targetModes.every((mode) => modes.has(mode)) &&
+    Array.isArray(request.modeContract.preservedModes) &&
+    request.modeContract.preservedModes.every((mode) => modes.has(mode)) &&
+    request.modeContract.targetModes.every(
+      (mode) => !request.modeContract?.preservedModes.includes(mode),
+    ))
 if (
   request === null ||
   !/^p_[0-9a-f]{32}$/.test(request.proposalId) ||
@@ -49,6 +64,7 @@ if (
   !/^sha256:[0-9a-f]{64}$/.test(request.exportMerkleRoot) ||
   !/^sha256:[0-9a-f]{64}$/.test(request.capabilityCatalogDigest) ||
   !Array.isArray(request.ancestorClusters) ||
+  !modeContractValid ||
   !parentEvidenceValid
 ) {
   throw new Error('v0.1.1 proposal worker: invalid durable request')
@@ -148,6 +164,7 @@ try {
     exportMerkleRoot: request.exportMerkleRoot,
     capabilityCatalogDigest: request.capabilityCatalogDigest,
     ancestorClusters: request.ancestorClusters,
+    ...(request.modeContract === undefined ? {} : { modeContract: request.modeContract }),
     ...(request.requiredParentEvidence === undefined
       ? {}
       : { requiredParentEvidence: request.requiredParentEvidence }),

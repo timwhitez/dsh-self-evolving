@@ -1,0 +1,36 @@
+{
+  "name": "@dsh-self-evolving/llm-responses",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Locked DeepSeek official Responses API Cordis adapter for dsh-self-evolving runtimes.",
+  "license": "Apache-2.0",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dsh-self-evolving/proposer": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-llm": "link:../../deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -7,6 +7,11 @@ All notable changes are recorded here. This project uses semantic versioning for
 - Renamed the project, package scope, CLI, service, protocol identities and release artifacts to
   `dsh-self-evolving`.
 - Preserved v0.1.1 Git history and immutable run evidence as predecessor records.
+- Switched the default provider to DeepSeek official Responses with an env-only credential and `store=false`.
+- Added a low-consumption fixed-replay effectiveness gate with target-mode change and control-mode preservation.
+- Moved candidate tests and the trusted import policy into proposal-time validation, with an explicit durable
+  target/preserved runtime-mode contract.
+- Verified a real official-model child as `ENGINEERING_EFFECT_VERIFIED`; this is not a benchmark score claim.
 
 ## 0.1.1 - 2026-08-15
 

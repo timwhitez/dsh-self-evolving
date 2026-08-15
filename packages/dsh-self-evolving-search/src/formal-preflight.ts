@@ -223,12 +223,12 @@ export function verifyFormalPreflight(
   }
   if (
     manifest.solverRoute.provider !== 'deepseek' ||
-    manifest.solverRoute.model !== 'deepseek-v4-flash-zen' ||
+    manifest.solverRoute.model !== 'deepseek-v4-flash' ||
     manifest.solverRoute.effectiveModel !== 'deepseek-v4-flash' ||
     manifest.solverRoute.reasoningEffort !== 'high' ||
     manifest.solverRoute.contextWindowTokens !== 1_048_576
   ) {
-    reasons.push('solver route is not the frozen Zen-request/Flash-effective/high/1m identity')
+    reasons.push('solver route is not the frozen official Flash/high/1m identity')
   }
   if (routeIdentity(manifest.solverRoute) !== routeIdentity(manifest.proposerRoute)) {
     reasons.push('self track proposer and solver routes differ')

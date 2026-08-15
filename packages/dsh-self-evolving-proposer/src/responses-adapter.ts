@@ -1,5 +1,6 @@
-/** Trusted-host Responses API adapter for the fixed proposal gateway. */
+/** Trusted-host DeepSeek official Responses API adapter for the fixed proposal gateway. */
 import {
+  CallId,
   LlmAdapter,
   attributionHeaders,
   type GenerateOptions,
@@ -14,7 +15,18 @@ export interface TrustedResponsesAdapterConfig {
   apiKeyEnv?: string
   contextWindow: number
   requestMaxRetries?: number
+  reasoningContinuationMaxTurns?: number
   fetchImpl?: typeof fetch
+}
+
+interface ResponsesOutputItem {
+  id?: unknown
+  type?: unknown
+  status?: unknown
+  content?: Array<{ type?: unknown; text?: unknown }>
+  call_id?: unknown
+  name?: unknown
+  arguments?: unknown
 }
 
 interface ResponsesBody {
@@ -22,16 +34,20 @@ interface ResponsesBody {
   model?: unknown
   status?: unknown
   incomplete_details?: { reason?: unknown } | null
-  output?: Array<{
-    type?: unknown
-    content?: Array<{ type?: unknown; text?: unknown }>
-  }>
+  output?: ResponsesOutputItem[]
   usage?: {
     input_tokens?: unknown
     output_tokens?: unknown
     input_tokens_details?: { cached_tokens?: unknown }
     output_tokens_details?: { reasoning_tokens?: unknown }
   }
+}
+
+interface ResponsesFunctionCall {
+  item: ResponsesOutputItem
+  callId: string
+  name: string
+  arguments: string
 }
 
 function textOf(value: unknown): string {
@@ -49,14 +65,70 @@ function textOf(value: unknown): string {
     .join('\n')
 }
 
-function flattenInput(options: GenerateOptions): string {
-  const parts: string[] = []
-  if (options.system) parts.push(`SYSTEM\n${options.system}`)
+function flattenMessages(options: GenerateOptions): string {
+  return options.messages
+    .map((message) => {
+      const text = textOf(message.content)
+      return text ? `${message.role.toUpperCase()}\n${text}` : ''
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function continuationInput(
+  options: GenerateOptions,
+  priorItemsByCallId: ReadonlyMap<string, ResponsesOutputItem[]>,
+): Array<Record<string, unknown>> | null {
+  const input: Array<Record<string, unknown>> = []
+  let sawToolHistory = false
+  const includedItems = new Set<string>()
   for (const message of options.messages) {
-    const text = textOf(message.content)
-    if (text) parts.push(`${message.role.toUpperCase()}\n${text}`)
+    if (message.role === 'assistant') {
+      for (const call of message.content.filter((block) => block.type === 'tool-call')) {
+        sawToolHistory = true
+        const prior = priorItemsByCallId.get(String(call.id))
+        if (prior === undefined) {
+          throw new Error('responses adapter: trusted tool-call state is unavailable')
+        }
+        for (const item of prior) {
+          const key = typeof item.id === 'string' ? item.id : JSON.stringify(item)
+          if (includedItems.has(key)) continue
+          includedItems.add(key)
+          input.push(item as Record<string, unknown>)
+        }
+      }
+      continue
+    }
+    for (const result of message.content.filter((block) => block.type === 'tool-result')) {
+      sawToolHistory = true
+      input.push({
+        type: 'function_call_output',
+        call_id: String(result.toolCallId),
+        output: textOf(result.content) || '(no output)',
+      })
+    }
   }
-  return parts.join('\n\n')
+  return sawToolHistory ? input : null
+}
+
+function functionCallsOf(output: ResponsesOutputItem[]): ResponsesFunctionCall[] {
+  return output
+    .filter((item) => item.type === 'function_call')
+    .map((item) => {
+      if (
+        typeof item.call_id !== 'string' ||
+        typeof item.name !== 'string' ||
+        typeof item.arguments !== 'string'
+      ) {
+        throw new Error('responses adapter: malformed provider function call')
+      }
+      return {
+        item,
+        callId: item.call_id,
+        name: item.name,
+        arguments: item.arguments,
+      }
+    })
 }
 
 function finiteCount(value: unknown): number | undefined {
@@ -96,6 +168,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
   private readonly apiKeyEnv: string
   private readonly expectedResponseModel: string
   private readonly fetchImpl: typeof fetch
+  private readonly priorItemsByCallId = new Map<string, ResponsesOutputItem[]>()
 
   constructor(private readonly config: TrustedResponsesAdapterConfig) {
     super()
@@ -110,7 +183,15 @@ export class TrustedResponsesAdapter extends LlmAdapter {
     ) {
       throw new Error('responses adapter: requestMaxRetries must be an integer from 0 through 12')
     }
-    this.apiKeyEnv = config.apiKeyEnv ?? 'DSH_SELF_EVOLVING_PROVIDER_API_KEY'
+    if (
+      config.reasoningContinuationMaxTurns !== undefined &&
+      (!Number.isSafeInteger(config.reasoningContinuationMaxTurns) ||
+        config.reasoningContinuationMaxTurns < 0 ||
+        config.reasoningContinuationMaxTurns > 4)
+    ) {
+      throw new Error('responses adapter: reasoningContinuationMaxTurns must be from 0 through 4')
+    }
+    this.apiKeyEnv = config.apiKeyEnv ?? 'DEEPSEEK_API_KEY'
     this.expectedResponseModel = config.expectedResponseModel ?? config.route.model
     if (!this.expectedResponseModel) {
       throw new Error('responses adapter: expected response model must be non-empty')
@@ -144,102 +225,187 @@ export class TrustedResponsesAdapter extends LlmAdapter {
     ) {
       throw new Error('responses adapter: request does not match locked route')
     }
-    if (options.tools !== undefined && options.tools.length > 0) {
-      throw new Error('responses adapter: proposal route does not permit model tool calls')
-    }
     const apiKey = process.env[this.apiKeyEnv]?.trim()
     if (!apiKey)
       throw new Error(`responses adapter: credential env ${this.apiKeyEnv} is unavailable`)
-    const input = flattenInput(options)
-    if (!input) throw new Error('responses adapter: request has no model input')
+    const continued = continuationInput(options, this.priorItemsByCallId)
+    let input: string | Array<Record<string, unknown>> = continued ?? flattenMessages(options)
+    if ((typeof input === 'string' && !input) || (Array.isArray(input) && input.length === 0)) {
+      throw new Error('responses adapter: request has no model input')
+    }
+
+    const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0 }
+    let sawReasoningUsage = false
+    const responseIds: string[] = []
+    let body: ResponsesBody | undefined
+    let text = ''
+    let functionCalls: ResponsesFunctionCall[] = []
+    const maxTurns = this.config.reasoningContinuationMaxTurns ?? 1
+
+    for (let turn = 0; turn <= maxTurns; turn++) {
+      body = await this.fetchBody(
+        {
+          model: route.model,
+          input,
+          ...(options.system === undefined ? {} : { instructions: options.system }),
+          reasoning: { effort: route.reasoningEffort },
+          max_output_tokens: route.maxTokens,
+          store: false,
+          ...(options.tools === undefined || options.tools.length === 0
+            ? {}
+            : {
+                tools: options.tools.map((tool) => ({
+                  type: 'function',
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                })),
+                tool_choice: 'auto',
+                parallel_tool_calls: false,
+              }),
+        },
+        options.signal,
+      )
+      if (body.model !== this.expectedResponseModel) {
+        throw new Error('responses adapter: provider model mismatch')
+      }
+      if (typeof body.id === 'string') responseIds.push(body.id)
+      const output = body.output ?? []
+      text = output
+        .flatMap((item) => item.content ?? [])
+        .filter((content) => content.type === 'output_text' && typeof content.text === 'string')
+        .map((content) => content.text as string)
+        .join('')
+      functionCalls = functionCallsOf(output)
+      const inputTotal = finiteCount(body.usage?.input_tokens) ?? 0
+      const cacheRead = finiteCount(body.usage?.input_tokens_details?.cached_tokens) ?? 0
+      usage.inputTokens += Math.max(0, inputTotal - cacheRead)
+      usage.cacheReadTokens += cacheRead
+      usage.outputTokens += finiteCount(body.usage?.output_tokens) ?? 0
+      const reasoningTokens = finiteCount(body.usage?.output_tokens_details?.reasoning_tokens)
+      if (reasoningTokens !== undefined) {
+        usage.reasoningTokens += reasoningTokens
+        sawReasoningUsage = true
+      }
+      if (text || functionCalls.length > 0) break
+      const incomplete =
+        body.status === 'incomplete' && body.incomplete_details?.reason === 'max_output_tokens'
+      const reasoningItems = output.filter((item) => item.type === 'reasoning')
+      if (!incomplete || reasoningItems.length === 0 || turn === maxTurns) {
+        throw new Error(
+          `responses adapter: provider response has no output text or function call (${JSON.stringify(
+            {
+              turn: turn + 1,
+              status: typeof body.status === 'string' ? body.status : null,
+              incompleteReason:
+                typeof body.incomplete_details?.reason === 'string'
+                  ? body.incomplete_details.reason
+                  : null,
+              outputTypes: output.map((item) => (typeof item.type === 'string' ? item.type : null)),
+              inputTokens: finiteCount(body.usage?.input_tokens) ?? null,
+              outputTokens: finiteCount(body.usage?.output_tokens) ?? null,
+              reasoningTokens:
+                finiteCount(body.usage?.output_tokens_details?.reasoning_tokens) ?? null,
+            },
+          )})`,
+        )
+      }
+      input = [
+        ...(reasoningItems as Array<Record<string, unknown>>),
+        {
+          role: 'user',
+          content:
+            'Continue from the completed reasoning and emit the requested answer or tool call.',
+        },
+      ]
+    }
+
+    const reasoningItems = (body?.output ?? []).filter((item) => item.type === 'reasoning')
+    for (const call of functionCalls) {
+      this.priorItemsByCallId.set(call.callId, [...reasoningItems, call.item])
+    }
+    while (this.priorItemsByCallId.size > 256) {
+      const oldest = this.priorItemsByCallId.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.priorItemsByCallId.delete(oldest)
+    }
+
+    let index = 0
+    if (text) {
+      yield { type: 'block-start', index, blockType: 'text' }
+      yield { type: 'text-delta', index, text }
+      yield { type: 'block-end', index, block: { type: 'text', text } }
+      index += 1
+    }
+    for (const call of functionCalls) {
+      const id = CallId(call.callId)
+      yield { type: 'block-start', index, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index,
+        id,
+        name: call.name,
+        argumentsDelta: call.arguments,
+      }
+      yield {
+        type: 'block-end',
+        index,
+        block: {
+          type: 'tool-call',
+          id,
+          name: call.name,
+          arguments: call.arguments,
+        },
+      }
+      index += 1
+    }
+    yield {
+      type: 'usage',
+      usage: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        ...(usage.cacheReadTokens > 0 ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+        ...(sawReasoningUsage ? { reasoningTokens: usage.reasoningTokens } : {}),
+      },
+    }
+    yield {
+      type: 'finish',
+      reason: functionCalls.length > 0 ? { kind: 'tool-calls' } : { kind: 'stop' },
+      replayState: {
+        responseIds,
+        requestedModel: route.model,
+        effectiveModel: this.expectedResponseModel,
+        wireApi: 'responses',
+        store: false,
+      },
+    }
+  }
+
+  private async fetchBody(body: unknown, signal?: AbortSignal): Promise<ResponsesBody> {
+    const route = this.config.route
     const request: RequestInit = {
       method: 'POST',
       headers: {
         ...attributionHeaders(),
-        authorization: `Bearer ${apiKey}`,
+        authorization: `Bearer ${process.env[this.apiKeyEnv]?.trim() ?? ''}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model: route.model,
-        input,
-        reasoning: { effort: route.reasoningEffort },
-        max_output_tokens: route.maxTokens,
-      }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      body: JSON.stringify(body),
+      ...(signal === undefined ? {} : { signal }),
     }
-    const fetchResponse = async (): Promise<Response> => {
-      const maxRetries = this.config.requestMaxRetries ?? 0
-      let response: Response | undefined
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
-        const retryable =
-          response.status === 408 || response.status === 429 || response.status >= 500
-        if (response.ok || !retryable || attempt === maxRetries) break
-        await response.body?.cancel()
-        await waitForRetry(retryDelayMs(response, attempt), options.signal)
-      }
-      if (response === undefined) throw new Error('responses adapter: provider response missing')
-      if (!response.ok) {
-        throw new Error(`responses adapter: provider returned HTTP ${response.status}`)
-      }
-      return response
+    const maxRetries = this.config.requestMaxRetries ?? 0
+    let response: Response | undefined
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
+      const retryable = response.status === 408 || response.status === 429 || response.status >= 500
+      if (response.ok || !retryable || attempt === maxRetries) break
+      await response.body?.cancel()
+      await waitForRetry(retryDelayMs(response, attempt), signal)
     }
-    const body = (await (await fetchResponse()).json()) as ResponsesBody
-    if (body.model !== this.expectedResponseModel) {
-      throw new Error('responses adapter: provider model mismatch')
+    if (response === undefined) throw new Error('responses adapter: provider response missing')
+    if (!response.ok) {
+      throw new Error(`responses adapter: provider returned HTTP ${response.status}`)
     }
-    const text = (body.output ?? [])
-      .flatMap((item) => item.content ?? [])
-      .filter((content) => content.type === 'output_text' && typeof content.text === 'string')
-      .map((content) => content.text as string)
-      .join('')
-    if (!text) {
-      throw new Error(
-        `responses adapter: provider response has no output text (${JSON.stringify({
-          status: typeof body.status === 'string' ? body.status : null,
-          incompleteReason:
-            typeof body.incomplete_details?.reason === 'string'
-              ? body.incomplete_details.reason
-              : null,
-          outputTypes: (body.output ?? []).map((item) =>
-            typeof item.type === 'string' ? item.type : null,
-          ),
-          inputTokens: finiteCount(body.usage?.input_tokens) ?? null,
-          outputTokens: finiteCount(body.usage?.output_tokens) ?? null,
-          reasoningTokens: finiteCount(body.usage?.output_tokens_details?.reasoning_tokens) ?? null,
-        })})`,
-      )
-    }
-
-    yield { type: 'block-start', index: 0, blockType: 'text' }
-    yield { type: 'text-delta', index: 0, text }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
-    const inputTotal = finiteCount(body.usage?.input_tokens)
-    const outputTokens = finiteCount(body.usage?.output_tokens)
-    if (inputTotal !== undefined && outputTokens !== undefined) {
-      const cacheReadTokens = finiteCount(body.usage?.input_tokens_details?.cached_tokens) ?? 0
-      const reasoningTokens = finiteCount(body.usage?.output_tokens_details?.reasoning_tokens)
-      yield {
-        type: 'usage',
-        usage: {
-          inputTokens: Math.max(0, inputTotal - cacheReadTokens),
-          outputTokens,
-          ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
-          ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-        },
-      }
-    }
-    yield {
-      type: 'finish',
-      reason:
-        body.status === 'incomplete' && body.incomplete_details?.reason === 'max_output_tokens'
-          ? { kind: 'max-tokens' }
-          : { kind: 'stop' },
-      replayState: {
-        responseId: typeof body.id === 'string' ? body.id : null,
-        requestedModel: route.model,
-        effectiveModel: this.expectedResponseModel,
-      },
-    }
+    return (await response.json()) as ResponsesBody
   }
 }
