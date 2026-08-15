@@ -13,7 +13,7 @@
  * Crucially, the policy decisions are pure functions — a prompt-injected trace
  * cannot change them.
  */
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -219,6 +219,8 @@ describe('label-filtered evidence export', () => {
       expect((await stat(outDir)).mode & 0o222).toBe(0)
       expect((await stat(join(outDir, 'manifest.json'))).mode & 0o222).toBe(0)
     } finally {
+      await chmod(join(root, 'exports', 'action-1', 'objects'), 0o700).catch(() => {})
+      await chmod(join(root, 'exports', 'action-1'), 0o700).catch(() => {})
       await rm(root, { recursive: true, force: true })
     }
   })

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -75,7 +75,11 @@ function collectUsage(chunks: Array<Record<string, unknown>>) {
 
 let root: string | undefined
 afterEach(async () => {
-  if (root !== undefined) await rm(root, { recursive: true, force: true })
+  if (root !== undefined) {
+    await chmod(join(root, 'input', 'evidence', 'objects'), 0o700).catch(() => {})
+    await chmod(join(root, 'input', 'evidence'), 0o700).catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
   root = undefined
 })
 

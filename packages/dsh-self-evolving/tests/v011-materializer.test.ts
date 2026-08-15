@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -28,7 +28,13 @@ import {
 
 const roots: string[] = []
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  await Promise.all(
+    roots.splice(0).map(async (root) => {
+      await chmod(join(root, 'export', 'objects'), 0o700).catch(() => {})
+      await chmod(join(root, 'export'), 0o700).catch(() => {})
+      await rm(root, { recursive: true, force: true })
+    }),
+  )
 })
 
 async function parentFixture(root: string): Promise<string> {
