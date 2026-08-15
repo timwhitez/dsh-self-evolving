@@ -90,7 +90,7 @@ describe('Gate 4 — brokered proposal model gateway', () => {
       )
       const result = await runProposalSandbox({
         mounts,
-        command: process.execPath,
+        command: '/usr/bin/node',
         args: ['/input/contracts/gateway-client.mjs'],
         timeoutMs: 10_000,
         gatewaySocket: socketPath,

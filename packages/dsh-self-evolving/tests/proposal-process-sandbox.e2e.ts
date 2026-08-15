@@ -58,7 +58,7 @@ describe('Gate 4 — outer proposal process sandbox', () => {
 
     const result = await runProposalSandbox({
       mounts: paths,
-      command: process.execPath,
+      command: '/usr/bin/node',
       args: ['/input/contracts/probe.mjs'],
       timeoutMs: 10_000,
     })
@@ -81,7 +81,7 @@ describe('Gate 4 — outer proposal process sandbox', () => {
     await expect(
       runProposalSandbox({
         mounts: paths,
-        command: process.execPath,
+        command: '/usr/bin/node',
         args: ['-e', 'process.exit(0)'],
         timeoutMs: 10_000,
       }),
@@ -95,7 +95,7 @@ describe('Gate 4 — outer proposal process sandbox', () => {
     await expect(
       runProposalSandbox({
         mounts: paths,
-        command: process.execPath,
+        command: '/usr/bin/node',
         args: ['/input/contracts/symlink.mjs'],
         timeoutMs: 10_000,
       }),
@@ -116,7 +116,7 @@ describe('Gate 4 — outer proposal process sandbox', () => {
     )
     const result = await runProposalSandbox({
       mounts: paths,
-      command: process.execPath,
+      command: '/usr/bin/node',
       args: ['/input/contracts/survivor.mjs'],
       timeoutMs: 200,
     })
