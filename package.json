@@ -39,6 +39,8 @@
     "upstream:check": "tsx scripts/check-upstream-clean.ts",
     "byteequal:check": "tsx scripts/check-byte-equal.ts",
     "bootstrap:upstreams": "node scripts/bootstrap-upstreams.mjs",
+    "bootstrap:references": "node scripts/bootstrap-references.mjs",
+    "dsh:latest:check": "node scripts/check-dsh-latest.mjs",
     "setup:source": "node scripts/setup-source.mjs",
     "dsh-self-evolving": "node packages/dsh-self-evolving-cli/lib/cli.js",
     "release:build": "tsx scripts/build-release.ts",

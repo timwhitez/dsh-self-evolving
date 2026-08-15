@@ -4,6 +4,9 @@ deepseek-harness/
 harbor/
 tb/
 
+# Content-addressed external references materialized by setup:source.
+.references/
+
 # Dependencies and build output.
 node_modules/
 **/lib/

@@ -14,6 +14,8 @@ All notable changes are recorded here. This project uses semantic versioning for
 - Verified a real official-model child as `ENGINEERING_EFFECT_VERIFIED`; this is not a benchmark score claim.
 - Added English/Chinese README switching, a documentation index, reproducible public CI, community templates, and
   Markdown quality gates for the public repository.
+- Added content-addressed external-reference bootstrap and a scheduled latest-DSH compatibility channel while
+  preserving reproducible pinned installs.
 
 ## 0.1.1 - 2026-08-15
 

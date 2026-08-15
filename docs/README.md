@@ -17,6 +17,7 @@ short path that matches your task.
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | [Architecture overview](architecture-overview.md) | Controller, proposer, builder, Loader, evaluator, and evidence flow                                     |
 | [DSH integration](dsh-integration.md)             | Source-verified Cordis and Loader contracts                                                             |
+| [DSH upstream policy](upstream-policy.md)         | Accepted pin, latest compatibility channel, and promotion workflow                                      |
 | [Research basis](research-basis.md)               | Papers, prior systems, adopted mechanisms, and corrected assumptions                                    |
 | [Architecture decisions](decisions.md)            | ADRs and trade-offs                                                                                     |
 | [`specs/00`–`specs/07`](../specs/)                | Normative product, architecture, candidate, algorithm, evaluation, safety, evidence, and gate contracts |

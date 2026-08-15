@@ -159,6 +159,7 @@ pnpm effectiveness:official
 | [Evidence guide](docs/evidence-guide.md)         | What each artifact proves—and does not prove                         |
 | [Operations](docs/operations.md)                 | Stop, backup, restore, rollback, and uninstall                       |
 | [Troubleshooting](docs/troubleshooting.md)       | Fail-closed errors and recovery procedures                           |
+| [DSH upstream policy](docs/upstream-policy.md)   | Reproducible pinning and the latest compatibility channel            |
 | [v0.2 release gates](docs/v0.2-release-gates.md) | Current acceptance contract and optional post-release scope          |
 
 The normative specifications live in [`specs/00`–`specs/07`](specs/). When documents disagree, precedence is:
@@ -167,6 +168,8 @@ frozen run manifest → specifications → operational docs → README → histo
 ## Project boundaries
 
 - DSH, Harbor, and Terminal-Bench checkouts are pinned read-only upstreams.
+- `pnpm setup:source` installs the accepted DSH pin automatically; a separate scheduled workflow tests current DSH
+  `HEAD` without silently rebinding a release.
 - Development evidence may guide iteration; concealed and sealed evaluation data may not.
 - K=10/K=80 search, sealed confirmation, full-set evaluation, and leaderboard submission are optional post-release
   profiles and are not part of the v0.2 acceptance claim.

@@ -7,7 +7,7 @@
  *  2. each upstream working tree is clean (read-only pins, AGENTS.md rule 1);
  *  3. the live Node/pnpm versions match;
  *  4. referenced @deepseek-ai/* package versions match deepseek-harness/package.json;
- *  5. paper.pdf sha256 matches.
+ *  5. materialized external-reference hashes match.
  *
  * Exits non-zero on any mismatch. No network access; purely local content addressing.
  */
@@ -29,7 +29,7 @@ interface Upstream {
 interface Lock {
   version: number
   upstreams: Record<string, Upstream>
-  references?: Record<string, { path?: string; algo?: string; value?: string }>
+  references?: Record<string, { path?: string; sourceUrl?: string; algo?: string; value?: string }>
   toolchain: { node: string; pnpm: string }
   dshPackages?: Record<string, string>
 }
@@ -143,12 +143,18 @@ async function main(): Promise<void> {
     }
   }
 
-  // 5. Reference hashes (paper.pdf).
+  // 5. Materialized reference hashes.
   if (lock.references) {
     for (const [name, ref] of Object.entries(lock.references)) {
       if (!ref.path || !ref.value) continue
       const full = ref.path.startsWith('/') ? ref.path : resolve(root, ref.path)
-      const data = await readFile(full)
+      const data = await readFile(full).catch((error: NodeJS.ErrnoException) => {
+        fail(
+          `reference ${name}: ${ref.path} unavailable (${error.code ?? 'UNKNOWN'}); run pnpm bootstrap:references`,
+        )
+        return null
+      })
+      if (data === null) continue
       const hash = createHash('sha256').update(data).digest('hex')
       if (hash !== ref.value) fail(`reference ${name}: sha256 ${hash} != ${ref.value}`)
       else console.log(`✓ reference ${name} sha256 matched`)

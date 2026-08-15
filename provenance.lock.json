@@ -29,7 +29,8 @@
   },
   "references": {
     "cordisPaper": {
-      "path": "/root/paper.pdf",
+      "path": ".references/cordis-paper.pdf",
+      "sourceUrl": "https://raw.githubusercontent.com/cordiverse/paper/948a07b369c62adb3b12e102458be5c18dfb69b9/paper.pdf",
       "algo": "sha256",
       "value": "4d48478dc0b6222d9f74d7db10ee776449b1209eb112632336544d32a49db97f",
       "note": "Cordis dynamic composition / self-evolving harness theory; API names verified against fixed source, not the paper."
@@ -82,7 +83,7 @@
       "each upstream working tree is clean (no local edits to read-only pins)",
       "toolchain versions match the recorded values",
       "referenced @deepseek-ai/* package versions match deepseek-harness/package.json",
-      "paper.pdf sha256 matches"
+      "content-addressed Cordis paper sha256 matches"
     ]
   }
 }

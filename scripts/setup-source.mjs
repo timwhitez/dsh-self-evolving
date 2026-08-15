@@ -11,6 +11,7 @@ function run(file, args, cwd = repoRoot) {
 }
 
 run(process.execPath, [join(repoRoot, 'scripts', 'bootstrap-upstreams.mjs')])
+run(process.execPath, [join(repoRoot, 'scripts', 'bootstrap-references.mjs')])
 run('pnpm', ['install', '--frozen-lockfile'])
 run('pnpm', ['install', '--frozen-lockfile'], join(repoRoot, 'deepseek-harness'))
 run('pnpm', ['build'], join(repoRoot, 'deepseek-harness'))

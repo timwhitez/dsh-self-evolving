@@ -1,0 +1,80 @@
+name: dsh-latest-compatibility
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-latest-compatibility
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Bubblewrap
+        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+
+      - name: Materialize pinned external closure
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm bootstrap:upstreams
+          pnpm bootstrap:references
+          uv sync --project harbor
+
+      - name: Switch DSH checkout to current upstream HEAD
+        id: dsh
+        run: |
+          locked="$(node -p "require('./provenance.lock.json').upstreams['deepseek-harness'].commit")"
+          latest="$(git ls-remote https://github.com/deepseek-ai/deepseek-harness HEAD | cut -f1)"
+          test -n "$latest"
+          git -C deepseek-harness fetch --depth=1 origin "$latest"
+          git -C deepseek-harness checkout --detach "$latest"
+          echo "locked=$locked" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Testing locked=$locked against latest=$latest"
+
+      - name: Build latest DSH and project
+        run: |
+          pnpm --dir deepseek-harness install --frozen-lockfile
+          pnpm --dir deepseek-harness build
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Typecheck against latest DSH
+        run: pnpm typecheck
+
+      - name: Unit tests except the intentional pin guard
+        run: pnpm exec vitest run --exclude scripts/tests/gate0-guards.test.ts
+
+      - name: Real Loader and local E2E against latest DSH
+        env:
+          DEEPSEEK_API_KEY: ''
+        run: pnpm test:e2e
+
+      - name: Report tested identities
+        run: |
+          echo "Pinned DSH: ${{ steps.dsh.outputs.locked }}"
+          echo "Tested DSH: ${{ steps.dsh.outputs.latest }}"

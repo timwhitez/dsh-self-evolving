@@ -156,6 +156,7 @@ pnpm effectiveness:official
 | [证据指南](docs/evidence-guide.md)               | 每种 artifact 能证明什么、不能证明什么        |
 | [运维](docs/operations.md)                       | 停止、备份、恢复、回滚和卸载                  |
 | [故障排查](docs/troubleshooting.md)              | Fail-closed 错误与恢复 procedure              |
+| [DSH 上游策略](docs/upstream-policy.md)          | 可复现 pin 与最新版兼容性通道                 |
 | [v0.2 release gates](docs/v0.2-release-gates.md) | 当前验收契约与发布后可选范围                  |
 
 规范真源位于 [`specs/00`–`specs/07`](specs/)。冲突时优先级为：冻结 run manifest → specifications →
@@ -164,6 +165,8 @@ pnpm effectiveness:official
 ## 项目边界
 
 - DSH、Harbor 和 Terminal-Bench checkout 是固定版本、只读的上游；
+- `pnpm setup:source` 会自动安装已验收的 DSH pin；独立定时 workflow 验证当前 DSH `HEAD`，但不会静默
+  改写既有 release；
 - development evidence 可以驱动迭代，concealed/sealed 数据不可以；
 - K=10/K=80、sealed confirmation、full-set 与 leaderboard submission 是发布后可选 profile，不属于
   v0.2 验收声明；
