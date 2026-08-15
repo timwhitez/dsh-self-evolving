@@ -1,9 +1,11 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-15（Asia/Tokyo）**
 
-最终 gate/commit/identity/test/blocker 对账见
+v0.1.1 的最终 gate/commit/identity/test 对账见
+[`docs/audits/2026-08-15-v0.1.1-release-candidate.md`](docs/audits/2026-08-15-v0.1.1-release-candidate.md)；
+v0.1 predecessor 证据仍见
 [`docs/audits/2026-08-14-v0.1-release-candidate.md`](docs/audits/2026-08-14-v0.1-release-candidate.md)。
 
 > **Scope successor（2026-08-14）**：当前完成口径已由“一次性跑完 Terminal-Bench campaign”调整为
@@ -11,10 +13,16 @@
 > 保留，但 60×2、K=10/K=80、sealed/full-set 不再阻塞 Gate 7 开源 release。
 
 **v0.1.1 successor**：schema-v2 multi-file candidate、精确父 Loader、raw-evidence citation、受限工具、
-trusted materialization/admission、mechanism outcome 与 schema-11 CLI 已实现；V011-A–D 的自动化工程测试
-通过，真实 DeepSeek 工具循环已生成多文件 child。当前仍为 `V011_E_REAL_K3_PENDING`，不得提前声明
-`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`。下一步是在本次干净实现 commit 上创建 fresh lineage，注入一次
-真实 crash/resume，并完成 3 个真实 candidate Harbor trials 与独立 audit。
+trusted materialization/admission、mechanism outcome 与 schema-11 CLI 已实现并验收。fresh run
+`v011-20260815-v13` 在执行 commit `9ae960c4b7d39ce7a446fd633500b7fddfbe0bb0` 上完成 2 个 baseline 和
+3 个 candidate Harbor trials，连续 admitted 3 个 unique multi-file children，lineage depth 3；真实 external
+launch 后 `SIGKILL` 的 resume 只保留一次 launch/observation/commit。独立 audit 接受 52 个 events，状态为
+`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`，state hash 为
+`sha256:75e11727ec3d610016c40c2fe4cc53087226926e6576563eb5fdc205e854bc96`，sealed access 为 0。
+
+所有 `gpt2-codegolf` baseline/candidate observations 都是明确的 `invalid`/reward 0，因此不能声明得分提升。
+v1–v2、v4–v12 的失败 lineage 均保留 `QUARANTINED_NOT_ACCEPTED`；v3 是合法的
+`NO_REAL_FAILURE_SIGNAL` negative run，未被当作 acceptance evidence。
 
 ## Gate 5–7 v0.1 successor（已验收）
 
@@ -416,7 +424,7 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 当前可以声明 `STABLE_ITERATION_VERIFIED` 与 `OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`。不能声明
 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA。
 
-## 下一开发范围
+## 发布边界
 
-发布到 GitHub 需等待 maintainer 授权。发布后可按独立 fresh lineage 实现 `docs/v0.1.1.md`，或另行授权
-Gate 8 benchmark profile；两者都不属于本次 Gate 7 验收。
+v0.1.1 已达到本地开源 release-candidate 完成口径。发布到 GitHub 仍等待 maintainer 授权。Gate 8
+benchmark profile、K=10/K=80、sealed/full-set 和持续提分属于发布后的独立开发范围，不阻塞本次验收。

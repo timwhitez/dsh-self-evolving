@@ -2,15 +2,19 @@
 
 All notable changes are recorded here. This project uses semantic versioning for public releases.
 
-## 0.1.1 - Unreleased
+## 0.1.1 - 2026-08-15
 
 - Added schema-v2 bounded multi-file candidate trees, deterministic proposal slots and exact tree-diff admission.
 - Added exact-parent Loader proposal mode, immutable raw evidence citations and retained bounded proposer tools.
 - Added candidate-owned sandbox tests, double builds, dual-mode Loader probes and self-contained capsules.
 - Added mechanism-outcome feedback, capability request ledgers and crash-safe exactly-once recovery receipts.
 - Added the schema-11 `v011-stable-demo` CLI profile and compatible Chat Completions tool-call translation.
+- Added exact parent-candidate trajectory, normalized-trial, analysis and mechanism-outcome bindings for descendants.
+- Added actionable semantic/build rejection feedback, TypeScript syntax preflight and bounded retry correction.
+- Verified a fresh real K=3 lineage with three admitted multi-file candidates and injected launch-boundary recovery.
 
-The scoped autonomy capability remains pending until a fresh real K=3 run passes V011-A through V011-E audit.
+The scoped capability is `AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`. No Terminal-Bench improvement, sealed promotion,
+leaderboard or SOTA result is claimed.
 
 ## 0.1.0-rc.1 - 2026-08-14
 

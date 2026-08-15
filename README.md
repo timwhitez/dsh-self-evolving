@@ -7,8 +7,9 @@ Terminal-Bench 2.1 为首个验证环境的递归自改进（RSI）项目。
 Harbor ACP、durable controller、真实 Zen proposer、K=3 稳定迭代与 Apache-2.0 source release 已有验收
 证据。尚无 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA 结论。
 
-v0.1.1 的 bounded multi-file successor 已完成代码和工程测试，正在等待 fresh real K=3 验收；在该 run
-完成前不声明 `AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`。
+v0.1.1 的 bounded multi-file successor 已通过 fresh real K=3、真实 Harbor candidate trials、注入式
+crash/resume 和独立审计，状态为 **`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`**。该能力声明仅证明系统能稳定
+迭代受限的多文件 DSH 插件；不声明 Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA。
 
 ## 一句话架构
 
