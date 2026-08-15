@@ -13,6 +13,7 @@ export interface LicensePackage {
 
 export const RELEASE_VERSION = '0.2.0'
 export const RELEASE_SLUG = `dsh-self-evolving-v${RELEASE_VERSION}`
+export const RELEASE_STATUS = 'OPEN_SOURCE_V0_2_RELEASE_CANDIDATE'
 
 export function normalizeGitCommit(stdout: string): string {
   const commit = stdout.trim()
@@ -188,7 +189,7 @@ async function main(): Promise<void> {
     .sort()
   const receipt = {
     schemaVersion: 1,
-    status: 'OPEN_SOURCE_V0_1_1_RELEASE_CANDIDATE',
+    status: RELEASE_STATUS,
     commit,
     artifacts: [...primaryArtifacts, 'release-receipt.json', 'SHA256SUMS'],
     trackedUtf8AndSecretScan: { ...safety, passed: true },

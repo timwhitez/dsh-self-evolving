@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   RELEASE_VERSION,
+  RELEASE_STATUS,
   assertTrackedTextSafe,
   buildSpdxSbom,
   normalizeGitCommit,
@@ -10,6 +11,11 @@ describe('release SBOM builder', () => {
   it('normalizes the newline emitted by git rev-parse', () => {
     expect(normalizeGitCommit(`${'a'.repeat(40)}\n`)).toBe('a'.repeat(40))
     expect(() => normalizeGitCommit('not-a-commit\n')).toThrow(/invalid Git commit identity/)
+  })
+
+  it('binds the public receipt to the v0.2 release line', () => {
+    expect(RELEASE_VERSION).toBe('0.2.0')
+    expect(RELEASE_STATUS).toBe('OPEN_SOURCE_V0_2_RELEASE_CANDIDATE')
   })
 
   it('scans the tracked release tree without treating synthetic rejection fixtures as secrets', async () => {
