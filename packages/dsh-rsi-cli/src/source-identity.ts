@@ -7,6 +7,7 @@ export interface SourceArchiveIdentity {
   commit: string
   tree: string
   files: Record<string, string>
+  releaseFiles?: string[]
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -43,7 +44,10 @@ export async function readSourceArchiveIdentity(
     !/^[0-9a-f]{40}$/.test(value.tree) ||
     value.files === null ||
     typeof value.files !== 'object' ||
-    Array.isArray(value.files)
+    Array.isArray(value.files) ||
+    (value.releaseFiles !== undefined &&
+      (!Array.isArray(value.releaseFiles) ||
+        value.releaseFiles.some((entry) => typeof entry !== 'string')))
   ) {
     throw new Error('source identity: invalid manifest')
   }

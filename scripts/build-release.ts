@@ -119,6 +119,10 @@ export async function assertTrackedTextSafe(): Promise<{ trackedFiles: number }>
 
 async function buildSourceArchiveIdentity(commit: string): Promise<Record<string, unknown>> {
   const tree = normalizeGitCommit((await exec('/usr/bin/git', ['rev-parse', 'HEAD^{tree}'])).stdout)
+  const releaseFiles = (await exec('/usr/bin/git', ['ls-files', '-z'])).stdout
+    .split('\0')
+    .filter(Boolean)
+    .sort()
   const { stdout } = await exec('/usr/bin/git', [
     'ls-files',
     '-z',
@@ -140,7 +144,7 @@ async function buildSourceArchiveIdentity(commit: string): Promise<Record<string
         .map(async (path) => [path, `sha256:${await sha256File(join(repoRoot, path))}`]),
     ),
   )
-  return { schemaVersion: 1, commit, tree, files }
+  return { schemaVersion: 1, commit, tree, files, releaseFiles }
 }
 
 async function main(): Promise<void> {

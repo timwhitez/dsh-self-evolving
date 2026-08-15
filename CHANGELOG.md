@@ -12,6 +12,7 @@ All notable changes are recorded here. This project uses semantic versioning for
 - Added exact parent-candidate trajectory, normalized-trial, analysis and mechanism-outcome bindings for descendants.
 - Added actionable semantic/build rejection feedback, TypeScript syntax preflight and bounded retry correction.
 - Verified a fresh real K=3 lineage with three admitted multi-file candidates and injected launch-boundary recovery.
+- Made release-readiness checks work from no-Git source archives using a fail-closed embedded tracked-file inventory.
 
 The scoped capability is `AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`. No Terminal-Bench improvement, sealed promotion,
 leaderboard or SOTA result is claimed.
