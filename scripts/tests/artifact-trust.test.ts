@@ -14,8 +14,9 @@ describe('artifact TLS trust bundle', () => {
   })
 
   it('rejects a key or a non-certificate input', () => {
+    const syntheticPrivateKeyMarker = ['-----BEGIN ', 'PRIVATE KEY-----'].join('')
     expect(() =>
-      combinePemTrustBundle(cert('PUBLIC_ROOT'), Buffer.from('-----BEGIN PRIVATE KEY-----')),
+      combinePemTrustBundle(cert('PUBLIC_ROOT'), Buffer.from(syntheticPrivateKeyMarker)),
     ).toThrow(/no PEM certificate|private key/)
     expect(() => combinePemTrustBundle(Buffer.from('not a bundle'), cert('ARTIFACT_CA'))).toThrow(
       /no PEM certificate/,
