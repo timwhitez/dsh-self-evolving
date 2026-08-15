@@ -169,10 +169,12 @@ export async function runProposalSandbox(
     '--chdir',
     '/work/children',
   ]
+  let sandboxCommand = input.command
   if (input.command === '/usr/bin/node') {
     const hostNode = await realpath(process.execPath)
     if (hostNode !== '/usr/bin/node') {
-      args.push('--ro-bind', hostNode, '/usr/bin/node')
+      args.push('--dir', '/sandbox-bin', '--ro-bind', hostNode, '/sandbox-bin/node')
+      sandboxCommand = '/sandbox-bin/node'
     }
   }
   if (input.gatewaySocket !== undefined) {
@@ -188,7 +190,7 @@ export async function runProposalSandbox(
       args.push('--ro-bind', runtimeModules, '/node_modules')
     }
   }
-  args.push('--', input.command, ...input.args)
+  args.push('--', sandboxCommand, ...input.args)
 
   const maxOutputBytes = input.maxOutputBytes ?? 1024 * 1024
   const result = await new Promise<ProposalSandboxResult>((done, reject) => {

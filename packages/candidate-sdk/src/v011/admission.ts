@@ -117,6 +117,7 @@ async function runCandidateTests(
     join(dshRoot, 'vendor', 'schemastery', 'node_modules', '@standard-schema', 'spec'),
   )
   const hostNode = await realpath(process.execPath)
+  const sandboxNode = hostNode === '/usr/bin/node' ? '/usr/bin/node' : '/sandbox-bin/node'
   const args = [
     '--die-with-parent',
     '--new-session',
@@ -132,7 +133,9 @@ async function runCandidateTests(
     '--ro-bind',
     '/usr',
     '/usr',
-    ...(hostNode === '/usr/bin/node' ? [] : ['--ro-bind', hostNode, '/usr/bin/node']),
+    ...(hostNode === '/usr/bin/node'
+      ? []
+      : ['--dir', '/sandbox-bin', '--ro-bind', hostNode, sandboxNode]),
     '--ro-bind',
     '/bin',
     '/bin',
@@ -189,7 +192,7 @@ async function runCandidateTests(
     '--chdir',
     '/work',
     '--',
-    '/usr/bin/node',
+    sandboxNode,
     '/toolchain/node_modules/vitest/vitest.mjs',
     'run',
     '--root',

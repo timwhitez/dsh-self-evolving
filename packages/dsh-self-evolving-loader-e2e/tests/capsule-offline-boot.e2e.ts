@@ -369,7 +369,7 @@ describe('Gate 1 — packed capsule offline boot', () => {
       const isolatedCwd = join(scratch!, 'acp-workspace')
       await mkdir(isolatedCwd)
       const capsuleBin = join(capsuleDir, 'runtime', 'dsh-self-evolving-acp')
-      child = spawn('/usr/bin/unshare', ['-n', '--', capsuleBin], {
+      child = spawn('/usr/bin/unshare', ['--user', '--map-root-user', '--net', '--', capsuleBin], {
         cwd: isolatedCwd,
         env: {
           PATH: process.env.PATH ?? '/usr/bin:/bin',
