@@ -5,6 +5,21 @@
   "type": "module",
   "description": "A bounded, crash-resumable DSH Cordis self-iteration engine with auditable Harbor evaluation.",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/timwhitez/dsh-self-evolving#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timwhitez/dsh-self-evolving.git"
+  },
+  "bugs": {
+    "url": "https://github.com/timwhitez/dsh-self-evolving/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "cordis",
+    "self-evolving-agent",
+    "terminal-bench",
+    "agent-evaluation"
+  ],
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -14,6 +29,7 @@
     "typecheck": "tsc -b --pretty false",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "docs:check": "markdownlint-cli2 \"README*.md\" \"CONTRIBUTING.md\" \"SECURITY.md\" \"CODE_OF_CONDUCT.md\" \"docs/*.md\" \".github/**/*.md\"",
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
@@ -31,8 +47,9 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.0",
-    "eslint": "^9.18.0",
+    "eslint": "^10.8.1",
     "globals": "^17.11.0",
+    "markdownlint-cli2": "^0.23.2",
     "prettier": "^3.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

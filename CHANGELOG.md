@@ -12,6 +12,8 @@ All notable changes are recorded here. This project uses semantic versioning for
 - Moved candidate tests and the trusted import policy into proposal-time validation, with an explicit durable
   target/preserved runtime-mode contract.
 - Verified a real official-model child as `ENGINEERING_EFFECT_VERIFIED`; this is not a benchmark score claim.
+- Added English/Chinese README switching, a documentation index, reproducible public CI, community templates, and
+  Markdown quality gates for the public repository.
 
 ## 0.1.1 - 2026-08-15
 

@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible defect that is not security-sensitive
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not report credentials, sandbox escapes, or concealed-data exposure here. Use the private security channel described in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.2.0 or a full commit hash
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and the expected fail-closed behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Remove credentials, reasoning text, private trajectories, and concealed task identities.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and logs
+      description: Include relevant hashes and status, but no secrets or private provider bodies.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, model reasoning, provider bodies, and concealed evaluation data.
+          required: true
+        - label: This is not a private security vulnerability.
+          required: true

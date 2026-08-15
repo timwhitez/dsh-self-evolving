@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Bubblewrap
+        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+
+      - name: Materialize pinned source closure
+        run: pnpm setup:source
+
+      - name: Documentation
+        run: pnpm docs:check
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Real Loader and local E2E
+        env:
+          DEEPSEEK_API_KEY: ''
+        run: pnpm test:e2e
+
+      - name: Provenance and release integrity
+        run: |
+          pnpm provenance:check
+          pnpm upstream:check
+          pnpm byteequal:check
+          pnpm release:check

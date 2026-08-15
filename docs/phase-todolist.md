@@ -122,7 +122,7 @@
 > Responses 合成层，直接使用 compatible Chat Completions 与单轮 32,768 output budget；同一
 > networkless Bubblewrap + fixed gateway 拓扑生成 1 个 admitted child。CPA 未修改，reasoning/模型正文
 > 未持久化。旧 free route 的 429 审计保留为 predecessor。
-
+>
 > **v0.2 official Responses successor（已验收，2026-08-15）**：默认配置固定 DeepSeek 官方
 > `https://api.deepseek.com/v1`、Responses、`deepseek-v4-flash`、high、1M、32k、`store=false`，只读取可信
 > 宿主的 `DEEPSEEK_API_KEY`。真实 `v0.2-official-responses-v6` 生成并 admission 一个不同 child，solve 固定

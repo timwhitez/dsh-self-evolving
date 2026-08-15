@@ -24,12 +24,14 @@ const textExtensions = new Set([
 
 export const REQUIRED_RELEASE_FILES = [
   'README.md',
+  'README.zh-CN.md',
   'CONTRIBUTING.md',
   'SECURITY.md',
   'CODE_OF_CONDUCT.md',
   'CHANGELOG.md',
   'LICENSE',
   'docs/quickstart.md',
+  'docs/README.md',
   'docs/configuration.md',
   'docs/troubleshooting.md',
   'docs/architecture-overview.md',

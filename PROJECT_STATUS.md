@@ -8,7 +8,7 @@
 > successor proves an admitted child changes the preregistered solve replay while preserving propose replay.
 > Historical v0.1/v0.1.1 paths and hashes remain immutable predecessor evidence.
 
-v0.2 full regression passed 290/290 unit tests and 36 no-key E2E tests; all three credential-gated official-provider
+v0.2 current regression passes 291/291 unit tests and 36 no-key E2E tests; all three credential-gated official-provider
 cases were also run separately and passed. The clean Apache-2.0 source archive passed checksums, no-Git fresh setup,
 exact upstream provenance, Loader/capsule smoke and CLI `init`/`status`.
 
