@@ -13,6 +13,10 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     reporters: ['default'],
+    // Candidate builds replace shared baseline lib/ trees. Keep real Loader,
+    // sandbox, and Harbor files serial so one acceptance test cannot observe
+    // another test's clean-build window.
+    fileParallelism: false,
     testTimeout: 120_000,
     hookTimeout: 120_000,
   },

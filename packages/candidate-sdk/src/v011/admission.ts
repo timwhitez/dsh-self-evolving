@@ -116,6 +116,7 @@ async function runCandidateTests(
   const standardSchema = await realpath(
     join(dshRoot, 'vendor', 'schemastery', 'node_modules', '@standard-schema', 'spec'),
   )
+  const hostNode = await realpath(process.execPath)
   const args = [
     '--die-with-parent',
     '--new-session',
@@ -131,6 +132,7 @@ async function runCandidateTests(
     '--ro-bind',
     '/usr',
     '/usr',
+    ...(hostNode === '/usr/bin/node' ? [] : ['--ro-bind', hostNode, '/usr/bin/node']),
     '--ro-bind',
     '/bin',
     '/bin',

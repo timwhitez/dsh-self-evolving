@@ -169,6 +169,12 @@ export async function runProposalSandbox(
     '--chdir',
     '/work/children',
   ]
+  if (input.command === '/usr/bin/node') {
+    const hostNode = await realpath(process.execPath)
+    if (hostNode !== '/usr/bin/node') {
+      args.push('--ro-bind', hostNode, '/usr/bin/node')
+    }
+  }
   if (input.gatewaySocket !== undefined) {
     const socket = await realpath(input.gatewaySocket)
     const socketStat = await lstat(socket)
