@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/timwhitez/dsh-self-evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/timwhitez/dsh-self-evolving/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.2.0--rc-2563eb)](https://github.com/timwhitez/dsh-self-evolving/releases/tag/v0.2.0)
+[![Release](https://img.shields.io/badge/release-v0.2.0--rc-2563eb)](https://github.com/timwhitez/dsh-self-evolving/releases/tag/dsh-self-evolving-v0.2.0)
 [![License](https://img.shields.io/badge/license-Apache--2.0-0f766e)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![pnpm](https://img.shields.io/badge/pnpm-11.7-f69220?logo=pnpm&logoColor=white)](package.json)
