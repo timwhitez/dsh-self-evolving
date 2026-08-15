@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "lib",
+    "rootDir": "src",
+    "composite": true,
+    "tsBuildInfoFile": "lib/.tsbuildinfo"
+  },
+  "include": ["src"],
+  "references": [{ "path": "../dsh-self-evolving-search" }]
+}

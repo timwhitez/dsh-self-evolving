@@ -29,17 +29,17 @@ It refuses an existing upstream checkout with a different remote or dirty worktr
 ## Create and inspect a stable demo
 
 ```bash
-pnpm dsh-rsi init \
+pnpm dsh-self-evolving init \
   --run-id stable-demo-local-1 \
-  --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1 \
+  --state-dir /var/lib/dsh-self-evolving-controller/stable-demo-local-1 \
   --repo-root "$PWD" \
   --budget-usd 5
 
-pnpm dsh-rsi doctor \
-  --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1
+pnpm dsh-self-evolving doctor \
+  --state-dir /var/lib/dsh-self-evolving-controller/stable-demo-local-1
 
-pnpm dsh-rsi run \
-  --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1
+pnpm dsh-self-evolving run \
+  --state-dir /var/lib/dsh-self-evolving-controller/stable-demo-local-1
 ```
 
 The development profile evaluates at most 12 baseline tasks in two fixed batches, then at most three candidates.
@@ -50,9 +50,9 @@ and run ID; schema-10 state is never upgraded in place. Schema 11 freezes a publ
 stops baseline discovery at the first attributable reward-zero non-pass, up to 12 trials.
 
 ```bash
-pnpm dsh-rsi resume --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1
-pnpm dsh-rsi status --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1
-pnpm dsh-rsi audit  --state-dir /var/lib/dsh-rsi-controller/stable-demo-local-1
+pnpm dsh-self-evolving resume --state-dir /var/lib/dsh-self-evolving-controller/stable-demo-local-1
+pnpm dsh-self-evolving status --state-dir /var/lib/dsh-self-evolving-controller/stable-demo-local-1
+pnpm dsh-self-evolving audit  --state-dir /var/lib/dsh-self-evolving-controller/stable-demo-local-1
 ```
 
 `STABLE_ITERATION_VERIFIED` proves generation, build, evaluation, persistence, lineage and recovery. It is not a

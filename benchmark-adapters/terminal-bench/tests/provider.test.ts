@@ -19,12 +19,12 @@ const sha = 'a'.repeat(64)
 
 describe('ACP registry entry', () => {
   it('packs a deterministic tar.gz whose root contains the Harbor launcher', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'dsh-rsi-acp-archive-'))
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-acp-archive-'))
     try {
       const runtime = join(dir, 'runtime')
       await mkdir(join(runtime, 'node_modules'), { recursive: true })
-      await writeFile(join(runtime, 'dsh-rsi-acp'), '#!/usr/bin/env node\n')
-      await chmod(join(runtime, 'dsh-rsi-acp'), 0o755)
+      await writeFile(join(runtime, 'dsh-self-evolving-acp'), '#!/usr/bin/env node\n')
+      await chmod(join(runtime, 'dsh-self-evolving-acp'), 0o755)
       await writeFile(join(runtime, 'package-closure.json'), '{}\n')
       const first = await packAcpBinaryArchive(runtime, join(dir, 'first.tar.gz'))
       const second = await packAcpBinaryArchive(runtime, join(dir, 'second.tar.gz'))
@@ -39,13 +39,13 @@ describe('ACP registry entry', () => {
   it('builds a linux-x86_64 entry with HTTPS + sha256 checksum', () => {
     const entry = buildRegistryEntry({
       candidateId: 'c_abc123',
-      agentName: 'dsh-rsi',
+      agentName: 'dsh-self-evolving',
       version: 'c_abc123',
-      archiveUrl: 'https://artifacts.example/dsh-rsi-c_abc123.tar.gz',
+      archiveUrl: 'https://artifacts.example/dsh-self-evolving-c_abc123.tar.gz',
       archiveSha256: sha,
-      cmd: './dsh-rsi-acp',
+      cmd: './dsh-self-evolving-acp',
     })
-    expect(entry.id).toBe('dsh-rsi-c_abc123')
+    expect(entry.id).toBe('dsh-self-evolving-c_abc123')
     expect(entry.distribution.binary!['linux-x86_64']!.checksum).toBe(sha)
     expect(entry.distribution.binary!['linux-x86_64']!.archive).toMatch(/^https:\/\//)
   })
@@ -54,7 +54,7 @@ describe('ACP registry entry', () => {
     expect(() =>
       buildRegistryEntry({
         candidateId: 'c_x',
-        agentName: 'dsh-rsi',
+        agentName: 'dsh-self-evolving',
         version: 'c_x',
         archiveUrl: 'http://insecure.example/x.tar.gz',
         archiveSha256: sha,
@@ -67,7 +67,7 @@ describe('ACP registry entry', () => {
     expect(() =>
       buildRegistryEntry({
         candidateId: 'c_x',
-        agentName: 'dsh-rsi',
+        agentName: 'dsh-self-evolving',
         version: 'c_x',
         archiveUrl: 'https://x.example/x.tar.gz',
         archiveSha256: 'tooshort',
@@ -80,32 +80,32 @@ describe('ACP registry entry', () => {
 describe('job config generation', () => {
   const entry = buildRegistryEntry({
     candidateId: 'c_abc',
-    agentName: 'dsh-rsi',
+    agentName: 'dsh-self-evolving',
     version: 'c_abc',
     archiveUrl: 'https://x.example/x.tar.gz',
     archiveSha256: sha,
-    cmd: './dsh-rsi-acp',
+    cmd: './dsh-self-evolving-acp',
   })
 
   it('emits a Harbor JobConfig with inline registry entry + idempotency metadata', () => {
     const cfg = buildJobConfig({
-      jobName: 'rsi-run-001',
+      jobName: 'dsh-self-evolving-run-001',
       registryEntry: entry,
-      modelName: 'rsi-provider/deepseek-v4-flash',
+      modelName: 'dsh-self-evolving-provider/deepseek-v4-flash',
       tasks: [{ taskId: 'extract-elf', path: '/tb/original-tasks/extract-elf' }],
       nAttempts: 3,
       nConcurrentTrials: 1,
       verifier: { timeoutSec: 180, agentTimeoutSec: 900 },
-      idempotencyKey: 'rsi-key-001',
+      idempotencyKey: 'dsh-self-evolving-key-001',
       jobsDir: 'jobs',
       agentEnv: { RSI_TRACE_MODE: 'content-free' },
       environment: {
-        env: { CURL_CA_BUNDLE: '/run/dsh-rsi/artifact-ca.crt' },
+        env: { CURL_CA_BUNDLE: '/run/dsh-self-evolving/artifact-ca.crt' },
         mounts: [
           {
             type: 'bind',
             source: '/trusted/artifact-ca.crt',
-            target: '/run/dsh-rsi/artifact-ca.crt',
+            target: '/run/dsh-self-evolving/artifact-ca.crt',
             read_only: true,
           },
         ],
@@ -118,14 +118,14 @@ describe('job config generation', () => {
     expect(cfg.agents[0]!.env).toEqual({ RSI_TRACE_MODE: 'content-free' })
     expect(cfg.environment.mounts).toHaveLength(1)
     expect(jobConfigToYaml(cfg)).not.toMatch(/sk-[A-Za-z0-9]/)
-    expect((cfg.metadata['dsh-rsi'] as Record<string, unknown>)['idempotency_key']).toBe(
-      'rsi-key-001',
+    expect((cfg.metadata['dsh-self-evolving'] as Record<string, unknown>)['idempotency_key']).toBe(
+      'dsh-self-evolving-key-001',
     )
   })
 
   it('serializes to YAML deterministically', () => {
     const cfg = buildJobConfig({
-      jobName: 'rsi-run-001',
+      jobName: 'dsh-self-evolving-run-001',
       registryEntry: entry,
       modelName: 'm',
       tasks: [{ taskId: 't', path: '/t' }],
@@ -179,7 +179,7 @@ describe('job config generation', () => {
 describe('idempotency store', () => {
   let dir: string | undefined
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'dsh-rsi-idem-'))
+    dir = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-idem-'))
   })
   afterEach(async () => {
     if (dir !== undefined) await rm(dir, { recursive: true, force: true })

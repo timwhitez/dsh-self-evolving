@@ -3,6 +3,10 @@
 **当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-15（Asia/Tokyo）**
 
+> **v0.2 successor in progress:** live product, package, CLI, Cordis service, protocol/MIME and release identities
+> are now `dsh-self-evolving`. Historical v0.1/v0.1.1 paths and hashes remain immutable predecessor evidence. The
+> default-provider migration and low-cost measurable-effect gate are not yet accepted in this checkpoint.
+
 v0.1.1 的最终 gate/commit/identity/test 对账见
 [`docs/audits/2026-08-15-v0.1.1-release-candidate.md`](docs/audits/2026-08-15-v0.1.1-release-candidate.md)；
 v0.1 predecessor 证据仍见
@@ -46,7 +50,7 @@ uninstall/rollback、SBOM、dependency licenses、provenance、checksums 与 lea
 
 ## Gate 3 successor（已验收）
 
-`@dsh-rsi/core` 现为标准 DSH/Cordis bundle，只暴露生命周期归属的 `ctx.rsi` service；journal
+`@dsh-self-evolving/core` 现为标准 DSH/Cordis bundle，只暴露生命周期归属的 `ctx.selfEvolving` service；journal
 与 budget 写入原子、fsync、并发串行且 receipt-idempotent。真实 provider saga 按 intent → inspect/
 launch → collect → cost settle/release → commit 恢复。4 个独立 Node controller 分别在四个边界后
 遭真实 `SIGKILL`，successor 均只产生一次 launch/score/cost，并保留 stale-lock 证据。只读 status
@@ -91,7 +95,7 @@ dump/reveal 操作。该验证未部署正式 service account/volume、未 mint 
 [`docs/audits/2026-08-14-gate5-sealed-service-preflight.md`](docs/audits/2026-08-14-gate5-sealed-service-preflight.md)。
 
 Gate 5 sealed deployment successor 已通过窄 runtime exports 去除生产闭包中的 core/Cordis，部署为
-root-owned immutable `/opt` release，并以独立 `dsh-rsi-sealed` UID 和 mode-0700 `/var/lib` store
+root-owned immutable `/opt` release，并以当时的 legacy `dsh-rsi-sealed` UID 和 mode-0700 `/var/lib` store
 完成 restart、权限、并发锁、tamper/no-replace smoke。新的 TB 2.1 concealed 48/12/29 split 已 mint，
 controller 只获得 observed IDs、guard handles 与 Merkle root，seed/assignment 未暴露且 sealed access
 仍为 0。Gate 5 仍因缺少真实 60x2 baseline、三候选分层 calibration 与冻结预算而未验收。详见
@@ -204,7 +208,7 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 ### 真实 Loader E2E（Gate 0）
 
-- `packages/dsh-rsi-loader-e2e/`：通过真实 `@deepseek-ai/cordis-plugin-loader` + Include/Group
+- `packages/dsh-self-evolving-loader-e2e/`：通过真实 `@deepseek-ai/cordis-plugin-loader` + Include/Group
   builtin 启动 `cordis.yml` fixture（非手工 `ctx.plugin()`）。
 - `loader-lifecycle.e2e.ts`：boot → 候选 row 激活 → systemPrompt 服务可用 → prompt section
   已渲染 → 全树 unload → loader entries 归零 → 无 leak handle 超出 baseline。**2 测试绿**。
@@ -287,7 +291,7 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 ## 已完成 — Gate 3（持久化 controller 核心）
 
-### Controller（`packages/dsh-rsi/`，trusted durable core，spec 06）
+### Controller（`packages/dsh-self-evolving/`，trusted durable core，spec 06）
 
 - **content-addressed object store**（`src/object-store/store.ts`）：staging → fsync →
   hash → no-clobber link 发布；重复 digest 逐字节验证；scrub 全量重 hash；read 时验证；
@@ -318,7 +322,7 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 
 ## 已完成 — Gate 4（agentic proposal 垂直切片）
 
-### Proposal runner（`packages/dsh-rsi-proposer/`）
+### Proposal runner（`packages/dsh-self-evolving-proposer/`）
 
 - **真实 DSH Loader + 真实模型**（`runner.ts`）：boot 最小 model-backed composition
   （`llm-deepseek` → `agent-spine-demo` → `agent-default-model`），通过 `ctx.agents.create({ agentOptions,
@@ -330,7 +334,7 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 - **builder handoff + rejected 保留**（`parse.ts` `retainRejected`）：rejected proposal 连同 raw assistant
   text + reason + timestamp 保留为 evidence（不静默丢弃）。
 
-### Proposal safety（`packages/dsh-rsi/src/proposal/`，Gate 4 工程地基，复述）
+### Proposal safety（`packages/dsh-self-evolving/src/proposal/`，Gate 4 工程地基，复述）
 
 - 纯函数 fs/network/model-firewall policy（prompt-injection 不能改变）；label-filtered evidence export
   - Merkle + canary absence receipt；canary leak scan；proposal output protocol validator。
@@ -351,7 +355,7 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 > pilot（60-task baseline + 3-candidate × task-strata 校准）——这是需要真实 benchmark 花费的步骤，
 > 在显式授权前不启动。CALIBRATION_INFEASIBLE 判定逻辑已实现（预算超限时 fail closed）。
 
-### Search（`packages/dsh-rsi-search/`）
+### Search（`packages/dsh-self-evolving-search/`）
 
 - **确定性 counter-based RNG**（`rng.ts`）：splitmix64 + 每流独立 counter；Beta 采样用固定 inverse-CDF；
   `(stream, counter, params, sampled)` 确定性可重放（resume 不重抽样）。
@@ -393,7 +397,7 @@ setup })` mint 一个 scoped proposer agent，其唯一 model route 由 composit
 
 ## Gate 6 历史 loop fixture（已隔离，不是 pilot 验收）
 
-### Pilot search loop（`packages/dsh-rsi-pilot/`）
+### Pilot search loop（`packages/dsh-self-evolving-pilot/`）
 
 - **autonomous search-loop orchestrator**（`loop.ts`）：pure state machine over injected
   capabilities（propose/build/evaluate）。UCB-Air expand/evaluate、clade-Thompson parent selection、

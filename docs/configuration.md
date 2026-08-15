@@ -1,7 +1,7 @@
 # Configuration
 
-`dsh-rsi init` writes a private, no-replace `config.json`. `stable-demo` uses schema 10; the v0.1.1 successor
-`v011-stable-demo` uses schema 11 and protocol `dsh-rsi-candidate-tree-v2`. The file contains no credential.
+`dsh-self-evolving init` writes a private, no-replace `config.json`. `stable-demo` uses schema 10; the v0.1.1 successor
+`v011-stable-demo` uses schema 11 and protocol `dsh-self-evolving-candidate-tree-v2`. The file contains no credential.
 Changing an identity, profile or limit requires a new state directory and run ID.
 
 | Field                      | Stable-demo value                       |

@@ -28,13 +28,13 @@
     { "path": "./packages/candidate-baseline" },
     { "path": "./packages/candidate-v011-baseline" },
     { "path": "./packages/candidate-sdk" },
-    { "path": "./packages/dsh-rsi" },
-    { "path": "./packages/dsh-rsi-cli" },
-    { "path": "./packages/dsh-rsi-loader-e2e" },
-    { "path": "./packages/dsh-rsi-proposer" },
-    { "path": "./packages/dsh-rsi-pilot" },
-    { "path": "./packages/dsh-rsi-sealed-service" },
-    { "path": "./packages/dsh-rsi-search" },
+    { "path": "./packages/dsh-self-evolving" },
+    { "path": "./packages/dsh-self-evolving-cli" },
+    { "path": "./packages/dsh-self-evolving-loader-e2e" },
+    { "path": "./packages/dsh-self-evolving-proposer" },
+    { "path": "./packages/dsh-self-evolving-pilot" },
+    { "path": "./packages/dsh-self-evolving-sealed-service" },
+    { "path": "./packages/dsh-self-evolving-search" },
     { "path": "./benchmark-adapters/terminal-bench" }
   ]
 }

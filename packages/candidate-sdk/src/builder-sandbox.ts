@@ -132,7 +132,7 @@ async function processStartTicks(pid: number): Promise<string | null> {
 }
 
 async function acquireBuildLock(sourceRoot: string): Promise<() => Promise<void>> {
-  const lockDir = join(tmpdir(), 'dsh-rsi-candidate-build-locks')
+  const lockDir = join(tmpdir(), 'dsh-self-evolving-candidate-build-locks')
   await mkdir(lockDir, { recursive: true, mode: 0o700 })
   const key = createHash('sha256').update(resolve(sourceRoot)).digest('hex')
   const lockPath = join(lockDir, `${key}.lock`)

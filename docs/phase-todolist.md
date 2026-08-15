@@ -9,7 +9,7 @@
 - [x] 初始化项目 Git scope；`deepseek-harness/`、`harbor/`、`tb/` 保持外部 pinned checkout，不纳入可编辑范围
 - [x] 建立 root workspace：pnpm + strict TypeScript + lint/format/test + JSON Schema 工具链
 - [x] 生成机器可读 `provenance.lock.json`（DSH/Harbor/TB commit、paper hash、Node/pnpm、container、model catalog）
-- [x] 创建最小 `@dsh-rsi/candidate-baseline` bundle（namespace-form exports）与真实 `cordis.yml` fixture
+- [x] 创建最小 `@dsh-self-evolving/candidate-baseline` bundle（namespace-form exports）与真实 `cordis.yml` fixture
 - [x] 实现无模型 Loader E2E：boot → service/tool/listener inventory → unload → quiescence 精确一致
 - [x] negative fixture：加 `export default apply` 后测试必须失败（证明能捕获 Loader unwrap 缺陷）
 - [x] CI 骨架：format/lint/typecheck/unit/Loader E2E/upstream-clean/AGENTS-CLAUDE 字节一致
@@ -47,7 +47,7 @@
 ## Phase 2 — Terminal-Bench provider 垂直切片（Gate 2，3–5 天）
 
 - [x] `benchmark-adapters/terminal-bench/`：TypeScript provider 生成 Harbor job config + inline ACP binary registry entry（HTTPS + SHA-256）
-- [x] immutable artifact endpoint（或 provider 支持的等价物）；capsule 根部 `dsh-rsi-acp` wrapper 用绝对路径解析自身 config
+- [x] immutable artifact endpoint（或 provider 支持的等价物）；capsule 根部 `dsh-self-evolving-acp` wrapper 用绝对路径解析自身 config
 - [x] 真实 Harbor job 跑通 `extract-elf`：nop/broken/golden 三种 fixture 分别得到预期 fail/fail/valid
 - [x] per-trial normalizer：以 planned inventory 为分母；缺 `result.json`/reward/trajectory/hash 显式 FAIL，不消失
 - [x] ACP/ATIF/DSH session/cost reconciliation；raw job + normalized artifact 可从零重解析出同一 hash
@@ -69,7 +69,7 @@
 
 ## Phase 3 — 持久化 controller 核心（Gate 3，5–8 天）
 
-- [x] `packages/dsh-rsi/`：DSH bundle + 单一 `ctx.rsi` Cordis service，`ctx.effect` 全量 disposer
+- [x] `packages/dsh-self-evolving/`：DSH bundle + 单一 `ctx.selfEvolving` Cordis service，`ctx.effect` 全量 disposer
 - [x] content-addressed object store（staging → fsync → hash → no-clobber publish；scrub）
 - [x] hash-chain JSONL journal + 单 writer lock + HEAD 原子更新
 - [x] pure state reducer + snapshot；full replay 与 snapshot resume 的 canonical state hash 一致
@@ -81,8 +81,8 @@
 
 **退出证据**：crash/replay 全套通过；controller unload 后无残留 worker/handle。
 
-> **successor 验收（2026-08-14）**：`@dsh-rsi/core` 已成为 namespace-form DSH bundle，并由
-> Cordis lifecycle 持有唯一 `ctx.rsi` service、atomic writer lock、journal flush 和 provider saga。
+> **successor 验收（2026-08-14）**：`@dsh-self-evolving/core` 已成为 namespace-form DSH bundle，并由
+> Cordis lifecycle 持有唯一 `ctx.selfEvolving` service、atomic writer lock、journal flush 和 provider saga。
 > 4 个真实 Node controller 在 intent/launch/collect/commit 后分别遭 `SIGKILL`，恢复后均只有一次
 > external launch、observation、cost settlement 和 commit；stale owner identity 被核验并保留证据。
 > 另有只读 status CLI、并发写/预算不超卖、64 组生成序列 property、unload 无 handle 验收。
@@ -99,7 +99,7 @@
 
 **退出证据**：baseline parent 从两条 synthetic failure trace 生成 ≥1 个 nontrivial admitted child，preservation tests 通过，transcript/cost 完整。
 
-> **已完成（2026-08-14）**：`packages/dsh-rsi-proposer/` proposal runner。证据：真实 `deepseek-v4-flash` 模型经真实 DSH Loader
+> **已完成（2026-08-14）**：`packages/dsh-self-evolving-proposer/` proposal runner。证据：真实 `deepseek-v4-flash` 模型经真实 DSH Loader
 > （`ctx.agents.create` + `agent-spine-demo` + `llm-deepseek` → verified provider）从 baseline parent + 2 条 synthetic DEV_OBSERVED
 > failure trace 生成 ≥1 个 nontrivial admitted child（含 hypothesis / production diff / mechanism+preservation tests），
 > `real-model-propose.e2e.ts` 绿。parse+protocol 8 绿；prompt-injection 安全 5 绿（policy 纯函数不被注入改变；

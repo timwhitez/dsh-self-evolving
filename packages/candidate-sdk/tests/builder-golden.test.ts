@@ -1,7 +1,7 @@
 /**
  * Golden candidate build test (spec 07 §3 Accept).
  *
- * Runs the deterministic builder on the real @dsh-rsi/candidate-baseline source
+ * Runs the deterministic builder on the real @dsh-self-evolving/candidate-baseline source
  * and asserts:
  *  - two clean builds produce an identical bundle hash (reproducible);
  *  - the source/bundle/capsule hashes are stable across runs (3-hash determinism);
@@ -35,7 +35,7 @@ const baselineSourceFiles = [
 let scratch: string | undefined
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), 'dsh-rsi-build-'))
+  scratch = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-build-'))
 })
 
 afterEach(async () => {

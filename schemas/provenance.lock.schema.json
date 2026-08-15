@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://dsh-rsi/provenance.lock.schema.json",
+  "$id": "https://dsh-self-evolving/provenance.lock.schema.json",
   "title": "Provenance lock",
-  "description": "Machine-verifiable pinned provenance for the dsh-RSI project (Gate 0, spec 07 §2).",
+  "description": "Machine-verifiable pinned provenance for the dsh-self-evolving project (Gate 0, spec 07 §2).",
   "type": "object",
   "required": ["version", "upstreams", "toolchain"],
   "additionalProperties": true,

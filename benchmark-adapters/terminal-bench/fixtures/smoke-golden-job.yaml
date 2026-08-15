@@ -2,8 +2,8 @@
 # (docker build → oracle agent → verifier → reward). Proves the adapter's
 # verifier path produces reward=1.0 for a correct solution.
 # Run: cd harbor && uv run harbor job start -c ../benchmark-adapters/terminal-bench/fixtures/smoke-golden-job.yaml
-job_name: rsi-smoke-golden
-jobs_dir: /tmp/rsi-smoke-jobs
+job_name: dsh-self-evolving-smoke-golden
+jobs_dir: /tmp/dsh-self-evolving-smoke-jobs
 n_attempts: 1
 n_concurrent_trials: 1
 environment:

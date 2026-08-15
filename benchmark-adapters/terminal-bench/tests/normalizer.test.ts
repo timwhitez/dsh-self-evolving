@@ -19,7 +19,7 @@ import { normalizeTrial } from '../src/index.js'
 let root: string | undefined
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'dsh-rsi-norm-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-norm-'))
 })
 
 afterEach(async () => {

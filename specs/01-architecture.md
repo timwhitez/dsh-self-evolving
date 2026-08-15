@@ -16,7 +16,7 @@ controller”。它是三个不同信任域：
 ```mermaid
 flowchart LR
   subgraph C[Trusted DSH control process]
-    R[dsh-rsi service]
+    R[dsh-self-evolving service]
     E[append-only evidence store]
     B[budget and policy]
     R <--> E
@@ -60,7 +60,7 @@ flowchart LR
 
 ### 2.1 Control plane is a Cordis service
 
-`@dsh-rsi/core` 作为 DSH bundle 安装，并只对内部消费者提供一个 `ctx.rsi` service。Archive、
+`@dsh-self-evolving/core` 作为 DSH bundle 安装，并只对内部消费者提供一个 `ctx.selfEvolving` service。Archive、
 scheduler、proposer coordination、budget 和 state reducer 是该 service 内的模块，而不是五个必须
 独立部署的微服务。
 
@@ -69,7 +69,7 @@ scheduler、proposer coordination、budget 和 state reducer 是该 service 内�
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
 
-export const name = 'dsh-rsi'
+export const name = 'dsh-self-evolving'
 export const inject = ['subprocess']
 
 export function apply(ctx: Context, config: Config) {
@@ -133,9 +133,9 @@ trust stance 明确说明 vm 不是 security boundary，声明的 services 可�
 ## 4. Repository target layout
 
 ```text
-dsh-RSI/
+dsh-self-evolving/
 ├── packages/
-│   ├── dsh-rsi/                  # bundle + one public Cordis service
+│   ├── dsh-self-evolving/                  # bundle + one public Cordis service
 │   │   ├── src/
 │   │   │   ├── index.ts
 │   │   │   ├── controller.ts
@@ -209,7 +209,7 @@ install scripts 和网络，避免 proposal 通过依赖安装越界。
 
 Harbor 为每个 trial 创建任务环境。TypeScript provider 为 candidate capsule 生成 inline ACP registry
 record；其 `binary` distribution 指向 immutable HTTPS artifact 并带 SHA-256。Harbor 的通用 ACP
-runner 下载、校验、解包并启动 capsule 中的 `dsh-rsi-acp`，后者是编译后的 DSH ACP stdio server：
+runner 下载、校验、解包并启动 capsule 中的 `dsh-self-evolving-acp`，后者是编译后的 DSH ACP stdio server：
 
 ```text
 Harbor BaseAgent lifecycle

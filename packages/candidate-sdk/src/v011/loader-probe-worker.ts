@@ -10,7 +10,7 @@ if (
   entry === undefined ||
   candidateId === undefined ||
   (mode !== 'solve' && mode !== 'propose') ||
-  !entry.startsWith('/runtime/node_modules/@dsh-rsi/')
+  !entry.startsWith('/runtime/node_modules/@dsh-self-evolving/')
 ) {
   throw new Error('v0.1.1 Loader probe: invalid trusted arguments')
 }
@@ -65,22 +65,22 @@ try {
   runtime.loader.internal = {
     version: 'v2',
     async import(specifier: string) {
-      if (specifier !== '@dsh-rsi/admission-candidate') {
+      if (specifier !== '@dsh-self-evolving/admission-candidate') {
         throw new Error(`v0.1.1 Loader probe: unexpected import ${specifier}`)
       }
       return import(pathToFileURL(entry).href)
     },
   }
   await runtime.loader.create({
-    id: 'rsi-admission-candidate',
-    name: '@dsh-rsi/admission-candidate',
+    id: 'dsh-self-evolving-admission-candidate',
+    name: '@dsh-self-evolving/admission-candidate',
     config: { candidateId, mode },
   })
   await runtime.loader.await()
   const entries = [...runtime.loader.entries()]
     .map((row) => `${row.options.id}:${row.options.name}`)
     .sort()
-  if (!entries.some((row) => row.startsWith('rsi-admission-candidate:'))) {
+  if (!entries.some((row) => row.startsWith('dsh-self-evolving-admission-candidate:'))) {
     throw new Error('v0.1.1 Loader probe: candidate row did not activate')
   }
   const assembly = await runtime.systemPrompt.assemble()
@@ -103,5 +103,5 @@ if (leakedHandles.length > 0) {
   throw new Error(`v0.1.1 Loader probe: leaked handles ${leakedHandles.join(',')}`)
 }
 process.stdout.write(
-  `DSH_RSI_V011_LOADER_RECEIPT=${JSON.stringify({ ...receipt!, leakedHandles })}\n`,
+  `DSH_SELF_EVOLVING_V011_LOADER_RECEIPT=${JSON.stringify({ ...receipt!, leakedHandles })}\n`,
 )

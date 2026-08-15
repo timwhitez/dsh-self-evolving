@@ -11,8 +11,8 @@ export interface LicensePackage {
   license?: string
 }
 
-export const RELEASE_VERSION = '0.1.1'
-export const RELEASE_SLUG = `dsh-rsi-v${RELEASE_VERSION}`
+export const RELEASE_VERSION = '0.2.0'
+export const RELEASE_SLUG = `dsh-self-evolving-v${RELEASE_VERSION}`
 
 export function normalizeGitCommit(stdout: string): string {
   const commit = stdout.trim()
@@ -47,16 +47,16 @@ export function buildSpdxSbom(
     dataLicense: 'CC0-1.0',
     SPDXID: 'SPDXRef-DOCUMENT',
     name: `${RELEASE_SLUG}-${commit.slice(0, 12)}`,
-    documentNamespace: `https://dsh-rsi.invalid/spdx/${commit}`,
+    documentNamespace: `https://dsh-self-evolving.invalid/spdx/${commit}`,
     creationInfo: {
       created: new Date().toISOString(),
-      creators: ['Tool: dsh-rsi-release-builder-v1'],
+      creators: ['Tool: dsh-self-evolving-release-builder-v1'],
     },
-    documentDescribes: ['SPDXRef-Package-dsh-rsi'],
+    documentDescribes: ['SPDXRef-Package-dsh-self-evolving'],
     packages: [
       {
-        SPDXID: 'SPDXRef-Package-dsh-rsi',
-        name: 'dsh-rsi',
+        SPDXID: 'SPDXRef-Package-dsh-self-evolving',
+        name: 'dsh-self-evolving',
         versionInfo: RELEASE_VERSION,
         downloadLocation: 'NOASSERTION',
         filesAnalyzed: false,
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
     'archive',
     '--format=tar.gz',
     `--prefix=${sourcePrefix}`,
-    `--add-virtual-file=${sourcePrefix}.dsh-rsi-source-identity.json:${JSON.stringify(sourceIdentity)}`,
+    `--add-virtual-file=${sourcePrefix}.dsh-self-evolving-source-identity.json:${JSON.stringify(sourceIdentity)}`,
     '-o',
     join(outDir, sourceName),
     'HEAD',

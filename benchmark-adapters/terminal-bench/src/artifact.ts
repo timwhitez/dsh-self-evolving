@@ -25,13 +25,13 @@ export async function packAcpBinaryArchive(
 ): Promise<PackedAcpBinaryArchive> {
   const runtime = resolve(runtimeDir)
   const output = resolve(archivePath)
-  const launcher = await stat(join(runtime, 'dsh-rsi-acp'))
+  const launcher = await stat(join(runtime, 'dsh-self-evolving-acp'))
   if (!launcher.isFile() || (launcher.mode & 0o111) === 0) {
-    throw new Error('runtime/dsh-rsi-acp must be an executable regular file')
+    throw new Error('runtime/dsh-self-evolving-acp must be an executable regular file')
   }
 
   await mkdir(dirname(output), { recursive: true })
-  const stagingDir = await mkdtemp(join(dirname(output), '.dsh-rsi-acp-archive-'))
+  const stagingDir = await mkdtemp(join(dirname(output), '.dsh-self-evolving-acp-archive-'))
   const tarPath = join(stagingDir, 'runtime.tar')
   const gzipPath = join(stagingDir, 'runtime.tar.gz')
 

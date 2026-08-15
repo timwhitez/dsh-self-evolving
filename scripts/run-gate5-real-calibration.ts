@@ -24,14 +24,16 @@ const harborDir = join(repoRoot, 'harbor')
 const harborBin = join(harborDir, '.venv', 'bin', 'harbor')
 const dshRoot = join(repoRoot, 'deepseek-harness')
 const candidateRoot = resolve(
-  process.env['DSH_RSI_CANDIDATE_ROOT'] ?? join(repoRoot, 'packages', 'candidate-baseline'),
+  process.env['DSH_SELF_EVOLVING_CANDIDATE_ROOT'] ??
+    join(repoRoot, 'packages', 'candidate-baseline'),
 )
-const prebuiltCapsuleRoot = process.env['DSH_RSI_CAPSULE_ROOT']
-  ? resolve(process.env['DSH_RSI_CAPSULE_ROOT'])
+const prebuiltCapsuleRoot = process.env['DSH_SELF_EVOLVING_CAPSULE_ROOT']
+  ? resolve(process.env['DSH_SELF_EVOLVING_CAPSULE_ROOT'])
   : undefined
 const tscBin = join(repoRoot, 'node_modules', '.bin', 'tsc')
 const controllerRoot = resolve(
-  process.env['DSH_RSI_EVALUATOR_ROOT'] ?? '/var/lib/dsh-rsi-controller/gate5-real',
+  process.env['DSH_SELF_EVOLVING_EVALUATOR_ROOT'] ??
+    '/var/lib/dsh-self-evolving-controller/gate5-real',
 )
 const tb21Dir = process.env['TB21_DIR'] ?? '/tmp/tb21/terminal-bench-2-1'
 const targetModel = 'deepseek-v4-flash-zen'
@@ -203,7 +205,7 @@ async function startArtifactServer(
     '-days',
     '1',
     '-subj',
-    '/CN=dsh-rsi-gate5-artifact',
+    '/CN=dsh-self-evolving-gate5-artifact',
     '-addext',
     `subjectAltName=IP:${gateway}`,
   ])
@@ -221,7 +223,7 @@ async function startArtifactServer(
     flag: 'wx',
   })
   const server = createServer({ key, cert }, (request, response) => {
-    if (request.method !== 'GET' || request.url !== '/dsh-rsi-acp.tar.gz') {
+    if (request.method !== 'GET' || request.url !== '/dsh-self-evolving-acp.tar.gz') {
       response.writeHead(404).end()
       return
     }
@@ -239,7 +241,7 @@ async function startArtifactServer(
   const address = server.address() as AddressInfo
   return {
     server,
-    url: `https://${gateway}:${address.port}/dsh-rsi-acp.tar.gz`,
+    url: `https://${gateway}:${address.port}/dsh-self-evolving-acp.tar.gz`,
     caBundlePath,
   }
 }
@@ -267,7 +269,7 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
     }
     const packed = await packAcpBinaryArchive(
       join(prebuiltCapsuleRoot, 'runtime'),
-      join(workDir, 'dsh-rsi-acp.tar.gz'),
+      join(workDir, 'dsh-self-evolving-acp.tar.gz'),
     )
     return { receipt: { candidateId: manifest.candidateId }, packed }
   }
@@ -321,8 +323,8 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
       '    toolJobs: false',
       '    goals: false',
       "    persona: 'DSH RSI Terminal-Bench baseline. Use bash to inspect and modify the task environment, solve autonomously, and verify the result.'",
-      '- id: rsi-candidate',
-      "  name: '@dsh-rsi/candidate-baseline'",
+      '- id: self-evolving-candidate',
+      "  name: '@dsh-self-evolving/candidate-baseline'",
       '  config:',
       `    candidateId: ${receipt.candidateId}`,
       '    mode: solve',
@@ -342,13 +344,13 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
         '#!/bin/sh',
         'set -eu',
         'runtime=${0%/*}',
-        'secret_file=${RSI_PROVIDER_SECRET_FILE:-/run/dsh-rsi/provider.secret}',
+        'secret_file=${DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE:-/run/dsh-self-evolving/provider.secret}',
         'test -f "$secret_file"',
         'DEEPSEEK_API_KEY=$(cat -- "$secret_file")',
         'test -n "$DEEPSEEK_API_KEY"',
         'export DEEPSEEK_API_KEY',
-        'unset RSI_PROVIDER_SECRET_FILE',
-        'exec "$runtime/dsh-rsi-acp" "$@"',
+        'unset DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE',
+        'exec "$runtime/dsh-self-evolving-acp" "$@"',
         '',
       ].join('\n'),
     },
@@ -370,7 +372,7 @@ async function buildBaselineRuntime(workDir: string, baseUrl: string) {
   await chmod(join(capsuleDir, 'runtime', 'credential-launcher.sh'), 0o755)
   const packed = await packAcpBinaryArchive(
     join(capsuleDir, 'runtime'),
-    join(workDir, 'dsh-rsi-acp.tar.gz'),
+    join(workDir, 'dsh-self-evolving-acp.tar.gz'),
   )
   return { receipt, packed }
 }
@@ -531,19 +533,19 @@ async function main(): Promise<void> {
   const workDir = await mkdtemp(join(tmpdir(), `${runId}-`))
   const { receipt, packed } = await buildBaselineRuntime(workDir, route.baseUrl)
   const artifact = await startArtifactServer(packed.archivePath, runDir)
-  const secretDir = await mkdtemp('/run/dsh-rsi-gate5-secret-')
+  const secretDir = await mkdtemp('/run/dsh-self-evolving-gate5-secret-')
   await chmod(secretDir, 0o700)
   const secretPath = join(secretDir, 'provider.secret')
   await writeFile(secretPath, route.apiKey, { mode: 0o600, flag: 'wx' })
   try {
     const registry = buildRegistryEntry({
       candidateId: receipt.candidateId,
-      agentName: 'dsh-rsi-gate5-baseline',
+      agentName: 'dsh-self-evolving-gate5-baseline',
       version: receipt.candidateId,
       archiveUrl: artifact.url,
       archiveSha256: packed.sha256,
       cmd: './credential-launcher.sh',
-      env: { RSI_PROVIDER_SECRET_FILE: '/run/dsh-rsi/provider.secret' },
+      env: { DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE: '/run/dsh-self-evolving/provider.secret' },
     })
     const maxAgentTimeout = Math.max(...tasks.map((task) => task.agentTimeoutSec))
     const config = buildJobConfig({
@@ -560,18 +562,18 @@ async function main(): Promise<void> {
       idempotencyKey: `gate5/${runId}/${receipt.candidateId}`,
       jobsDir: join(runDir, 'jobs'),
       environment: {
-        env: { CURL_CA_BUNDLE: '/run/dsh-rsi/artifact-ca-bundle.crt' },
+        env: { CURL_CA_BUNDLE: '/run/dsh-self-evolving/artifact-ca-bundle.crt' },
         mounts: [
           {
             type: 'bind',
             source: artifact.caBundlePath,
-            target: '/run/dsh-rsi/artifact-ca-bundle.crt',
+            target: '/run/dsh-self-evolving/artifact-ca-bundle.crt',
             read_only: true,
           },
           {
             type: 'bind',
             source: secretPath,
-            target: '/run/dsh-rsi/provider.secret',
+            target: '/run/dsh-self-evolving/provider.secret',
             read_only: true,
           },
         ],

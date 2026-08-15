@@ -1,5 +1,5 @@
 /**
- * @dsh-rsi/candidate-sdk — candidate contract SDK.
+ * @dsh-self-evolving/candidate-sdk — candidate contract SDK.
  *
  * The trusted surface candidates build against, and the builder/scanner/validator
  * the TCB uses to admit them. See specs/02 (candidate contract) and specs/07 §3.

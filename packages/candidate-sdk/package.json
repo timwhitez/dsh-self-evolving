@@ -1,5 +1,5 @@
 {
-  "name": "@dsh-rsi/candidate-sdk",
+  "name": "@dsh-self-evolving/candidate-sdk",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -28,7 +28,7 @@
     "clean": "rm -rf lib .tsbuildinfo"
   },
   "dependencies": {
-    "@dsh-rsi/candidate-baseline": "workspace:*",
+    "@dsh-self-evolving/candidate-baseline": "workspace:*",
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.1"
   },

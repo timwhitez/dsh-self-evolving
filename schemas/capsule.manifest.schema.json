@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://dsh-rsi/capsule.manifest.schema.json",
+  "$id": "https://dsh-self-evolving/capsule.manifest.schema.json",
   "title": "Evaluation capsule manifest",
   "description": "Self-contained immutable capsule descriptor (spec 02 §12). Verified pre- and post-unpack by the Harbor adapter.",
   "type": "object",

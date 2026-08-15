@@ -18,7 +18,7 @@ const tscBin = resolve(here, '..', '..', '..', 'node_modules', '.bin', 'tsc')
 let scratch: string | undefined
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), 'dsh-rsi-diff-'))
+  scratch = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-diff-'))
 })
 
 afterEach(async () => {
@@ -73,13 +73,13 @@ describe('capsule packing', () => {
     await mkdir(join(runtimePackage, 'lib'), { recursive: true })
     await writeFile(
       join(runtimePackage, 'package.json'),
-      JSON.stringify({ name: '@dsh-rsi/fake-acp', version: '1.0.0', type: 'module' }),
+      JSON.stringify({ name: '@dsh-self-evolving/fake-acp', version: '1.0.0', type: 'module' }),
     )
     await writeFile(join(runtimePackage, 'lib', 'bin.js'), 'export const ready = true\n')
     const runtimeClosure = {
       catalogRoots: [runtimeCatalog],
-      seedPackages: ['@dsh-rsi/fake-acp'],
-      entryPackage: '@dsh-rsi/fake-acp',
+      seedPackages: ['@dsh-self-evolving/fake-acp'],
+      entryPackage: '@dsh-self-evolving/fake-acp',
       entryBin: 'lib/bin.js',
     }
     const receipt = await buildCandidate({
@@ -130,7 +130,10 @@ describe('capsule packing', () => {
     }
     expect(sbom.spdxVersion).toBe('SPDX-2.3')
     expect(sbom.packages?.map((pkg) => pkg.name)).toEqual(
-      expect.arrayContaining(['@dsh-rsi/fake-acp', '@dsh-rsi/candidate-baseline']),
+      expect.arrayContaining([
+        '@dsh-self-evolving/fake-acp',
+        '@dsh-self-evolving/candidate-baseline',
+      ]),
     )
 
     // A second pack from identical inputs must produce the same capsule hash.

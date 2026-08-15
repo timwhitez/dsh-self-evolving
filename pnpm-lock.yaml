@@ -38,7 +38,7 @@ importers:
 
   benchmark-adapters/terminal-bench:
     dependencies:
-      '@dsh-rsi/candidate-sdk':
+      '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../../packages/candidate-sdk
     devDependencies:
@@ -72,7 +72,7 @@ importers:
 
   packages/candidate-sdk:
     dependencies:
-      '@dsh-rsi/candidate-baseline':
+      '@dsh-self-evolving/candidate-baseline':
         specifier: workspace:*
         version: link:../candidate-baseline
       ajv:
@@ -116,9 +116,9 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/dsh-rsi:
+  packages/dsh-self-evolving:
     dependencies:
-      '@dsh-rsi/candidate-sdk':
+      '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk
     devDependencies:
@@ -141,20 +141,20 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/dsh-rsi-cli:
+  packages/dsh-self-evolving-cli:
     dependencies:
       '@deepseek-ai/cordis':
         specifier: link:../../deepseek-harness/vendor/cordis
         version: link:../../deepseek-harness/vendor/cordis
-      '@dsh-rsi/candidate-sdk':
+      '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk
-      '@dsh-rsi/core':
+      '@dsh-self-evolving/core':
         specifier: workspace:*
-        version: link:../dsh-rsi
-      '@dsh-rsi/proposer':
+        version: link:../dsh-self-evolving
+      '@dsh-self-evolving/proposer':
         specifier: workspace:*
-        version: link:../dsh-rsi-proposer
+        version: link:../dsh-self-evolving-proposer
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -166,12 +166,12 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/dsh-rsi-loader-e2e:
+  packages/dsh-self-evolving-loader-e2e:
     dependencies:
-      '@dsh-rsi/candidate-baseline':
+      '@dsh-self-evolving/candidate-baseline':
         specifier: workspace:*
         version: link:../candidate-baseline
-      '@dsh-rsi/candidate-sdk':
+      '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk
     devDependencies:
@@ -212,17 +212,17 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/dsh-rsi-pilot:
+  packages/dsh-self-evolving-pilot:
     dependencies:
-      '@dsh-rsi/candidate-sdk':
+      '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk
-      '@dsh-rsi/core':
+      '@dsh-self-evolving/core':
         specifier: workspace:*
-        version: link:../dsh-rsi
-      '@dsh-rsi/search':
+        version: link:../dsh-self-evolving
+      '@dsh-self-evolving/search':
         specifier: workspace:*
-        version: link:../dsh-rsi-search
+        version: link:../dsh-self-evolving-search
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -234,17 +234,17 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/dsh-rsi-proposer:
+  packages/dsh-self-evolving-proposer:
     dependencies:
-      '@dsh-rsi/candidate-baseline':
+      '@dsh-self-evolving/candidate-baseline':
         specifier: workspace:*
         version: link:../candidate-baseline
-      '@dsh-rsi/candidate-sdk':
+      '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk
-      '@dsh-rsi/core':
+      '@dsh-self-evolving/core':
         specifier: workspace:*
-        version: link:../dsh-rsi
+        version: link:../dsh-self-evolving
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -292,11 +292,11 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/dsh-rsi-sealed-service:
+  packages/dsh-self-evolving-sealed-service:
     dependencies:
-      '@dsh-rsi/search':
+      '@dsh-self-evolving/search':
         specifier: workspace:*
-        version: link:../dsh-rsi-search
+        version: link:../dsh-self-evolving-search
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -308,11 +308,11 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/dsh-rsi-search:
+  packages/dsh-self-evolving-search:
     devDependencies:
-      '@dsh-rsi/core':
+      '@dsh-self-evolving/core':
         specifier: workspace:*
-        version: link:../dsh-rsi
+        version: link:../dsh-self-evolving
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1

@@ -223,12 +223,12 @@ function generateSpdx(
         spdxVersion: 'SPDX-2.3',
         dataLicense: 'CC0-1.0',
         SPDXID: 'SPDXRef-DOCUMENT',
-        name: `dsh-rsi-capsule-${receipt.candidateId}`,
-        documentNamespace: `https://dsh-rsi.invalid/spdx/${namespaceHash}`,
+        name: `dsh-self-evolving-capsule-${receipt.candidateId}`,
+        documentNamespace: `https://dsh-self-evolving.invalid/spdx/${namespaceHash}`,
         documentComment: `source-sbom-sha256:${sourceSbomHash}`,
         creationInfo: {
           created: '1970-01-01T00:00:00Z',
-          creators: ['Tool: @dsh-rsi/candidate-sdk'],
+          creators: ['Tool: @dsh-self-evolving/candidate-sdk'],
         },
         documentDescribes: described.map((pkg) => pkg.SPDXID),
         packages: described,
@@ -404,7 +404,7 @@ async function materializeRuntimeClosure(input: {
 
   // Candidate bytes are duplicated into the runtime's ordinary resolution
   // path. Their canonical copy remains capsule/candidate for audit/release.
-  const runtimePackageName = receipt.runtimePackageName ?? '@dsh-rsi/candidate-baseline'
+  const runtimePackageName = receipt.runtimePackageName ?? '@dsh-self-evolving/candidate-baseline'
   const runtimeCandidate = join(nodeModules, ...runtimePackageName.split('/'))
   await copyCandidate(receipt, runtimeCandidate)
   packages.push({
@@ -476,11 +476,11 @@ async function materializeRuntimeClosure(input: {
     ].join('\n')
   const wrappers = [
     {
-      path: join(binDir, 'dsh-rsi-acp'),
+      path: join(binDir, 'dsh-self-evolving-acp'),
       parent: true,
     },
     {
-      path: join(runtimeDir, 'dsh-rsi-acp'),
+      path: join(runtimeDir, 'dsh-self-evolving-acp'),
       parent: false,
     },
   ]

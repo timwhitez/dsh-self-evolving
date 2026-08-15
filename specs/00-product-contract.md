@@ -1,7 +1,7 @@
 # 00 — Product and experiment contract
 
 **Status:** normative draft  
-**Owner:** `dsh-rsi` trusted control plane  
+**Owner:** `dsh-self-evolving` trusted control plane
 **Applies to:** every evolution run and every published claim
 
 本文使用 MUST、MUST NOT、SHOULD、MAY 表示强制、禁止、建议和可选要求。未经新的 ADR 和
@@ -33,7 +33,7 @@ agent/session/tool seams。RSI 控制面和候选都应使用这些原语，而�
 
 因此：
 
-- `dsh-rsi` MUST 是标准 DSH bundle 中的 Cordis service。
+- `dsh-self-evolving` MUST 是标准 DSH bundle 中的 Cordis service。
 - candidate MUST 是标准 DSH bundle/plugin，且能被真实 Cordis Loader 加载。
 - DSH 上游 MUST 保持未修改；patch/fork 不属于本项目的正常实现路径。
 - benchmark adapter MUST 只翻译“提交任务—读取结果”，不得拥有 Archive、选择或晋升逻辑。
@@ -238,7 +238,7 @@ DRAFT -> PREFLIGHT -> CALIBRATED -> SEARCHING -> CANDIDATE_LOCKED
 
 项目 MVP 只有在以下条件全部有 artifact 时完成：
 
-- `dsh-rsi` 和 candidate 都由真实 DSH Loader 加载，无上游 patch；
+- `dsh-self-evolving` 和 candidate 都由真实 DSH Loader 加载，无上游 patch；
 - 80 个 admitted candidates 的 run 可在故障注入后逐事件重放得到同一 Archive；
 - baseline、development、sealed 和 full-set 结果物理/逻辑隔离且标签完整；
 - 单一锁定 candidate 通过 6.2；

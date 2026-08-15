@@ -1,6 +1,6 @@
 {
-  "name": "@dsh-rsi/candidate-v011-baseline",
-  "version": "0.1.1",
+  "name": "@dsh-self-evolving/candidate-v011-baseline",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "lib/index.js",

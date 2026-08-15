@@ -1,4 +1,4 @@
-# dsh-RSI root workspace.
+# dsh-self-evolving root workspace.
 #
 # Only the RSI-owned packages are workspace members. The three upstream trees
 # (deepseek-harness/, harbor/, tb/) are external pinned checkouts, deliberately

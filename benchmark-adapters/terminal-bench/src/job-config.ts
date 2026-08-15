@@ -143,7 +143,7 @@ export function buildJobConfig(input: JobConfigInput): HarborJobConfig {
     ],
     tasks: input.tasks.map((t) => ({ path: t.path })),
     metadata: {
-      'dsh-rsi': {
+      'dsh-self-evolving': {
         idempotency_key: input.idempotencyKey,
         candidate_id: input.registryEntry.id,
         tasks: input.tasks.map((t) => t.taskId),

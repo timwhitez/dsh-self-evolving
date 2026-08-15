@@ -1,5 +1,5 @@
-job_name: rsi-smoke-broken
-jobs_dir: /tmp/rsi-smoke-jobs-broken
+job_name: dsh-self-evolving-smoke-broken
+jobs_dir: /tmp/dsh-self-evolving-smoke-jobs-broken
 n_attempts: 1
 n_concurrent_trials: 1
 environment:

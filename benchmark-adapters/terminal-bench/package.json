@@ -1,5 +1,5 @@
 {
-  "name": "@dsh-rsi/terminal-bench-adapter",
+  "name": "@dsh-self-evolving/terminal-bench-adapter",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "clean": "rm -rf lib .tsbuildinfo"
   },
   "dependencies": {
-    "@dsh-rsi/candidate-sdk": "workspace:*"
+    "@dsh-self-evolving/candidate-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

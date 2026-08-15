@@ -233,7 +233,7 @@ retained as recovery/build-reject evidence and marked `QUARANTINED_REPLACEMENT_F
 
 ## ADR-021 — v0.1.1 uses canonical child trees and governed capability catalogs
 
-**Decision:** protocol `dsh-rsi-candidate-tree-v2` replaces model-authored unified patches with a trusted,
+**Decision:** protocol `dsh-self-evolving-candidate-tree-v2` replaces model-authored unified patches with a trusted,
 preassigned full child tree. The proposer may add, modify, or remove only `src/**/*.ts`,
 `tests/**/*.spec.ts`, `fixtures/**/*.json`, `README.md`, and the behavior-intent JSON pointers in
 `candidate.json`. `package.json`, `cordis.patch.yml`, compiler configuration, identities, dependencies,

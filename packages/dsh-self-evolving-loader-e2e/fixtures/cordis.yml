@@ -1,0 +1,18 @@
+# Real Cordis Loader fixture for Gate 0.
+#
+# This is NOT a hand-rolled `ctx.plugin()` call: it is consumed by the real
+# `@deepseek-ai/cordis-plugin-loader` + Include plugin, so the candidate row
+# goes through the same default-unwrap, inject-resolution and lifecycle path as
+# production. The candidate is model-free: no LLM adapter, no agent, no network.
+#
+# Rows:
+#   - dsh-system-prompt provides the `systemPrompt` service the candidate injects.
+#   - self-evolving-candidate mounts the baseline candidate bundle in solve mode.
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config: {}
+- id: self-evolving-candidate
+  name: '@dsh-self-evolving/candidate-baseline'
+  config:
+    candidateId: baseline
+    mode: solve

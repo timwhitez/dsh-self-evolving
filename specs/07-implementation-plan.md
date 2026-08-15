@@ -32,7 +32,7 @@
   可编辑代码；
 - 定义 root workspace、strict TypeScript、formatter/lint/test 和 schema toolchain；
 - 生成 `provenance.lock.json`：DSH/Harbor/TB source、paper、Node/pnpm/Python、container、model catalog；
-- 创建最小 `@dsh-rsi/candidate-baseline` bundle 和真实 `cordis.yml` fixture；
+- 创建最小 `@dsh-self-evolving/candidate-baseline` bundle 和真实 `cordis.yml` fixture；
 - 实现无模型 Loader boot → service/tool/listener inventory → unload → quiescence check。
 
 ### Accept
@@ -85,7 +85,7 @@
 
 ### Build
 
-- `@dsh-rsi/core` bundle/service、config schema、single writer；
+- `@dsh-self-evolving/core` bundle/service、config schema、single writer；
 - object store、hash-chain journal、pure reducer、snapshot；
 - candidate/archive/observation state、budget double-entry ledger；
 - provider saga/idempotency/reconcile 和 read-only status command；

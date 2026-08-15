@@ -27,7 +27,11 @@ describe('release SBOM builder', () => {
       packages: Array<{ name: string; versionInfo: string; licenseDeclared: string }>
     }
     expect(sbom.spdxVersion).toBe('SPDX-2.3')
-    expect(sbom.packages.map((entry) => entry.name)).toEqual(['dsh-rsi', 'a-lib', 'z-lib'])
+    expect(sbom.packages.map((entry) => entry.name)).toEqual([
+      'dsh-self-evolving',
+      'a-lib',
+      'z-lib',
+    ])
     expect(sbom.packages[0]?.licenseDeclared).toBe('Apache-2.0')
     expect(sbom.packages[0]?.versionInfo).toBe(RELEASE_VERSION)
   })

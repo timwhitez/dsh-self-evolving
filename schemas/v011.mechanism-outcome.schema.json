@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://dsh-rsi/v011.mechanism-outcome.schema.json",
+  "$id": "https://dsh-self-evolving/v011.mechanism-outcome.schema.json",
   "title": "v0.1.1 trusted mechanism outcome",
   "type": "object",
   "additionalProperties": false,

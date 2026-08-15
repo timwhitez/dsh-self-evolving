@@ -35,7 +35,7 @@ const SMOKE_TIMEOUT = { timeout: 300_000 }
 let scratch: string | undefined
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), 'dsh-rsi-harbor-e2e-'))
+  scratch = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-harbor-e2e-'))
 })
 
 afterEach(async () => {
@@ -63,7 +63,7 @@ async function harborAvailable(): Promise<boolean> {
 async function runHarborJob(jobName: string, agent: string, taskRel: string): Promise<string> {
   const jobsDir = join(scratch!, `jobs-${jobName}`)
   const cfg = {
-    job_name: `rsi-${jobName}`,
+    job_name: `dsh-self-evolving-${jobName}`,
     jobs_dir: jobsDir,
     n_attempts: 1,
     n_concurrent_trials: 1,
@@ -86,7 +86,7 @@ async function runHarborJob(jobName: string, agent: string, taskRel: string): Pr
   })
   // Find the trial directory: <jobsDir>/<job_name>/<task>__<id>/
   const { readdir } = await import('node:fs/promises')
-  const jobDir = join(jobsDir, `rsi-${jobName}`)
+  const jobDir = join(jobsDir, `dsh-self-evolving-${jobName}`)
   const entries = await readdir(jobDir, { withFileTypes: true })
   const trialDir = entries.find((e) => e.isDirectory() && e.name.includes('__'))
   if (!trialDir) throw new Error(`no trial directory under ${jobDir}`)

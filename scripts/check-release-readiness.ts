@@ -70,9 +70,10 @@ export async function resolveReleaseFiles(repoRoot: string): Promise<string[]> {
         .filter(Boolean),
     )
   }
-  const raw = await readFile(join(repoRoot, '.dsh-rsi-source-identity.json'), 'utf8').catch(
-    () => null,
-  )
+  const raw = await readFile(
+    join(repoRoot, '.dsh-self-evolving-source-identity.json'),
+    'utf8',
+  ).catch(() => null)
   if (raw === null) throw new Error('release readiness: no Git metadata or source identity')
   const identity = JSON.parse(raw) as { releaseFiles?: unknown }
   return validateReleaseFiles(identity.releaseFiles)

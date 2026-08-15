@@ -1,5 +1,5 @@
 /**
- * @dsh-rsi/terminal-bench-adapter — Terminal-Bench provider for Harbor.
+ * @dsh-self-evolving/terminal-bench-adapter — Terminal-Bench provider for Harbor.
  *
  * Policy-free TypeScript provider (spec 01): generates Harbor JobConfig YAML
  * with an inline ACP binary registry entry for a DSH candidate capsule, plus a

@@ -1,5 +1,5 @@
 /**
- * @dsh-rsi/candidate-baseline — stable baseline parent candidate.
+ * @dsh-self-evolving/candidate-baseline — stable baseline parent candidate.
  *
  * This is the root of the RSI lineage: a minimal, mechanism-free namespace-form
  * DSH bundle that every generated candidate descends from. It exists so that:
@@ -15,7 +15,7 @@
  * Form contract (spec 02 §4): namespace-form named exports only. Do NOT add
  * `export default apply` — the DSH Loader's default-unwrap drops sibling
  * `inject`/`Config`/`name` metadata, and only a real Loader test catches it
- * (postmortem 0001). The negative fixture in dsh-rsi-loader-e2e enforces this.
+ * (postmortem 0001). The negative fixture in dsh-self-evolving-loader-e2e enforces this.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
@@ -23,7 +23,7 @@ import Schema from '@deepseek-ai/schemastery'
 // runtime the host provides the service; the candidate never bundles it.
 import type {} from '@deepseek-ai/dsh-system-prompt'
 
-export const name = 'rsi-candidate'
+export const name = 'self-evolving-candidate'
 
 /**
  * Required DSH services. A candidate waits for these before its Fiber activates,

@@ -17,12 +17,12 @@ import {
   runPilotLoop,
   type PilotCapabilities,
   type ProposedChild,
-} from '../packages/dsh-rsi-pilot/src/index.js'
+} from '../packages/dsh-self-evolving-pilot/src/index.js'
 import {
   DEFAULT_PARAMS,
   deterministicSplit,
   type TaskMeta,
-} from '../packages/dsh-rsi-search/src/index.js'
+} from '../packages/dsh-self-evolving-search/src/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')

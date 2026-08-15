@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv'
 import addFormats from 'ajv-formats'
 
-export const V011_PROTOCOL = 'dsh-rsi-candidate-tree-v2' as const
+export const V011_PROTOCOL = 'dsh-self-evolving-candidate-tree-v2' as const
 
 export type V011SchemaKind =
   | 'proposal'
@@ -30,7 +30,7 @@ const SCHEMAS: Record<V011SchemaKind, string> = {
 
 const here = dirname(fileURLToPath(import.meta.url))
 function schemaRoot(): string {
-  const injected = process.env['DSH_RSI_V011_SCHEMA_ROOT']
+  const injected = process.env['DSH_SELF_EVOLVING_V011_SCHEMA_ROOT']
   return injected === undefined
     ? resolve(here, '..', '..', '..', '..', 'schemas')
     : resolve(injected)

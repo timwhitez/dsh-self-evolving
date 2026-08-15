@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. This project uses semantic versioning for public releases.
 
+## 0.2.0 - Unreleased
+
+- Renamed the project, package scope, CLI, service, protocol identities and release artifacts to
+  `dsh-self-evolving`.
+- Preserved v0.1.1 Git history and immutable run evidence as predecessor records.
+
 ## 0.1.1 - 2026-08-15
 
 - Added schema-v2 bounded multi-file candidate trees, deterministic proposal slots and exact tree-diff admission.

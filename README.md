@@ -1,7 +1,11 @@
-# dsh-RSI
+# dsh-self-evolving
 
-`dsh-RSI` 是一个以 DeepSeek Harness（DSH）插件为唯一运行时核心、以
+`dsh-self-evolving` 是一个以 DeepSeek Harness（DSH）插件为唯一运行时核心、以
 Terminal-Bench 2.1 为首个验证环境的递归自改进（RSI）项目。
+
+当前开发版本为 **v0.2.0**。产品名、npm scope、CLI、Cordis service、协议/MIME 和发布身份统一为
+`dsh-self-evolving`。v0.1/v0.1.1 的历史审计保留旧名称和旧绝对路径，以维持既有证据真实性；迁移说明见
+[`docs/migration-v0.2.md`](docs/migration-v0.2.md)。
 
 项目当前状态为 **`OPEN_SOURCE_V0_1_RELEASE_CANDIDATE`**。Gate 0–7 的 Loader、candidate builder、
 Harbor ACP、durable controller、真实 Zen proposer、K=3 稳定迭代与 Apache-2.0 source release 已有验收
@@ -13,7 +17,7 @@ crash/resume 和独立审计，状态为 **`AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFI
 
 ## 一句话架构
 
-可信的 `dsh-rsi` Cordis service 在 DSH 内维护证据、谱系和搜索状态；它生成的每个候选
+可信的 `dsh-self-evolving` Cordis service 在 DSH 内维护证据、谱系和搜索状态；它生成的每个候选
 harness 仍是标准 DSH bundle/plugin，并在独立的一次性 DSH 进程中运行；Terminal-Bench
 通过 Harbor 适配器评测候选，verifier、数据切分和最终测试始终位于候选不可写的可信边界。
 
@@ -42,6 +46,7 @@ Harbor 是可替换 benchmark provider，而不是 RSI 的所有者。
 - [`docs/decisions.md`](docs/decisions.md)：关键架构决策记录（ADR）。
 - [`docs/phase-todolist.md`](docs/phase-todolist.md)：按 Gate 0–8 展开的落地执行清单。
 - [`docs/v0.1-release-gates.md`](docs/v0.1-release-gates.md)：当前开源发布范围的短版 Gate 定义。
+- [`docs/migration-v0.2.md`](docs/migration-v0.2.md)：v0.2 名称、包、CLI、协议和 state 迁移边界。
 - [`PROJECT_STATUS.md`](PROJECT_STATUS.md)：当前真实进度与最近一个验收门。
 
 当文档冲突时，优先级为：冻结的 run manifest > `specs/` > `docs/` > README >
@@ -71,9 +76,9 @@ Terminal-Bench K=10/K=80 搜索、29-task sealed confirmation、89×≥5 full-se
 
 ```bash
 pnpm setup:source
-pnpm dsh-rsi init --run-id demo-1 --state-dir /var/lib/dsh-rsi-controller/demo-1 --repo-root "$PWD"
-pnpm dsh-rsi doctor --state-dir /var/lib/dsh-rsi-controller/demo-1
-pnpm dsh-rsi run --state-dir /var/lib/dsh-rsi-controller/demo-1
+pnpm dsh-self-evolving init --run-id demo-1 --state-dir /var/lib/dsh-self-evolving-controller/demo-1 --repo-root "$PWD"
+pnpm dsh-self-evolving doctor --state-dir /var/lib/dsh-self-evolving-controller/demo-1
+pnpm dsh-self-evolving run --state-dir /var/lib/dsh-self-evolving-controller/demo-1
 ```
 
 配置、恢复和证据解释分别见 [`docs/configuration.md`](docs/configuration.md)、

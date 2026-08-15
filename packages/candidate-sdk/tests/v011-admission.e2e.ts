@@ -16,7 +16,7 @@ afterEach(async () => {
 })
 
 async function childFixture(failingTest = false): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-v011-admission-'))
+  const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-admission-'))
   roots.push(root)
   const child = join(root, 'child')
   await mkdir(child, { recursive: true })
@@ -108,17 +108,17 @@ describe('v0.1.1 generated-plugin admission', () => {
             join(dshRoot, 'packages'),
             join(dshRoot, 'vendor'),
           ],
-          seedPackages: ['@dsh-rsi/candidate-sdk'],
-          entryPackage: '@dsh-rsi/candidate-sdk',
+          seedPackages: ['@dsh-self-evolving/candidate-sdk'],
+          entryPackage: '@dsh-self-evolving/candidate-sdk',
           entryBin: 'lib/v011/loader-probe-worker.js',
         },
         runnerOverlay: '\n',
-        provenanceJson: '{"protocol":"dsh-rsi-candidate-tree-v2"}',
+        provenanceJson: '{"protocol":"dsh-self-evolving-candidate-tree-v2"}',
         sbomJson: '{"spdxVersion":"SPDX-2.3"}',
       })
       expect(result.receipt.admitted).toBe(true)
       expect(result.buildReceipt.doubleBuildIdentical).toBe(true)
-      expect(result.buildReceipt.runtimePackageName).toMatch(/^@dsh-rsi\/candidate-/)
+      expect(result.buildReceipt.runtimePackageName).toMatch(/^@dsh-self-evolving\/candidate-/)
       expect(result.loader.solve.promptSections).toContain('candidate:bounded-retry')
       expect(result.loader.propose.promptSections).toContain('candidate:bounded-retry')
       expect(result.loader.solve.leakedHandles).toEqual([])
@@ -149,8 +149,8 @@ describe('v0.1.1 generated-plugin admission', () => {
               join(dshRoot, 'packages'),
               join(dshRoot, 'vendor'),
             ],
-            seedPackages: ['@dsh-rsi/candidate-sdk'],
-            entryPackage: '@dsh-rsi/candidate-sdk',
+            seedPackages: ['@dsh-self-evolving/candidate-sdk'],
+            entryPackage: '@dsh-self-evolving/candidate-sdk',
             entryBin: 'lib/v011/loader-probe-worker.js',
           },
           runnerOverlay: '\n',

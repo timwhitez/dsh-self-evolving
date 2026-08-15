@@ -15,7 +15,7 @@
 export interface AcpBinaryTarget {
   /** HTTPS URL to a tar.gz/tgz/tar.bz2/zip archive (immutable artifact endpoint). */
   archive: string
-  /** Command name inside the archive, e.g. "./dsh-rsi-acp". */
+  /** Command name inside the archive, e.g. "./dsh-self-evolving-acp". */
   cmd: string
   args?: string[]
   env?: Record<string, string>
@@ -86,7 +86,7 @@ export function buildRegistryEntry(input: RegistryEntryInput): AcpRegistryEntry 
     )
   }
   return {
-    id: `dsh-rsi-${input.candidateId}`,
+    id: `dsh-self-evolving-${input.candidateId}`,
     name: input.agentName,
     version: input.version,
     description: `DSH RSI candidate ${input.candidateId} ACP launcher (Terminal-Bench).`,
@@ -102,7 +102,7 @@ export function buildRegistryEntry(input: RegistryEntryInput): AcpRegistryEntry 
       },
     },
     repository: 'https://github.com/deepseek-ai/deepseek-harness',
-    authors: ['dsh-rsi'],
+    authors: ['dsh-self-evolving'],
     license: 'MIT',
   }
 }

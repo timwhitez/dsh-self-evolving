@@ -28,7 +28,7 @@ const tscBin = resolve(here, '..', '..', '..', 'node_modules', '.bin', 'tsc')
 let scratch: string | undefined
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), 'dsh-rsi-reject-'))
+  scratch = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-reject-'))
 })
 
 afterEach(async () => {
@@ -95,7 +95,7 @@ async function makeFixture(name: string, indexSrc: string): Promise<string> {
   await writeFile(
     join(dir, 'package.json'),
     JSON.stringify({
-      name: '@dsh-rsi/fixture-' + name,
+      name: '@dsh-self-evolving/fixture-' + name,
       version: '0.0.0',
       private: true,
       type: 'module',
@@ -135,7 +135,7 @@ async function makeFixture(name: string, indexSrc: string): Promise<string> {
 const CLEAN_SRC = `import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-export const name = 'rsi-candidate'
+export const name = 'self-evolving-candidate'
 export const inject = ['systemPrompt']
 export interface Config { candidateId: string; mode: 'solve' | 'propose' }
 export const Config: Schema<Config> = Schema.object({ candidateId: Schema.string().required(), mode: Schema.union(['solve', 'propose'] as const).required() })
@@ -308,7 +308,7 @@ describe('rejection fixture suite (Gate 1)', () => {
     await writeFile(
       join(dir, 'package.json'),
       JSON.stringify({
-        name: '@dsh-rsi/fixture-install-script',
+        name: '@dsh-self-evolving/fixture-install-script',
         version: '0.0.0',
         type: 'module',
         main: 'lib/index.js',

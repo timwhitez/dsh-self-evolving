@@ -18,7 +18,7 @@ import {
 let root: string | undefined
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'dsh-rsi-id-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-id-'))
 })
 
 afterEach(async () => {

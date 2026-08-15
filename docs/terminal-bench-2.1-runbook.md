@@ -37,15 +37,15 @@ An inline record conceptually has this shape (exact serialization is generated a
 
 ```json
 {
-  "id": "dsh-rsi-acp-<candidate-short-hash>",
-  "name": "dsh-RSI candidate",
+  "id": "dsh-self-evolving-acp-<candidate-short-hash>",
+  "name": "dsh-self-evolving candidate",
   "version": "<full-capsule-hash>",
   "description": "Immutable DSH candidate capsule",
   "distribution": {
     "binary": {
       "linux-x86_64": {
         "archive": "https://artifact-host/sha256/<digest>.tar.gz",
-        "cmd": "./dsh-rsi-acp",
+        "cmd": "./dsh-self-evolving-acp",
         "checksum": "sha256:<digest>"
       }
     }
@@ -55,7 +55,7 @@ An inline record conceptually has this shape (exact serialization is generated a
 
 Harbor installs the selected binary under a fixed directory, launches it with the task workspace as `cwd`, and
 constructs the executable path from the basename of `cmd`. The capsule therefore puts an executable wrapper named
-`dsh-rsi-acp` at the archive root. That wrapper resolves its own real directory and executes the embedded DSH bin
+`dsh-self-evolving-acp` at the archive root. That wrapper resolves its own real directory and executes the embedded DSH bin
 with an absolute `--config "$capsule_root/runner/cordis.yml"`; it never resolves config relative to `cwd`. Gate 2
 must prove this path in a real task container—nested `cmd` paths or `args: ["--config", "./cordis.yml"]` are wrong.
 

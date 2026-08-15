@@ -106,7 +106,7 @@ describe('policy scanner — allowlist acceptance', () => {
       import type { Context } from '@deepseek-ai/cordis'
       import Schema from '@deepseek-ai/schemastery'
       import type {} from '@deepseek-ai/dsh-system-prompt'
-      export const name = 'rsi-candidate'
+      export const name = 'self-evolving-candidate'
       export const inject = ['systemPrompt']
       export function apply(ctx: Context): void {
         ctx.systemPrompt.section({ name: 'candidate:x', order: 1, text: 'hi' })

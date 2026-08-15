@@ -1,9 +1,0 @@
-# DSH profile-bundle layer for the trusted RSI controller. Deployments must
-# provide an explicit state root and run id; omission fails Config validation.
-- insert:
-    - id: dsh-rsi
-      name: '@dsh-rsi/core'
-      config:
-        stateDir: !!js process.env.DSH_RSI_STATE_DIR
-        runId: !!js process.env.DSH_RSI_RUN_ID
-        segmentMaxBytes: 16777216

@@ -1,0 +1,34 @@
+{
+  "name": "@dsh-self-evolving/cli",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Product CLI for the bounded, crash-resumable DSH RSI stable-demo profile.",
+  "main": "lib/index.js",
+  "bin": {
+    "dsh-self-evolving": "./lib/cli.js"
+  },
+  "files": [
+    "lib"
+  ],
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dependencies": {
+    "@dsh-self-evolving/candidate-sdk": "workspace:*",
+    "@dsh-self-evolving/core": "workspace:*",
+    "@dsh-self-evolving/proposer": "workspace:*",
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

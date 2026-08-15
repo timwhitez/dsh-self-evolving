@@ -49,7 +49,7 @@ canonical source、5,000 changed lines 相对 canonical parent。该上限是安
 
 ```json
 {
-  "name": "@dsh-rsi/candidate-<short-hash>",
+  "name": "@dsh-self-evolving/candidate-<short-hash>",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -65,8 +65,8 @@ canonical source、5,000 changed lines 相对 canonical parent。该上限是安
 
 ```yaml
 - insert:
-    - id: rsi-candidate
-      name: '@dsh-rsi/candidate-<short-hash>'
+    - id: self-evolving-candidate
+      name: '@dsh-self-evolving/candidate-<short-hash>'
 ```
 
 稳定 runner 在更晚的 patch layer 中重述该 row 的完整 config，传入 `mode` 和 immutable candidate
@@ -89,7 +89,7 @@ Candidate bundle MUST NOT：
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
-export const name = 'rsi-candidate'
+export const name = 'self-evolving-candidate'
 export const inject = ['systemPrompt', 'tools']
 
 export interface Config {

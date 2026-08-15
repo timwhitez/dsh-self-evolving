@@ -22,7 +22,7 @@ afterEach(async () => {
 })
 
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-v011-tree-'))
+  const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-tree-'))
   roots.push(root)
   await mkdir(join(root, 'src'), { recursive: true })
   await mkdir(join(root, 'tests'), { recursive: true })
@@ -99,7 +99,7 @@ describe('v0.1.1 contract and containment', () => {
 
   it('derives nested add, modify, and remove exactly', async () => {
     const parentRoot = await fixture()
-    const slot = await mkdtemp(join(tmpdir(), 'dsh-rsi-v011-slot-'))
+    const slot = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-slot-'))
     roots.push(slot)
     const childRoot = join(slot, 'tree')
     await materializeV011ChildSlot(parentRoot, childRoot)
@@ -127,7 +127,7 @@ describe('v0.1.1 contract and containment', () => {
 
   it('rejects template changes, traversal links, and identity self-reference', async () => {
     const parentRoot = await fixture()
-    const slot = await mkdtemp(join(tmpdir(), 'dsh-rsi-v011-negative-'))
+    const slot = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-negative-'))
     roots.push(slot)
     const childRoot = join(slot, 'tree')
     await materializeV011ChildSlot(parentRoot, childRoot)

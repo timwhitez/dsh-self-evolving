@@ -1,4 +1,4 @@
-# dsh-RSI agent instructions
+# dsh-self-evolving agent instructions
 
 ## Mission
 
@@ -36,7 +36,7 @@ Terminal-Bench 2.1，目标是形成可持续、可恢复、可审计且不会�
 预期实现边界：
 
 ```text
-packages/dsh-rsi/              # 可信 Cordis controller/service
+packages/dsh-self-evolving/              # 可信 Cordis controller/service
 packages/candidate-sdk/        # 受限、可演化的 DSH plugin surface
 packages/tb-agent/             # 稳定的 DSH ACP/headless runner
 benchmark-adapters/terminal-bench/  # TypeScript Harbor provider；不含 RSI 策略

@@ -1,0 +1,9 @@
+# DSH profile-bundle layer for the trusted RSI controller. Deployments must
+# provide an explicit state root and run id; omission fails Config validation.
+- insert:
+    - id: dsh-self-evolving
+      name: '@dsh-self-evolving/core'
+      config:
+        stateDir: !!js process.env.DSH_SELF_EVOLVING_STATE_DIR
+        runId: !!js process.env.DSH_SELF_EVOLVING_RUN_ID
+        segmentMaxBytes: 16777216

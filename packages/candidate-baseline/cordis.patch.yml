@@ -3,5 +3,5 @@
 # because Loader config patches replace the whole row rather than deep-merging.
 # A candidate MUST NOT override runner rows, adapter rows, or insert Host/Web/LLM.
 - insert:
-    - id: rsi-candidate
-      name: '@dsh-rsi/candidate-baseline'
+    - id: self-evolving-candidate
+      name: '@dsh-self-evolving/candidate-baseline'

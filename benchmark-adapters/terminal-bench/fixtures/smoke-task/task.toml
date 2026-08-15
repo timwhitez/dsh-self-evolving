@@ -7,13 +7,13 @@
 schema_version = "1.4"
 
 [task]
-name = "dsh-rsi/smoke"
+name = "dsh-self-evolving/smoke"
 version = "1.0.0"
 authors = []
 keywords = []
 
 [metadata]
-author_name = "dsh-rsi"
+author_name = "dsh-self-evolving"
 difficulty = "easy"
 category = "smoke"
 tags = []

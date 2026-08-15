@@ -190,7 +190,7 @@ export function scanSource(path: string, src: string, opts: ScanOptions = {}): S
       continue
     }
     if (
-      specifier.startsWith('@dsh-rsi/') ||
+      specifier.startsWith('@dsh-self-evolving/') ||
       specifier.startsWith('.') ||
       specifier.startsWith('/')
     ) {

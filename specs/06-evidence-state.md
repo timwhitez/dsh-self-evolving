@@ -62,7 +62,7 @@ Runtime MUST 使用新 run directory；不得覆盖旧 run。`objects` 可跨 ru
   "algorithm": "sha256",
   "digest": "...",
   "size": 1234,
-  "mediaType": "application/vnd.dsh-rsi.trajectory+json",
+  "mediaType": "application/vnd.dsh-self-evolving.trajectory+json",
   "label": "DEV_OBSERVED"
 }
 ```

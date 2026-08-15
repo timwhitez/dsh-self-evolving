@@ -1,5 +1,5 @@
-job_name: rsi-smoke-nop
-jobs_dir: /tmp/rsi-smoke-jobs-nop
+job_name: dsh-self-evolving-smoke-nop
+jobs_dir: /tmp/dsh-self-evolving-smoke-jobs-nop
 n_attempts: 1
 n_concurrent_trials: 1
 environment:

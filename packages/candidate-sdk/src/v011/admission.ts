@@ -121,7 +121,7 @@ async function runCandidateTests(
     '--new-session',
     '--unshare-all',
     '--hostname',
-    'dsh-rsi-candidate-tests',
+    'dsh-self-evolving-candidate-tests',
     '--cap-drop',
     'ALL',
     '--proc',
@@ -223,13 +223,14 @@ async function runLoaderProbe(input: {
 }): Promise<V011LoaderProbeReceipt> {
   const runtime = join(input.capsuleRoot, 'runtime')
   const candidateEntry = `/runtime/node_modules/${input.runtimePackageName}/lib/index.js`
-  const worker = '/runtime/node_modules/@dsh-rsi/candidate-sdk/lib/v011/loader-probe-worker.js'
+  const worker =
+    '/runtime/node_modules/@dsh-self-evolving/candidate-sdk/lib/v011/loader-probe-worker.js'
   const args = [
     '--die-with-parent',
     '--new-session',
     '--unshare-all',
     '--hostname',
-    'dsh-rsi-loader-probe',
+    'dsh-self-evolving-loader-probe',
     '--cap-drop',
     'ALL',
     '--proc',
@@ -271,10 +272,10 @@ async function runLoaderProbe(input: {
     throw new Error(`v0.1.1 admission: Loader ${input.mode} failed: ${result.stderr}`)
   const line = result.stdout
     .split('\n')
-    .findLast((row) => row.startsWith('DSH_RSI_V011_LOADER_RECEIPT='))
+    .findLast((row) => row.startsWith('DSH_SELF_EVOLVING_V011_LOADER_RECEIPT='))
   if (line === undefined) throw new Error('v0.1.1 admission: Loader receipt missing')
   const receipt = JSON.parse(
-    line.slice('DSH_RSI_V011_LOADER_RECEIPT='.length),
+    line.slice('DSH_SELF_EVOLVING_V011_LOADER_RECEIPT='.length),
   ) as V011LoaderProbeReceipt
   if (receipt.mode !== input.mode || receipt.leakedHandles.length !== 0) {
     throw new Error('v0.1.1 admission: Loader receipt identity/quiescence mismatch')
@@ -285,7 +286,7 @@ async function runLoaderProbe(input: {
 async function runtimeSourceFiles(
   receipt: BuildReceipt,
 ): Promise<{ files: BuildArtifactFile[]; packageName: string }> {
-  const packageName = `@dsh-rsi/candidate-${receipt.candidateId.slice(2, 18)}`
+  const packageName = `@dsh-self-evolving/candidate-${receipt.candidateId.slice(2, 18)}`
   const packageJson = {
     name: packageName,
     version: '0.0.0',
@@ -299,7 +300,7 @@ async function runtimeSourceFiles(
     ['package.json', Buffer.from(JSON.stringify(packageJson, null, 2) + '\n')],
     [
       'cordis.patch.yml',
-      Buffer.from(`- insert:\n    - id: rsi-candidate\n      name: '${packageName}'\n`),
+      Buffer.from(`- insert:\n    - id: self-evolving-candidate\n      name: '${packageName}'\n`),
     ],
   ])
   return {
@@ -357,7 +358,7 @@ export async function admitV011Candidate(input: {
       seedPackages: [
         ...new Set([
           ...input.runtimeClosure.seedPackages,
-          '@dsh-rsi/candidate-sdk',
+          '@dsh-self-evolving/candidate-sdk',
           '@deepseek-ai/cordis-plugin-loader',
           '@deepseek-ai/dsh-system-prompt',
         ]),
@@ -367,7 +368,7 @@ export async function admitV011Candidate(input: {
       outDir: input.capsuleOutDir,
       receipt: buildReceipt,
       runnerOverlay: input.runnerOverlay.replaceAll(
-        '__DSH_RSI_RUNTIME_PACKAGE__',
+        '__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__',
         runtimeSource.packageName,
       ),
       ...(input.runnerFiles === undefined ? {} : { runnerFiles: input.runnerFiles }),

@@ -1,5 +1,5 @@
 {
-  "name": "@dsh-rsi/candidate-baseline",
+  "name": "@dsh-self-evolving/candidate-baseline",
   "version": "0.0.0",
   "private": true,
   "type": "module",

@@ -50,7 +50,7 @@ async function readLedger(dir: string): Promise<IdempotencyRecord[]> {
 export function idempotencyKey(candidateId: string, taskId: string, attemptIndex: number): string {
   const body = `${candidateId}|${taskId}|${attemptIndex}`
   const hash = createHash('sha256').update(body).digest('hex')
-  return `rsi-${hash.slice(0, 32)}`
+  return `dsh-self-evolving-${hash.slice(0, 32)}`
 }
 
 /**

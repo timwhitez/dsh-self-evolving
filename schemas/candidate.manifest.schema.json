@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://dsh-rsi/candidate.manifest.schema.json",
+  "$id": "https://dsh-self-evolving/candidate.manifest.schema.json",
   "title": "Candidate manifest",
   "description": "Behavior/provenance manifest authored by the proposer and frozen by the trusted builder (spec 02 §6).",
   "type": "object",

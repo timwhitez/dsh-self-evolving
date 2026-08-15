@@ -19,10 +19,10 @@ describe('release readiness checker', () => {
   })
 
   it('uses the embedded release inventory when Git metadata is absent', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-rsi-release-no-git-'))
+    const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-release-no-git-'))
     const releaseFiles = ['README.md', 'docs/quickstart.md']
     await writeFile(
-      join(root, '.dsh-rsi-source-identity.json'),
+      join(root, '.dsh-self-evolving-source-identity.json'),
       JSON.stringify({
         schemaVersion: 1,
         commit: 'a'.repeat(40),

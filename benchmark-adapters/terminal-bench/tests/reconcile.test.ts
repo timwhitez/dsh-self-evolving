@@ -10,7 +10,7 @@ import { reconcileCost } from '../src/index.js'
 let root: string | undefined
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'dsh-rsi-recon-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-recon-'))
 })
 
 afterEach(async () => {

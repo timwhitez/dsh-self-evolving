@@ -27,7 +27,7 @@ import {
   commitSplit,
   type TaskMeta,
   type CalibrationSample,
-} from '../packages/dsh-rsi-search/src/index.js'
+} from '../packages/dsh-self-evolving-search/src/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')

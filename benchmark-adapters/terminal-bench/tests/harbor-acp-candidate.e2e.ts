@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildCandidate, packCapsule } from '@dsh-rsi/candidate-sdk'
+import { buildCandidate, packCapsule } from '@dsh-self-evolving/candidate-sdk'
 import {
   buildJobConfig,
   buildRegistryEntry,
@@ -52,7 +52,7 @@ let scratch: string | undefined
 let artifactServer: Server | undefined
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), 'dsh-rsi-harbor-acp-'))
+  scratch = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-harbor-acp-'))
 })
 
 afterEach(async () => {
@@ -106,18 +106,18 @@ async function makeTrustedHttpsArtifact(archivePath: string, taskDir: string): P
     '-days',
     '1',
     '-subj',
-    '/CN=dsh-rsi-gate2-artifact',
+    '/CN=dsh-self-evolving-gate2-artifact',
     '-addext',
     `subjectAltName=IP:${gateway}`,
   ])
   const cert = await readFile(certPath)
   const archive = await readFile(archivePath)
-  await writeFile(join(taskDir, 'environment', 'rsi-local-ca.crt'), cert)
+  await writeFile(join(taskDir, 'environment', 'dsh-self-evolving-local-ca.crt'), cert)
   await writeFile(
     join(taskDir, 'environment', 'Dockerfile'),
     [
       'FROM ubuntu:24.04',
-      'COPY rsi-local-ca.crt /usr/local/share/ca-certificates/rsi-local-ca.crt',
+      'COPY dsh-self-evolving-local-ca.crt /usr/local/share/ca-certificates/dsh-self-evolving-local-ca.crt',
       'RUN apt-get update && apt-get install -y bash ca-certificates && update-ca-certificates',
       'WORKDIR /app',
       '',
@@ -125,7 +125,7 @@ async function makeTrustedHttpsArtifact(archivePath: string, taskDir: string): P
   )
 
   artifactServer = createServer({ key: await readFile(keyPath), cert }, (request, response) => {
-    if (request.method !== 'GET' || request.url !== '/dsh-rsi-acp.tar.gz') {
+    if (request.method !== 'GET' || request.url !== '/dsh-self-evolving-acp.tar.gz') {
       response.writeHead(404).end()
       return
     }
@@ -141,7 +141,7 @@ async function makeTrustedHttpsArtifact(archivePath: string, taskDir: string): P
     artifactServer!.listen(0, '0.0.0.0', done)
   })
   const address = artifactServer.address() as AddressInfo
-  return `https://${gateway}:${address.port}/dsh-rsi-acp.tar.gz`
+  return `https://${gateway}:${address.port}/dsh-self-evolving-acp.tar.gz`
 }
 
 async function findSingleTrial(jobDir: string): Promise<string> {
@@ -180,8 +180,8 @@ describe.skipIf(
           '    model: gate2-mock',
           "    persona: 'Gate 2 Harbor acceptance agent.'",
           '    workspaceContext: false',
-          '- id: rsi-candidate',
-          "  name: '@dsh-rsi/candidate-baseline'",
+          '- id: self-evolving-candidate',
+          "  name: '@dsh-self-evolving/candidate-baseline'",
           '  config:',
           `    candidateId: ${receipt.candidateId}`,
           '    mode: solve',
@@ -199,21 +199,21 @@ describe.skipIf(
       })
       const packed = await packAcpBinaryArchive(
         join(capsuleDir, 'runtime'),
-        join(scratch!, 'dsh-rsi-acp.tar.gz'),
+        join(scratch!, 'dsh-self-evolving-acp.tar.gz'),
       )
       const taskDir = join(scratch!, 'smoke-task')
       await cp(fixtureDir, taskDir, { recursive: true })
       const archiveUrl = await makeTrustedHttpsArtifact(packed.archivePath, taskDir)
       const registry = buildRegistryEntry({
         candidateId: receipt.candidateId,
-        agentName: 'dsh-rsi',
+        agentName: 'dsh-self-evolving',
         version: receipt.candidateId,
         archiveUrl,
         archiveSha256: packed.sha256,
-        cmd: './dsh-rsi-acp',
+        cmd: './dsh-self-evolving-acp',
       })
       const jobsDir = join(scratch!, 'jobs')
-      const jobName = `rsi-gate2-${receipt.candidateId.slice(0, 12)}`
+      const jobName = `dsh-self-evolving-gate2-${receipt.candidateId.slice(0, 12)}`
       const config = buildJobConfig({
         jobName,
         registryEntry: registry,
