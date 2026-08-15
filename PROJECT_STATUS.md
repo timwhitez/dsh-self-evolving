@@ -1,12 +1,16 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-15（Asia/Tokyo）**
 
-> **v0.2 release candidate:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
+> **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
 > successor proves an admitted child changes the preregistered solve replay while preserving propose replay.
 > Historical v0.1/v0.1.1 paths and hashes remain immutable predecessor evidence.
+
+v0.2 full regression passed 290/290 unit tests and 36 no-key E2E tests; all three credential-gated official-provider
+cases were also run separately and passed. The clean Apache-2.0 source archive passed checksums, no-Git fresh setup,
+exact upstream provenance, Loader/capsule smoke and CLI `init`/`status`.
 
 v0.2 provider/effectiveness 的最终对账见
 [`docs/audits/2026-08-15-v0.2-provider-effectiveness.md`](docs/audits/2026-08-15-v0.2-provider-effectiveness.md)。

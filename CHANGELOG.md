@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. This project uses semantic versioning for public releases.
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-08-15
 
 - Renamed the project, package scope, CLI, service, protocol identities and release artifacts to
   `dsh-self-evolving`.

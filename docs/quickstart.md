@@ -15,7 +15,7 @@ repository, config, candidate, command line, or durable evidence.
 
 ## Install from a source checkout
 
-The v0.1.1 release is source-archive-first. It does not publish a standalone npm package; the CLI depends on the
+The v0.2 release is source-archive-first. It does not publish a standalone npm package; the CLI depends on the
 pinned DSH and local workspace closure bootstrapped below.
 
 ```bash
