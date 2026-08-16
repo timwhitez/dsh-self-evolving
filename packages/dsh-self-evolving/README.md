@@ -10,7 +10,7 @@ installable as a DSH profile bundle:
 ```bash
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
-dsh plugin --profile headless add @dsh-self-evolving/core@0.2.2
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.3
 ```
 
 The bundle fails Config validation when the state root or run id is omitted, by design.

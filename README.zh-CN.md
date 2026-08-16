@@ -85,7 +85,7 @@ flowchart LR
 ```bash
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
-dsh plugin --profile headless add @dsh-self-evolving/core@0.2.2
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.3
 ```
 
 使用控制器优先走这条路径；开发、自托管或复现发布产物时再使用源码 checkout。

@@ -6,7 +6,7 @@ All notable changes are recorded here. This project uses semantic versioning for
 
 - Published `@dsh-self-evolving/candidate-baseline`, `@dsh-self-evolving/candidate-sdk`, and
   `@dsh-self-evolving/core` to npm; `core` installs with
-  `dsh plugin --profile headless add @dsh-self-evolving/core@0.2.2`.
+  `dsh plugin --profile headless add @dsh-self-evolving/core@0.2.3`.
 - Enriched the npm metadata for `@dsh-self-evolving/core` (repository, homepage, keywords, package README).
 - Made the npm install path the recommended README quick start, added npm badges and ecosystem links, and
   synchronized the Chinese/English documentation.
