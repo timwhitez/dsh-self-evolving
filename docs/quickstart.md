@@ -13,10 +13,21 @@ The stable demo uses `DEEPSEEK_API_KEY` only in the trusted host process and cal
 route. It does not read Codex credentials and does not default to CPA. Credentials are never copied into the
 repository, config, candidate, command line, or durable evidence.
 
+## Install the controller bundle from npm
+
+The controller bundle is published as `@dsh-self-evolving/core`. Provide an explicit state root and run id before
+installing into a headless profile, because omission fails Config validation by design:
+
+```bash
+export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
+export DSH_SELF_EVOLVING_RUN_ID=demo-1
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1
+```
+
 ## Install from a source checkout
 
-The v0.2 release is source-archive-first. It does not publish a standalone npm package; the CLI depends on the
-pinned DSH and local workspace closure bootstrapped below.
+Use the source checkout when you need the pinned DSH and the local workspace closure for development or
+self-hosting:
 
 ```bash
 corepack enable

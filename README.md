@@ -3,11 +3,13 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/timwhitez/dsh-self-evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/timwhitez/dsh-self-evolving/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.2.0--rc-2563eb)](https://github.com/timwhitez/dsh-self-evolving/releases/tag/dsh-self-evolving-v0.2.0)
+[![Release](https://img.shields.io/badge/release-v0.2.0-2563eb)](https://github.com/timwhitez/dsh-self-evolving/releases/tag/dsh-self-evolving-v0.2.0)
 [![License](https://img.shields.io/badge/license-Apache--2.0-0f766e)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![pnpm](https://img.shields.io/badge/pnpm-11.7-f69220?logo=pnpm&logoColor=white)](package.json)
 [![Tests](https://img.shields.io/badge/tests-291%20unit%20%7C%2036%20E2E-success)](docs/audits/2026-08-15-v0.2-provider-effectiveness.md)
+[![npm](https://img.shields.io/npm/v/%40dsh-self-evolving%2Fcore?color=cb3837&logo=npm)](https://www.npmjs.com/package/@dsh-self-evolving/core)
+[![npm downloads](https://img.shields.io/npm/dm/%40dsh-self-evolving%2Fcore?color=cb3837&logo=npm)](https://www.npmjs.com/package/@dsh-self-evolving/core)
 
 An evidence-first, crash-resumable self-evolution engine for
 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). It generates bounded Cordis plugin candidates,
@@ -77,15 +79,6 @@ See [Architecture overview](docs/architecture-overview.md) and the
 - Python 3.12, `uv`, and Bubblewrap
 - A DeepSeek API key for real model runs; local validation does not require one
 
-### Install from source
-
-```bash
-git clone https://github.com/timwhitez/dsh-self-evolving.git
-cd dsh-self-evolving
-corepack enable
-pnpm setup:source
-```
-
 ### Install the controller bundle from npm
 
 The controller is published on npm as `@dsh-self-evolving/core`. Install it into a headless profile with an
@@ -95,6 +88,18 @@ explicit state root and run id — omission fails Config validation by design:
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
 dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1
+```
+
+Prefer this path to use the controller. Use a source checkout for development, self-hosting, or reproducing the
+release artifacts.
+
+### Install from source (development)
+
+```bash
+git clone https://github.com/timwhitez/dsh-self-evolving.git
+cd dsh-self-evolving
+corepack enable
+pnpm setup:source
 ```
 
 `setup:source` installs this workspace and materializes the three upstream repositories at the exact commits in
@@ -185,6 +190,15 @@ frozen run manifest → specifications → operational docs → README → histo
 - K=10/K=80 search, sealed confirmation, full-set evaluation, and leaderboard submission are optional post-release
   profiles and are not part of the v0.2 acceptance claim.
 - This repository does not authorize financial trading or real-world order execution.
+
+## Ecosystem
+
+- Published on [npm](https://www.npmjs.com/package/@dsh-self-evolving/core) as `@dsh-self-evolving/core`.
+- Listed in [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) (merged).
+- Listed in [AdamPlatin123/awesome-dsh-plugins](https://github.com/AdamPlatin123/awesome-dsh-plugins) (merged).
+- Listed in [0xsline/awesome-deepseek-harness](https://github.com/0xsline/awesome-deepseek-harness) (merged).
+- Announcement: [DeepSeek Harness Discussion #2547](https://github.com/deepseek-ai/deepseek-harness/discussions/2547).
+- Discoverable through the GitHub [`dsh-plugin`](https://github.com/topics/dsh-plugin) and `dsh` topics.
 
 ## Contributing and security
 

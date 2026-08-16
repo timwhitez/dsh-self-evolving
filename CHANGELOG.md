@@ -2,6 +2,16 @@
 
 All notable changes are recorded here. This project uses semantic versioning for public releases.
 
+## Unreleased
+
+- Published `@dsh-self-evolving/candidate-baseline`, `@dsh-self-evolving/candidate-sdk`, and
+  `@dsh-self-evolving/core` to npm; `core` installs with
+  `dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1`.
+- Made the npm install path the recommended README quick start, added npm badges and ecosystem links, and
+  synchronized the Chinese/English documentation.
+- Replaced the stale “does not publish a standalone npm package” quickstart text with the pinned-source rationale
+  and documented the profile-bundle runtime variables.
+
 ## 0.2.0 - 2026-08-15
 
 - Renamed the project, package scope, CLI, service, protocol identities and release artifacts to

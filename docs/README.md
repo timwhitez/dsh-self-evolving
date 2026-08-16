@@ -5,11 +5,11 @@ short path that matches your task.
 
 ## Get started
 
-| Document                              | Use it for                                                                      |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| [Quickstart](quickstart.md)           | Supported environment, source setup, first run, resume, and effectiveness check |
-| [Configuration](configuration.md)     | Frozen profiles, limits, provider route, credentials, and state schemas         |
-| [Troubleshooting](troubleshooting.md) | Fail-closed diagnoses and safe recovery                                         |
+| Document                              | Use it for                                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| [Quickstart](quickstart.md)           | Supported environment, npm or source setup, first run, resume, and effectiveness check |
+| [Configuration](configuration.md)     | Frozen profiles, limits, provider route, credentials, and state schemas                |
+| [Troubleshooting](troubleshooting.md) | Fail-closed diagnoses and safe recovery                                                |
 
 ## Understand the system
 

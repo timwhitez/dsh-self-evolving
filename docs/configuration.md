@@ -51,3 +51,15 @@ pnpm effectiveness:official
 
 The gate preregisters target and preserved modes, admits both baseline and child, then compares fixed Loader replay
 digests. It proves a measurable runtime behavior delta only; it does not prove a Terminal-Bench score improvement.
+
+## Profile bundle runtime variables
+
+When the controller is installed as a profile bundle (`@dsh-self-evolving/core` via `dsh plugin add`), the bundle
+requires these environment variables before the profile starts; omission fails Config validation by design:
+
+| Variable                      | Purpose                        |
+| ----------------------------- | ------------------------------ |
+| `DSH_SELF_EVOLVING_STATE_DIR` | Private, no-replace state root |
+| `DSH_SELF_EVOLVING_RUN_ID`    | Unique identity of the run     |
+
+State directories are private evidence and must not be committed.

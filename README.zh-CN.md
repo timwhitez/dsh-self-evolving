@@ -3,11 +3,13 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/timwhitez/dsh-self-evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/timwhitez/dsh-self-evolving/actions/workflows/ci.yml)
-[![发布版本](https://img.shields.io/badge/release-v0.2.0--rc-2563eb)](https://github.com/timwhitez/dsh-self-evolving/releases/tag/dsh-self-evolving-v0.2.0)
+[![发布版本](https://img.shields.io/badge/release-v0.2.0-2563eb)](https://github.com/timwhitez/dsh-self-evolving/releases/tag/dsh-self-evolving-v0.2.0)
 [![许可证](https://img.shields.io/badge/license-Apache--2.0-0f766e)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![pnpm](https://img.shields.io/badge/pnpm-11.7-f69220?logo=pnpm&logoColor=white)](package.json)
 [![测试](https://img.shields.io/badge/tests-291%20unit%20%7C%2036%20E2E-success)](docs/audits/2026-08-15-v0.2-provider-effectiveness.md)
+[![npm](https://img.shields.io/npm/v/%40dsh-self-evolving%2Fcore?color=cb3837&logo=npm)](https://www.npmjs.com/package/@dsh-self-evolving/core)
+[![npm downloads](https://img.shields.io/npm/dm/%40dsh-self-evolving%2Fcore?color=cb3837&logo=npm)](https://www.npmjs.com/package/@dsh-self-evolving/core)
 
 一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的证据优先、可崩溃恢复的
 自我进化引擎。它生成受限的 Cordis 插件候选，通过真实 Loader 的隔离验收，使用 Harbor 评测，并保存
@@ -75,15 +77,6 @@ flowchart LR
 - Python 3.12、`uv` 与 Bubblewrap
 - 真实模型运行需要 DeepSeek API key；本地验证不需要 key
 
-### 从源码安装
-
-```bash
-git clone https://github.com/timwhitez/dsh-self-evolving.git
-cd dsh-self-evolving
-corepack enable
-pnpm setup:source
-```
-
 ### 从 npm 安装控制器 bundle
 
 控制器以 `@dsh-self-evolving/core` 发布到 npm。安装到 headless profile 时必须显式提供状态根目录与运行 ID，
@@ -93,6 +86,17 @@ pnpm setup:source
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
 dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1
+```
+
+使用控制器优先走这条路径；开发、自托管或复现发布产物时再使用源码 checkout。
+
+### 从源码安装（开发）
+
+```bash
+git clone https://github.com/timwhitez/dsh-self-evolving.git
+cd dsh-self-evolving
+corepack enable
+pnpm setup:source
 ```
 
 `setup:source` 会安装当前 workspace，并按照 [`provenance.lock.json`](provenance.lock.json) 固定的 commit
@@ -182,6 +186,15 @@ pnpm effectiveness:official
 - K=10/K=80、sealed confirmation、full-set 与 leaderboard submission 是发布后可选 profile，不属于
   v0.2 验收声明；
 - 本仓库不授权金融交易或任何真实订单执行。
+
+## 生态
+
+- 已发布到 [npm](https://www.npmjs.com/package/@dsh-self-evolving/core)：`@dsh-self-evolving/core`。
+- 已收录于 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)（已合并）。
+- 已收录于 [AdamPlatin123/awesome-dsh-plugins](https://github.com/AdamPlatin123/awesome-dsh-plugins)（已合并）。
+- 已收录于 [0xsline/awesome-deepseek-harness](https://github.com/0xsline/awesome-deepseek-harness)（已合并）。
+- 官方公告：[DeepSeek Harness Discussion #2547](https://github.com/deepseek-ai/deepseek-harness/discussions/2547)。
+- 可通过 GitHub [`dsh-plugin`](https://github.com/topics/dsh-plugin) 与 `dsh` topic 发现。
 
 ## 贡献与安全
 
