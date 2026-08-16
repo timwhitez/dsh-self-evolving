@@ -92,7 +92,7 @@ pnpm setup:source
 ```bash
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
-dsh plugin --profile headless add @dsh-self-evolving/core@0.2.0
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1
 ```
 
 `setup:source` 会安装当前 workspace，并按照 [`provenance.lock.json`](provenance.lock.json) 固定的 commit

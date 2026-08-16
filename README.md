@@ -94,7 +94,7 @@ explicit state root and run id — omission fails Config validation by design:
 ```bash
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
-dsh plugin --profile headless add @dsh-self-evolving/core@0.2.0
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1
 ```
 
 `setup:source` installs this workspace and materializes the three upstream repositories at the exact commits in
