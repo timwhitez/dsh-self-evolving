@@ -21,7 +21,7 @@ installing into a headless profile, because omission fails Config validation by 
 ```bash
 export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
 export DSH_SELF_EVOLVING_RUN_ID=demo-1
-dsh plugin --profile headless add @dsh-self-evolving/core@0.2.1
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.2
 ```
 
 ## Install from a source checkout

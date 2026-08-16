@@ -1,8 +1,28 @@
 {
   "name": "@dsh-self-evolving/core",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Trusted durable RSI controller: content-addressed object store, hash-chain journal, pure state reducer + snapshot, action saga, budget double-entry ledger. Crash-safe by construction; the filesystem is the source of truth (spec 06).",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "bundle",
+    "self-evolving",
+    "rsi",
+    "controller",
+    "journal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timwhitez/dsh-self-evolving.git",
+    "directory": "packages/dsh-self-evolving"
+  },
+  "homepage": "https://github.com/timwhitez/dsh-self-evolving#readme",
+  "bugs": {
+    "url": "https://github.com/timwhitez/dsh-self-evolving/issues"
+  },
   "main": "lib/index.js",
   "bin": {
     "dsh-self-evolving-status": "./lib/status-cli.js"
