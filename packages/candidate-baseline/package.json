@@ -1,7 +1,6 @@
 {
   "name": "@dsh-self-evolving/candidate-baseline",
   "version": "0.2.0",
-  "private": true,
   "type": "module",
   "description": "Stable baseline parent candidate. Namespace-form DSH bundle; loaded through the real Cordis Loader in Gate 0. Not a profile, not a generated candidate.",
   "main": "lib/index.js",
