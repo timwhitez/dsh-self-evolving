@@ -1,6 +1,6 @@
 {
   "name": "@dsh-self-evolving/candidate-sdk",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Candidate contract SDK: canonical tar/SHA-256 identity, manifest validation, policy scanner, deterministic builder harness, capsule packing. Trusted code (TCB-adjacent): candidates depend on its types but cannot override its validators.",

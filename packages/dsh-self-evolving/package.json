@@ -1,6 +1,6 @@
 {
   "name": "@dsh-self-evolving/core",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Trusted durable RSI controller: content-addressed object store, hash-chain journal, pure state reducer + snapshot, action saga, budget double-entry ledger. Crash-safe by construction; the filesystem is the source of truth (spec 06).",

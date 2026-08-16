@@ -86,6 +86,17 @@ corepack enable
 pnpm setup:source
 ```
 
+### Install the controller bundle from npm
+
+The controller is published on npm as `@dsh-self-evolving/core`. Install it into a headless profile with an
+explicit state root and run id — omission fails Config validation by design:
+
+```bash
+export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
+export DSH_SELF_EVOLVING_RUN_ID=demo-1
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.0
+```
+
 `setup:source` installs this workspace and materializes the three upstream repositories at the exact commits in
 [`provenance.lock.json`](provenance.lock.json). It refuses mismatched or dirty upstream checkouts.
 

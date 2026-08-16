@@ -84,6 +84,17 @@ corepack enable
 pnpm setup:source
 ```
 
+### 从 npm 安装控制器 bundle
+
+控制器以 `@dsh-self-evolving/core` 发布到 npm。安装到 headless profile 时必须显式提供状态根目录与运行 ID，
+缺失时 Config 校验会按设计 fail closed：
+
+```bash
+export DSH_SELF_EVOLVING_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dsh-self-evolving/demo-1"
+export DSH_SELF_EVOLVING_RUN_ID=demo-1
+dsh plugin --profile headless add @dsh-self-evolving/core@0.2.0
+```
+
 `setup:source` 会安装当前 workspace，并按照 [`provenance.lock.json`](provenance.lock.json) 固定的 commit
 物化三个上游仓库。上游 remote 不匹配或工作树不干净时会直接拒绝继续。
 
