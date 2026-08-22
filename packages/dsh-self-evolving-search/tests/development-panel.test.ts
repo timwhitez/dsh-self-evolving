@@ -34,6 +34,32 @@ describe('low-consumption development panel', () => {
     expect(panel.taskIds).toEqual([...panel.failureTaskIds, ...panel.regressionTaskIds])
   })
 
+  it('supports the default 1/0 request with exactly one failure and no passes', () => {
+    const panel = sampleLowConsumptionPanel(
+      [{ taskId: 'only-failure', reward: 0, stratum: 'hard|security' }],
+      { candidateId: 'candidate-minimal', masterSeed: 7n },
+    )
+    expect(panel.failureTaskIds).toEqual(['only-failure'])
+    expect(panel.regressionTaskIds).toEqual([])
+  })
+
+  it('supports a 1/1 request with exactly one task in each pool', () => {
+    const panel = sampleLowConsumptionPanel(
+      [
+        { taskId: 'only-failure', reward: 0, stratum: 'hard|security' },
+        { taskId: 'only-pass', reward: 1, stratum: 'easy|software' },
+      ],
+      {
+        candidateId: 'candidate-boundary',
+        masterSeed: 7n,
+        failureTasks: 1,
+        regressionTasks: 1,
+      },
+    )
+    expect(panel.failureTaskIds).toEqual(['only-failure'])
+    expect(panel.regressionTaskIds).toEqual(['only-pass'])
+  })
+
   it('is deterministic per candidate and varies its stream across candidates', () => {
     const first = sampleLowConsumptionPanel(outcomes, {
       candidateId: 'candidate-a',
@@ -51,7 +77,7 @@ describe('low-consumption development panel', () => {
     expect(other.selectionStream).not.toBe(first.selectionStream)
   })
 
-  it('fails closed when the frozen baseline has too few failures or passes', () => {
+  it('fails closed only when the requested pool sizes cannot be satisfied', () => {
     expect(() =>
       sampleLowConsumptionPanel(
         [
@@ -61,9 +87,19 @@ describe('low-consumption development panel', () => {
         { candidateId: 'candidate-a', masterSeed: 42n, failureTasks: 2, regressionTasks: 1 },
       ),
     ).toThrow(/at least 2 baseline-failed/)
-    expect(() => buildDevelopmentPools(outcomes.filter((row) => row.reward === 0))).toThrow(
-      /at least 1 baseline-passed/,
-    )
+    expect(() =>
+      sampleLowConsumptionPanel(
+        [{ taskId: 'fail-a', reward: 0, stratum: 'hard' }],
+        { candidateId: 'candidate-a', masterSeed: 42n, failureTasks: 1, regressionTasks: 1 },
+      ),
+    ).toThrow(/at least 1 baseline-passed/)
+  })
+
+  it('builds valid empty-sided pools without imposing a panel size', () => {
+    expect(buildDevelopmentPools(outcomes.filter((row) => row.reward === 0))).toEqual({
+      failed: outcomes.filter((row) => row.reward === 0),
+      passed: [],
+    })
   })
 
   it('rejects duplicate task outcomes instead of outcome-dependent resampling', () => {
