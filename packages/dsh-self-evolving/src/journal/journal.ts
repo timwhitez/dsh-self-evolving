@@ -3,9 +3,9 @@
  *
  * A single writer appends canonical JSON events to segmented files
  * (events-000001.jsonl, …). Each event carries previousHash + eventHash,
- * forming a tamper-evident chain. Segment close writes size/Merkle root; HEAD
- * records the last committed seq + hash and is updated atomically (tmp + dir
- * fsync).
+ * forming a tamper-evident chain. Segment bytes are the authoritative durable
+ * commit record; HEAD is an atomically updated acceleration index and may lag a
+ * valid durable suffix after a crash.
  *
  * Wall-clock `occurredAt` is audit-only; `seq` is the commit order and is the
  * only ordering that matters. The reducer never reads wall-clock time.
@@ -83,11 +83,23 @@ function segmentPath(j: Journal, seq: number): string {
   return join(j.journalDir, segmentName(seq))
 }
 
-export async function readHead(j: Journal): Promise<JournalHead | null> {
+async function readStoredHead(j: Journal): Promise<JournalHead | null> {
   const headPath = join(j.journalDir, 'HEAD')
   const raw = await readFile(headPath, 'utf8').catch(() => null)
   if (raw === null) return null
   return JSON.parse(raw) as JournalHead
+}
+
+/**
+ * Return the actual durable chain tail. A stale/missing stored HEAD is allowed
+ * when every durable segment event verifies; a forged or ahead HEAD is not.
+ */
+export async function readHead(j: Journal): Promise<JournalHead | null> {
+  const events = await readAll(j)
+  const tail = events.at(-1)
+  return tail === undefined
+    ? null
+    : { seq: tail.seq, eventHash: tail.eventHash, segment: segmentName(tail.seq) }
 }
 
 async function writeHead(j: Journal, head: JournalHead): Promise<void> {
@@ -112,8 +124,9 @@ async function writeHead(j: Journal, head: JournalHead): Promise<void> {
 }
 
 /**
- * Append an event to the journal, computing its hash from the current HEAD.
- * Returns the committed event (with seq + eventHash filled in).
+ * Append an event to the journal, computing its hash from the actual durable
+ * segment tail rather than trusting the HEAD acceleration index. Returns the
+ * committed event (with seq + eventHash filled in).
  *
  * This is the ONLY writer path. Callers must hold the single-writer lock.
  */
@@ -127,8 +140,9 @@ export async function append<P>(
   },
 ): Promise<JournalEvent<P>> {
   await mkdir(j.journalDir, { recursive: true })
-  const head = await readHead(j)
-  const seq = head === null ? 1 : head.seq + 1
+  const durableEvents = await readAll(j)
+  const durableTail = durableEvents.at(-1)
+  const seq = durableTail === undefined ? 1 : durableTail.seq + 1
   const eventWithoutHash: Omit<JournalEvent<P>, 'eventHash'> = {
     schemaVersion: 1,
     runId: j.runId,
@@ -140,7 +154,7 @@ export async function append<P>(
     correlationId: partial.correlationId,
     actor: partial.actor,
     payload: partial.payload,
-    previousHash: head === null ? null : head.eventHash,
+    previousHash: durableTail?.eventHash ?? null,
   }
   const eventHash = computeEventHash(eventWithoutHash)
   const event: JournalEvent<P> = { ...eventWithoutHash, eventHash }
@@ -148,7 +162,8 @@ export async function append<P>(
   const segmentFile = await open(segmentPath(j, seq), 'a', 0o600)
   try {
     await segmentFile.writeFile(line, { encoding: 'utf8' })
-    // The chain event must reach durable storage before HEAD can point at it.
+    // Once the complete chain event reaches durable storage, it is committed.
+    // HEAD may lag this point after a crash and is safely reconstructed.
     await segmentFile.sync()
   } finally {
     await segmentFile.close()
@@ -157,14 +172,30 @@ export async function append<P>(
   return event
 }
 
+function validateStoredHead(events: JournalEvent[], head: JournalHead | null): void {
+  if (head === null) return
+  if (!Number.isSafeInteger(head.seq) || head.seq <= 0) {
+    throw new Error('EVIDENCE_CORRUPT: HEAD has an invalid sequence')
+  }
+  const committed = events[head.seq - 1]
+  if (
+    committed === undefined ||
+    committed.seq !== head.seq ||
+    committed.eventHash !== head.eventHash ||
+    head.segment !== segmentName(head.seq)
+  ) {
+    throw new Error('EVIDENCE_CORRUPT: HEAD does not match a durable journal chain prefix')
+  }
+}
+
 /**
- * Read the entire journal in commit order. Verifies the hash chain; throws on
- * any break (EVIDENCE_CORRUPT, fail-closed).
+ * Read the entire durable journal in commit order. Verifies the hash chain;
+ * throws on any break (EVIDENCE_CORRUPT, fail-closed). The stored HEAD must
+ * match some durable chain prefix, but may lag a valid suffix after a crash.
  */
 export async function readAll(j: Journal): Promise<JournalEvent[]> {
   const events: JournalEvent[] = []
-  const head = await readHead(j)
-  if (head === null) return events
+  const storedHead = await readStoredHead(j)
   // Walk segments in order.
   const { readdir } = await import('node:fs/promises')
   let segmentFiles: string[]
@@ -173,6 +204,7 @@ export async function readAll(j: Journal): Promise<JournalEvent[]> {
       .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'))
       .sort()
   } catch {
+    validateStoredHead(events, storedHead)
     return events
   }
   let expectedPrev: string | null = null
@@ -197,15 +229,7 @@ export async function readAll(j: Journal): Promise<JournalEvent[]> {
       expectedSeq = ev.seq + 1
     }
   }
-  const tail = events.at(-1)
-  if (
-    tail === undefined ||
-    head.seq !== tail.seq ||
-    head.eventHash !== tail.eventHash ||
-    head.segment !== segmentName(tail.seq)
-  ) {
-    throw new Error('EVIDENCE_CORRUPT: HEAD does not match the durable journal chain tail')
-  }
+  validateStoredHead(events, storedHead)
   return events
 }
 
