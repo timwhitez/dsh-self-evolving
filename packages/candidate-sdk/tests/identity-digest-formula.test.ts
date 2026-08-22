@@ -15,24 +15,18 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
+/** Independent bit-string reference implementation for the test oracle. */
 function base32Prefix(bytes: Uint8Array, length = 26): string {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz234567'
-  let value = 0
-  let bits = 0
+  const bitString = [...bytes]
+    .map((byte) => byte.toString(2).padStart(8, '0'))
+    .join('')
   let output = ''
-  for (const byte of bytes) {
-    value = (value << 8) | byte
-    bits += 8
-    while (bits >= 5 && output.length < length) {
-      bits -= 5
-      output += alphabet[(value >>> bits) & 31]!
-    }
-    if (output.length === length) break
+  for (let offset = 0; output.length < length; offset += 5) {
+    const chunk = bitString.slice(offset, offset + 5).padEnd(5, '0')
+    output += alphabet[Number.parseInt(chunk, 2)]!
   }
-  if (bits > 0 && output.length < length) {
-    output += alphabet[(value << (5 - bits)) & 31]!
-  }
-  return output.slice(0, length)
+  return output
 }
 
 function expectedCandidateId(bytes: Uint8Array): string {
