@@ -86,6 +86,7 @@ describe('crash/replay fault-injection', () => {
 
   it('resume after a crash at the COLLECT boundary does not double-count the score', async () => {
     const j = journal()
+    await append(j, mk('candidate.admitted', { candidateId: 'c_x', canonicalParent: null }))
     await append(j, mk('action.planned', { actionId: 'act2', kind: 'evaluation' }))
     await append(j, mk('action.reserved', { actionId: 'act2', idempotencyKey: 'k2' }))
     await append(j, mk('action.launched', { actionId: 'act2', externalJobId: 'job-abc' }))
