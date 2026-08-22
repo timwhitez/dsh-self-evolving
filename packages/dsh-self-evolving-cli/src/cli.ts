@@ -10,6 +10,7 @@ import {
   V011_STABLE_DEMO_PROFILE,
   type InitConfigInput,
 } from './config.js'
+import { parseInitProfile } from './init-profile.js'
 import { runDoctor } from './doctor.js'
 import { readControllerStatus } from '@dsh-self-evolving/core'
 import { runStableDemo } from './engine.js'
@@ -53,6 +54,7 @@ async function sourceCommit(repoRoot: string): Promise<string> {
 async function main(): Promise<void> {
   const command = process.argv[2]
   if (command === 'init') {
+    const profile = parseInitProfile(option('--profile'))
     const repoRoot = resolve(option('--repo-root') ?? process.cwd())
     const input: InitConfigInput = {
       runId: required('--run-id'),
@@ -65,7 +67,7 @@ async function main(): Promise<void> {
         : { budgetUsd: Number(option('--budget-usd')) }),
     }
     const config =
-      option('--profile') === V011_STABLE_DEMO_PROFILE
+      profile === V011_STABLE_DEMO_PROFILE
         ? createV011DemoConfig(input)
         : createStableDemoConfig(input)
     const path = await initializeState(config)
