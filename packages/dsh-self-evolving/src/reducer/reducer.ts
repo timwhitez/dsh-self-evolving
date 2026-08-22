@@ -88,6 +88,12 @@ export function genesisState(): ControllerState {
   }
 }
 
+function compareObservations(left: ObservationRecord, right: ObservationRecord): number {
+  const leftKey = canonicalJson(left)
+  const rightKey = canonicalJson(right)
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+}
+
 /**
  * Apply one event to the state. Pure — returns a NEW state object.
  * Throws on a reducer-version mismatch or an event that violates invariants.
@@ -188,6 +194,7 @@ export function reduce(state: ControllerState, event: JournalEvent): ControllerS
         status: p.status,
         reward: p.reward,
       })
+      next.observations.sort(compareObservations)
       break
     }
     case 'candidate.locked': {
@@ -214,9 +221,20 @@ export function reduce(state: ControllerState, event: JournalEvent): ControllerS
   return next
 }
 
-/** Canonical state hash — proves full-replay == snapshot-resume. */
+/**
+ * Canonical derived-state hash. The journal cursor's sequence remains part of
+ * the state, but the chain-tail hash is checkpoint metadata and is normalized
+ * here: equivalent same-wave event sets have different valid chain tails when
+ * completion order differs. Set-like observations are sorted defensively so
+ * older snapshots or externally constructed states hash identically too.
+ */
 export function stateHash(state: ControllerState): string {
-  return 'sha256:' + createHash('sha256').update(canonicalJson(state)).digest('hex')
+  const canonicalState: ControllerState = {
+    ...state,
+    lastEventHash: null,
+    observations: [...state.observations].sort(compareObservations),
+  }
+  return 'sha256:' + createHash('sha256').update(canonicalJson(canonicalState)).digest('hex')
 }
 
 /**
