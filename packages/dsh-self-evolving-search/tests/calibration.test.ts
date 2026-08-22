@@ -29,13 +29,29 @@ function fakeTasks(n: number): TaskMeta[] {
 }
 
 describe('calibration splitter (spec 04 §3)', () => {
-  it('stratifies by (category, difficulty)', () => {
+  it('stratifies by (category, difficulty, allowInternet)', () => {
     const strata = stratify(fakeTasks(12))
     expect(strata.length).toBeGreaterThan(0)
     for (const s of strata) {
       expect(s.taskIds.length).toBeGreaterThan(0)
-      expect(s.key).toContain('|')
+      expect(s.key).toBe(`${s.category}|${s.difficulty}|${String(s.allowInternet)}`)
     }
+  })
+
+  it('keeps otherwise identical online and offline tasks in separate strata', () => {
+    const common = {
+      category: 'software-engineering',
+      difficulty: 'hard',
+      agentTimeoutSec: 900,
+    }
+    const strata = stratify([
+      { ...common, taskId: 'offline', allowInternet: false },
+      { ...common, taskId: 'online', allowInternet: true },
+    ])
+
+    expect(strata).toHaveLength(2)
+    expect(strata.map((stratum) => stratum.allowInternet)).toEqual([false, true])
+    expect(strata.map((stratum) => stratum.taskIds)).toEqual([['offline'], ['online']])
   })
 
   it('deterministicSplit produces exactly 48/12/29 for 89 tasks', () => {
@@ -45,7 +61,7 @@ describe('calibration splitter (spec 04 §3)', () => {
     for (const a of assignment) counts[a.label] += 1
     expect(counts['dev-observed']).toBe(SPLIT_SIZES.devObserved)
     expect(counts['dev-guard']).toBe(SPLIT_SIZES.devGuard)
-    expect(counts['sealed']).toBe(SPLIT_SIZES.sealed)
+    expect(counts.sealed).toBe(SPLIT_SIZES.sealed)
   })
 
   it('deterministicSplit is reproducible for the same seed', () => {
@@ -67,7 +83,9 @@ describe('calibration splitter (spec 04 §3)', () => {
     const sample = sampleCalibrationStratum(tasks, 1n, 1, 8)
     expect(sample.length).toBeLessThanOrEqual(8)
     // Each stratum contributes at most 1 task.
-    const strataSeen = new Set(sample.map((t) => `${t.category}|${t.difficulty}`))
+    const strataSeen = new Set(
+      sample.map((t) => `${t.category}|${t.difficulty}|${String(t.allowInternet)}`),
+    )
     expect(strataSeen.size).toBe(sample.length)
   })
 })
@@ -85,7 +103,6 @@ describe('budget model + CALIBRATION_INFEASIBLE gate (spec 07 §7)', () => {
   }
 
   it('predicts feasible when cost/wall are well under targets', () => {
-    // $0.05/trial, 60s/trial → total ~ (80*8+120+58)*0.05*1.2 + 40 ≈ $52 + $40 ≈ $92, wall ~ 738*60/4 ≈ 11min
     const budget = buildBudgetModel(samples(0.05, 60, 20))
     expect(budget.feasible).toBe(true)
     expect(budget.predictedP90CostUsd).toBeLessThan(500)
@@ -96,14 +113,12 @@ describe('budget model + CALIBRATION_INFEASIBLE gate (spec 07 §7)', () => {
   })
 
   it('flags CALIBRATION_INFEASIBLE when cost exceeds $500', () => {
-    // $0.50/trial → ~$738*0.5*1.2 + 40 ≈ $483... push higher to exceed
     const budget = buildBudgetModel(samples(0.8, 60, 20))
     expect(budget.feasible).toBe(false)
     expect(budget.reason).toMatch(/p90 cost/)
   })
 
   it('flags CALIBRATION_INFEASIBLE when wall exceeds 16h', () => {
-    // 3600s/trial → ~738*3600/4 ≈ 664200s ≈ 184h >> 16h
     const budget = buildBudgetModel(samples(0.01, 3600, 20))
     expect(budget.feasible).toBe(false)
     expect(budget.reason).toMatch(/p90 wall/)
