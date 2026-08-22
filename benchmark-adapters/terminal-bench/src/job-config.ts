@@ -107,7 +107,7 @@ export function buildJobConfig(input: JobConfigInput): HarborJobConfig {
         `job config: sensitive agent env ${key} is forbidden because Harbor exposes it in process arguments`,
       )
     }
-    if (value.includes('\u0000')) throw new Error(`job config: agent env ${key} contains NUL`)
+    if (value.includes('\0')) throw new Error(`job config: agent env ${key} contains NUL`)
   }
   for (const mount of input.environment?.mounts ?? []) {
     if (!mount.source.startsWith('/') || !mount.target.startsWith('/') || !mount.read_only) {
