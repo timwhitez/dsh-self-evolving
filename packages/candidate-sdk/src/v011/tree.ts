@@ -169,11 +169,74 @@ function changedLineCount(parent: string, child: string): number {
   return additions + removals
 }
 
+/**
+ * Remove only code-state comments and whitespace. Literal contents are copied
+ * verbatim so URL strings, comment-shaped strings, and template text remain
+ * behavior-significant. The scanner is intentionally conservative for complex
+ * template expressions: preserving extra bytes can reject a comment-only edit,
+ * but it cannot hide a real production change.
+ */
 function behaviorText(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '')
-    .replace(/\s+/g, '')
+  let output = ''
+  let index = 0
+  while (index < source.length) {
+    const current = source[index]!
+    const next = source[index + 1]
+
+    if (current === "'" || current === '"' || current === '`') {
+      const quote = current
+      output += current
+      index += 1
+      while (index < source.length) {
+        const literal = source[index]!
+        output += literal
+        index += 1
+        if (literal === '\\' && index < source.length) {
+          output += source[index]!
+          index += 1
+          continue
+        }
+        if (literal === quote) break
+      }
+      continue
+    }
+
+    if (current === '/' && next === '/') {
+      index += 2
+      while (index < source.length && source[index] !== '\n' && source[index] !== '\r') {
+        index += 1
+      }
+      continue
+    }
+
+    if (current === '/' && next === '*') {
+      index += 2
+      let closed = false
+      while (index < source.length) {
+        if (source[index] === '*' && source[index + 1] === '/') {
+          index += 2
+          closed = true
+          break
+        }
+        index += 1
+      }
+      if (!closed) {
+        // Invalid source will be rejected by the build; preserve a marker so an
+        // unterminated comment cannot normalize to unrelated valid code.
+        output += '/*'
+      }
+      continue
+    }
+
+    if (/\s/.test(current)) {
+      index += 1
+      continue
+    }
+
+    output += current
+    index += 1
+  }
+  return output
 }
 
 export async function deriveV011Operations(
