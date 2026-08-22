@@ -6,18 +6,18 @@
  *   1. write to a staging temp file;
  *   2. fsync the staging file (and its directory on publish);
  *   3. compute sha256 of the staged bytes;
- *   4. no-clobber rename/link into the final path;
- *   5. if the digest already exists, verify byte-for-byte equality.
+ *   4. reserve the immutable metadata binding;
+ *   5. no-clobber link into the final path;
+ *   6. if the digest already exists, verify byte-for-byte equality.
  *
- * Object refs record algorithm/digest/size/mediaType/label. Labels are fixed at
- * creation and can never be downgraded. A periodic scrub re-hashes every
- * reachable object; a mismatch is EVIDENCE_CORRUPT (fail-closed, never silent
- * repair from an untrusted URL).
+ * A crash after metadata reservation but before byte linking is an explicit,
+ * retryable incomplete publish, not evidence corruption. Retrying the same
+ * immutable reference completes it; a conflicting label/media binding remains
+ * fail-closed.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { link, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
 
 export type DataLabel = 'PUBLIC_SPEC' | 'DEV_OBSERVED' | 'GUARDED' | 'SEALED'
 
@@ -41,6 +41,15 @@ interface StoredObjectMetadata {
   mediaType: string
   label: DataLabel
   metadataHash: string
+}
+
+export class IncompleteObjectPublishError extends Error {
+  readonly code = 'OBJECT_PUBLISH_INCOMPLETE'
+
+  constructor(readonly digest: string) {
+    super(`object-store: publish is incomplete for object ${digest}`)
+    this.name = 'IncompleteObjectPublishError'
+  }
 }
 
 /** Two-level sharded path for a digest: objects/sha256/<aa>/<digest>. */
@@ -152,42 +161,47 @@ export async function publishBytes(
     }
     return ref
   }
-  // Stage → fsync → rename (no-clobber via link).
+
+  // Stage → fsync → reserve metadata → no-clobber link. Metadata reservation
+  // intentionally precedes bytes so concurrent publishers cannot relabel the
+  // same digest. Its crash-only intermediate state is explicitly recoverable.
   const stagingDir = join(store.root, 'objects', 'sha256', '.staging')
   await mkdir(stagingDir, { recursive: true })
   const stagingPath = join(stagingDir, `${digest}.${randomBytes(8).toString('hex')}.tmp`)
   const fh = await open(stagingPath, 'wx')
   try {
     await fh.writeFile(bytes)
-    await fh.sync() // fsync the staged file's data
+    await fh.sync()
   } finally {
     await fh.close()
   }
-  await mkdir(join(finalPath, '..'), { recursive: true })
-  // The immutable label/media binding wins before bytes become addressable.
-  // A crash between these steps leaves a detectable/retryable metadata-only
-  // record; it can never publish the same digest under a different label.
-  await publishMetadata(store, ref)
-  // no-clobber: link first (atomic on same fs); if it exists, verify.
+
   try {
-    await link(stagingPath, finalPath)
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-      // another writer won; verify equality and move on
-      const ok = await verifyEquality(stagingPath, finalPath)
-      if (!ok) {
-        throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`, {
-          cause: err,
+    await mkdir(join(finalPath, '..'), { recursive: true })
+    await publishMetadata(store, ref)
+    try {
+      await link(stagingPath, finalPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      // Another writer won after the initial stat. Both immutable metadata and
+      // bytes must match before this publication can be reused.
+      const existingMetadata = await readMetadata(store, digest)
+      if (JSON.stringify(existingMetadata) !== JSON.stringify(createMetadata(ref))) {
+        throw new Error(`EVIDENCE_CORRUPT: immutable metadata conflict for object ${digest}`, {
+          cause: error,
         })
       }
-    } else {
-      throw err
+      if (!(await verifyEquality(stagingPath, finalPath))) {
+        throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`, {
+          cause: error,
+        })
+      }
     }
+    await fsyncDir(join(finalPath, '..'))
+    return ref
+  } finally {
+    await rm(stagingPath, { force: true })
   }
-  await rm(stagingPath, { force: true })
-  // fsync the parent directory so the rename/link survives a crash.
-  await fsyncDir(join(finalPath, '..'))
-  return ref
 }
 
 async function verifyEqualityBytes(bytes: Uint8Array, path: string): Promise<boolean> {
@@ -227,11 +241,22 @@ async function fsyncDir(dir: string): Promise<void> {
 }
 
 /**
- * Read an object's bytes by digest. Throws if missing or corrupt.
+ * Read an object's bytes by digest. Throws a dedicated retryable error when a
+ * valid immutable metadata reservation exists but byte publication was
+ * interrupted. Throws EVIDENCE_CORRUPT for invalid metadata or byte corruption.
  */
 export async function readBytes(store: ObjectStore, digest: string): Promise<Uint8Array> {
   const { readFile } = await import('node:fs/promises')
-  const data = await readFile(digestPath(store.root, digest))
+  let data: Buffer
+  try {
+    data = await readFile(digestPath(store.root, digest))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const reserved = await stat(metadataPath(store.root, digest)).catch(() => null)
+    if (reserved === null) throw error
+    await readMetadata(store, digest)
+    throw new IncompleteObjectPublishError(digest)
+  }
   const metadata = await readMetadata(store, digest)
   // Integrity check on read.
   const actual = createHash('sha256').update(data).digest('hex')
@@ -255,8 +280,9 @@ export async function readRefBytes(store: ObjectStore, ref: ObjectRef): Promise<
 }
 
 /**
- * Scrub: re-hash every object under the store. Returns the list of corrupt
- * digests (empty = healthy). A non-empty result means EVIDENCE_CORRUPT.
+ * Scrub: re-hash every completed object under the store. Returns the list of
+ * corrupt digests (empty = healthy). A valid metadata-only reservation is an
+ * incomplete publish and remains retryable; invalid metadata is corruption.
  */
 export async function scrub(store: ObjectStore): Promise<string[]> {
   const corrupt = new Set<string>()
@@ -279,7 +305,12 @@ export async function scrub(store: ObjectStore): Promise<string[]> {
       } else if (e.isFile() && /^[0-9a-f]{64}\.meta\.json$/.test(e.name)) {
         const digest = e.name.slice(0, 64)
         if ((await stat(digestPath(store.root, digest)).catch(() => null)) === null) {
-          corrupt.add(digest)
+          try {
+            await readMetadata(store, digest)
+            // Valid metadata-only state: interrupted but recoverable publication.
+          } catch {
+            corrupt.add(digest)
+          }
         }
       }
     }
@@ -290,7 +321,7 @@ export async function scrub(store: ObjectStore): Promise<string[]> {
   return [...corrupt].sort()
 }
 
-/** Check whether a digest exists in the store. */
+/** Check whether completed object bytes exist in the store. */
 export async function exists(store: ObjectStore, digest: string): Promise<boolean> {
   return (await stat(digestPath(store.root, digest)).catch(() => null)) !== null
 }
