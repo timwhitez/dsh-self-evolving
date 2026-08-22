@@ -43,6 +43,38 @@ export interface ExportManifest {
   }
 }
 
+function sameImmutableRef(left: ObjectRef, right: ObjectRef): boolean {
+  return (
+    left.algorithm === right.algorithm &&
+    left.digest === right.digest &&
+    left.size === right.size &&
+    left.mediaType === right.mediaType &&
+    left.label === right.label
+  )
+}
+
+/**
+ * Reconcile caller-supplied references by digest before any label filtering.
+ * Exact duplicates are harmless and collapse to one row. A digest that appears
+ * with a different label, media type, size, or algorithm is contradictory
+ * immutable metadata and must fail closed; otherwise input order could relabel
+ * a guarded/sealed object in the materialized proposer view.
+ */
+export function reconcileExportObjectRefs(objects: ObjectRef[]): ObjectRef[] {
+  const byDigest = new Map<string, ObjectRef>()
+  for (const ref of objects) {
+    const existing = byDigest.get(ref.digest)
+    if (existing === undefined) {
+      byDigest.set(ref.digest, ref)
+      continue
+    }
+    if (!sameImmutableRef(existing, ref)) {
+      throw new Error(`proposal export: conflicting immutable refs for digest ${ref.digest}`)
+    }
+  }
+  return [...byDigest.values()]
+}
+
 /**
  * Build an export manifest from a candidate object set, filtering by label.
  * GUARDED and SEALED objects are NEVER included in a proposer export.
@@ -55,10 +87,11 @@ export function buildExport(input: {
   objects: ObjectRef[]
   createdFromStateHash: string | null
 }): ExportManifest {
+  const objects = reconcileExportObjectRefs(input.objects)
   const allowed = new Set(input.allowedLabels)
   const included: ExportEntry[] = []
   const excluded: string[] = []
-  for (const obj of input.objects) {
+  for (const obj of objects) {
     if (allowed.has(obj.label)) {
       included.push({ digest: obj.digest, label: obj.label, mediaType: obj.mediaType })
     } else {
@@ -79,7 +112,7 @@ export function buildExport(input: {
     createdFromStateHash: input.createdFromStateHash,
     merkleRoot,
     canaryAbsenceReceipt: {
-      checked: input.objects.length,
+      checked: objects.length,
       excluded: excluded.length,
       excludedHash,
     },
@@ -156,6 +189,7 @@ export async function materializeProposerExport(
   if ((await stat(output).catch(() => null)) !== null) {
     throw new Error(`proposal export: destination already exists: ${output}`)
   }
+  const objects = reconcileExportObjectRefs(input.objects)
   await mkdir(dirname(output), { recursive: true, mode: 0o700 })
   const staging = await mkdtemp(join(dirname(output), '.proposal-export-'))
   try {
@@ -164,15 +198,18 @@ export async function materializeProposerExport(
       principal: input.principal,
       purpose: 'candidate-expansion',
       allowedLabels: ['PUBLIC_SPEC', 'DEV_OBSERVED'],
-      objects: input.objects,
+      objects,
       createdFromStateHash: input.createdFromStateHash,
     })
     const objectDir = join(staging, 'objects')
     await mkdir(objectDir, { mode: 0o700 })
-    const refs = new Map(input.objects.map((ref) => [ref.digest, ref]))
+    const refs = new Map(objects.map((ref) => [ref.digest, ref]))
     for (const entry of manifest.objects) {
       const ref = refs.get(entry.digest)
       if (ref === undefined) throw new Error(`proposal export: missing ref ${entry.digest}`)
+      if (ref.label !== entry.label || ref.mediaType !== entry.mediaType) {
+        throw new Error(`proposal export: manifest/ref metadata mismatch for ${entry.digest}`)
+      }
       const bytes = await readRefBytes(input.store, ref)
       const file = await open(join(objectDir, entry.digest), 'wx', 0o400)
       try {
