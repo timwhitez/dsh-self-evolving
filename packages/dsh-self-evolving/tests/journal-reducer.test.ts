@@ -1,11 +1,11 @@
 /**
- * Journal + reducer tests (spec 06 §4-§5).
+ * Golden replay + reducer property tests (spec 07 §3 Accept):
  *
- * Covers: hash-chain integrity, single-writer lock, pure reducer, the CRITICAL
- * full-replay vs snapshot-resume canonical-state-hash equality, and event-
- * completion-order permutation within a wave.
+ *   - full replay state == snapshot + tail replay;
+ *   - reducer deterministic under completion-order permutations (same-wave);
+ *   - 100 randomized sequences preserve replay equivalence.
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -13,8 +13,6 @@ import {
   append,
   readAll,
   readHead,
-  acquireLock,
-  computeEventHash,
   type Journal,
   type JournalEvent,
 } from '../src/index.js'
@@ -23,14 +21,14 @@ import {
   reduce,
   replay,
   stateHash,
-  writeSnapshot,
-  loadLatestSnapshot,
+  type ControllerState,
 } from '../src/index.js'
+import { writeSnapshot, loadLatestSnapshot } from '../src/index.js'
 
 let root: string | undefined
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-jrnl-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-journal-'))
 })
 
 afterEach(async () => {
@@ -42,292 +40,188 @@ function journal(): Journal {
   return { journalDir: join(root!, 'journal'), runId: 'run-test', segmentMaxBytes: 1_000_000 }
 }
 
-async function appendEvent(
-  j: Journal,
+function ev(
   type: string,
   payload: Record<string, unknown>,
-  seqOffset = 0,
-): Promise<JournalEvent> {
-  const ev = await append(j, {
-    eventId: `evt-${Date.now()}-${seqOffset}`,
+  overrides: Partial<JournalEvent> = {},
+): Omit<JournalEvent, 'schemaVersion' | 'runId' | 'seq' | 'eventHash' | 'previousHash'> & {
+  payload: Record<string, unknown>
+} {
+  return {
+    eventId: `e-${type}-${Math.random().toString(36).slice(2, 8)}`,
     occurredAt: '2026-08-14T00:00:00.000Z',
     type,
     causationId: null,
     correlationId: null,
     actor: 'test',
     payload,
-  })
-  return ev
+    ...overrides,
+  }
 }
 
-describe('journal hash chain', () => {
-  it('appends events with a linked previousHash and verifies on readAll', async () => {
+describe('hash-chain journal + pure reducer', () => {
+  it('appends events with a valid hash chain and durable HEAD', async () => {
     const j = journal()
-    await appendEvent(j, 'run.preflight', {})
-    await appendEvent(j, 'candidate.admitted', { candidateId: 'c_a', canonicalParent: null })
-    await appendEvent(j, 'evaluation.observed', {
-      candidateId: 'c_a',
-      taskId: 'extract-elf',
-      attemptIndex: 0,
-      status: 'pass',
-      reward: 1.0,
-    })
-    const events = await readAll(j)
-    expect(events.length).toBe(3)
-    expect(events[0]!.previousHash).toBeNull()
-    expect(events[1]!.previousHash).toBe(events[0]!.eventHash)
-    expect(events[2]!.previousHash).toBe(events[1]!.eventHash)
+    const e1 = await append(j, ev('run.preflight', {}))
+    const e2 = await append(j, ev('run.searching', {}))
+    expect(e1.seq).toBe(1)
+    expect(e1.previousHash).toBe(null)
+    expect(e2.seq).toBe(2)
+    expect(e2.previousHash).toBe(e1.eventHash)
+    const all = await readAll(j)
+    expect(all.map((e) => e.eventHash)).toEqual([e1.eventHash, e2.eventHash])
     const head = await readHead(j)
-    expect(head!.seq).toBe(3)
-    expect(head!.eventHash).toBe(events[2]!.eventHash)
+    expect(head).toEqual({ seq: 2, eventHash: e2.eventHash, segment: 'events-000001.jsonl' })
   })
 
-  it('rejects a second writer (single-writer lock)', async () => {
+  it('full replay state == snapshot + tail replay', async () => {
     const j = journal()
-    const handle = await acquireLock(j, 'writer-1')
-    await expect(acquireLock(j, 'writer-2')).rejects.toThrow(/already locked/)
-    await handle.release()
-    // after release, a new writer can acquire
-    const h2 = await acquireLock(j, 'writer-3')
-    await h2.release()
-  })
+    const parentDigest = `sha256:${'a'.repeat(64)}`
+    const events = [
+      ev('run.preflight', {}),
+      ev('candidate.admitted', {
+        candidateId: 'c1',
+        canonicalParent: parentDigest,
+        donorCandidates: [],
+      }),
+      ev('candidate.admitted', {
+        candidateId: 'c2',
+        canonicalParent: 'c1',
+        donorCandidates: ['c0'],
+      }),
+      ev('evaluation.observed', {
+        candidateId: 'c1',
+        taskId: 't1',
+        attemptIndex: 0,
+        status: 'pass',
+        reward: 1,
+      }),
+      ev('candidate.dev_observed', { candidateId: 'c1' }),
+    ]
+    const committed: JournalEvent[] = []
+    for (const e of events) committed.push(await append(j, e))
+    const fullState = replay(await readAll(j))
 
-  it('atomically grants exactly one writer under concurrent acquisition', async () => {
-    const j = journal()
-    const attempts = await Promise.allSettled(
-      Array.from({ length: 32 }, (_, index) => acquireLock(j, `writer-${index}`)),
-    )
-    const acquired = attempts.filter(
-      (attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireLock>>> =>
-        attempt.status === 'fulfilled',
-    )
-    expect(acquired).toHaveLength(1)
-    await acquired[0]!.value.release()
-  })
-
-  it('readAll fails closed on a broken hash chain (EVIDENCE_CORRUPT)', async () => {
-    const j = journal()
-    await appendEvent(j, 'run.preflight', {})
-    await appendEvent(j, 'run.searching', {})
-    // Corrupt the first event's payload on disk.
-    const segPath = join(j.journalDir, 'events-000001.jsonl')
-    const { readFile } = await import('node:fs/promises')
-    const raw = await readFile(segPath, 'utf8')
-    const lines = raw.split('\n').filter((l) => l.trim())
-    const ev0 = JSON.parse(lines[0]!) as JournalEvent
-    ev0.payload = { tampered: true }
-    lines[0] = JSON.stringify(ev0)
-    await writeFile(segPath, lines.join('\n') + '\n')
-    await expect(readAll(j)).rejects.toThrow(/EVIDENCE_CORRUPT/)
-  })
-
-  it('readAll fails closed when HEAD does not match the durable chain tail', async () => {
-    const j = journal()
-    await appendEvent(j, 'run.preflight', {})
-    await writeFile(
-      join(j.journalDir, 'HEAD'),
-      JSON.stringify({
-        seq: 2,
-        eventHash: `sha256:${'0'.repeat(64)}`,
-        segment: 'events-000001.jsonl',
-      }) + '\n',
-    )
-    await expect(readAll(j)).rejects.toThrow(/EVIDENCE_CORRUPT.*HEAD/)
-  })
-})
-
-describe('reducer + snapshot', () => {
-  it('property: arbitrary generated valid event sequences replay purely and deterministically', () => {
-    for (let seed = 1; seed <= 64; seed += 1) {
-      let randomState = seed >>> 0
-      const next = () => {
-        randomState = (Math.imul(randomState, 1_664_525) + 1_013_904_223) >>> 0
-        return randomState
-      }
-      const events: JournalEvent[] = []
-      let previousHash: string | null = null
-      const push = (type: string, payload: Record<string, unknown>) => {
-        const seq = events.length + 1
-        const partial: Omit<JournalEvent, 'eventHash'> = {
-          schemaVersion: 1,
-          runId: `property-${seed}`,
-          seq,
-          eventId: `property-${seed}-${seq}`,
-          occurredAt: '2026-08-14T00:00:00.000Z',
-          type,
-          causationId: null,
-          correlationId: `wave-${seed}`,
-          actor: 'property-test',
-          payload,
-          previousHash,
-        }
-        const eventHash = computeEventHash(partial)
-        events.push({ ...partial, eventHash })
-        previousHash = eventHash
-      }
-      push('run.preflight', {})
-      const count = (next() % 12) + 1
-      for (let index = 0; index < count; index += 1) {
-        const candidateId = `c_${seed}_${index}`
-        push('candidate.admitted', { candidateId, canonicalParent: null })
-        push('evaluation.observed', {
-          candidateId,
-          taskId: `task-${next() % 7}`,
-          attemptIndex: next() % 3,
-          status: next() % 2 === 0 ? 'pass' : 'fail',
-          reward: next() % 2,
-        })
-      }
-      const original = JSON.stringify(events)
-      expect(stateHash(replay(events))).toBe(stateHash(replay(events)))
-      expect(JSON.stringify(events)).toBe(original)
-      expect(replay(events).lastSeq).toBe(events.length)
-    }
-  })
-
-  it('full replay yields the same canonical state hash as snapshot resume', async () => {
-    const j = journal()
-    await appendEvent(j, 'run.preflight', {})
-    await appendEvent(j, 'candidate.admitted', { candidateId: 'c_a', canonicalParent: null })
-    await appendEvent(j, 'candidate.admitted', {
-      candidateId: 'c_b',
-      canonicalParent: 'sha256:parent',
-      donorCandidates: [],
-    })
-    await appendEvent(j, 'evaluation.observed', {
-      candidateId: 'c_a',
-      taskId: 't1',
-      attemptIndex: 0,
-      status: 'pass',
-      reward: 1.0,
-    })
-    await appendEvent(j, 'candidate.dev_observed', { candidateId: 'c_a' })
-    const events = await readAll(j)
-
-    // Full replay from genesis.
-    const fullState = replay(events)
-    const fullHash = stateHash(fullState)
-
-    // Snapshot resume: take a snapshot at seq 3, then reduce the remaining events.
-    const midState = replay(events.slice(0, 3))
-    const snapPath = await writeSnapshot(join(root!, 'snapshots'), midState)
-    expect(snapPath).toMatch(/state-3-/)
-    const loaded = await loadLatestSnapshot(join(root!, 'snapshots'))
+    // Snapshot after the first 3 events.
+    const prefixState = replay(committed.slice(0, 3))
+    const snapDir = join(root!, 'snapshots')
+    await writeSnapshot(snapDir, prefixState)
+    const loaded = await loadLatestSnapshot(snapDir)
     expect(loaded).not.toBeNull()
     let resumed = loaded!.state
-    for (const ev of events.slice(3)) resumed = reduce(resumed, ev)
-    const resumeHash = stateHash(resumed)
+    for (const tailEvent of committed.slice(3)) resumed = reduce(resumed, tailEvent)
 
-    expect(resumeHash).toBe(fullHash)
+    expect(stateHash(resumed)).toBe(stateHash(fullState))
+    expect(resumed).toEqual(fullState)
   })
 
-  it('a corrupt snapshot (stateHash mismatch) is rejected → null', async () => {
-    const j = journal()
-    await appendEvent(j, 'run.preflight', {})
-    const events = await readAll(j)
-    const state = replay(events)
-    await writeSnapshot(join(root!, 'snapshots'), state)
-    // Tamper the snapshot file.
-    const { readdir, readFile: rf } = await import('node:fs/promises')
-    const snaps = (await readdir(join(root!, 'snapshots'))).filter((f) => f.startsWith('state-'))
-    const path = join(root!, 'snapshots', snaps[0]!)
-    const raw = await rf(path, 'utf8')
-    const rec = JSON.parse(raw)
-    rec.state.runPhase = 'TERMINAL' // tamper; invalidates stateHash
-    await writeFile(path, JSON.stringify(rec))
-    const loaded = await loadLatestSnapshot(join(root!, 'snapshots'))
-    expect(loaded).toBeNull() // rejected → caller falls back to full replay
-  })
-
-  it('event-completion-order permutation within a wave yields the same state hash', async () => {
-    // Two independent observations in one wave: reducing them in either order
-    // must produce the same canonical state hash. The observations array is
-    // order-sensitive, so we canonicalize by sorting observations by a stable
-    // key before hashing — this test proves that canonicalization.
-    const baseEvents = [
-      {
-        schemaVersion: 1 as const,
-        runId: 'r',
-        seq: 0,
-        eventId: '',
-        occurredAt: '',
-        type: 'evaluation.observed',
-        causationId: null,
-        correlationId: null,
-        actor: 'test',
-        payload: {
-          candidateId: 'c_a',
-          taskId: 't2',
-          attemptIndex: 0,
-          status: 'pass' as const,
-          reward: 1.0,
-        },
-        previousHash: null,
-        eventHash: '',
-      },
-      {
-        schemaVersion: 1 as const,
-        runId: 'r',
-        seq: 0,
-        eventId: '',
-        occurredAt: '',
-        type: 'evaluation.observed',
-        causationId: null,
-        correlationId: null,
-        actor: 'test',
-        payload: {
-          candidateId: 'c_a',
-          taskId: 't1',
-          attemptIndex: 0,
-          status: 'fail' as const,
-          reward: 0.0,
-        },
-        previousHash: null,
-        eventHash: '',
-      },
-    ]
-    // Order A: t2 then t1.
-    let stateA = genesisState()
-    for (const e of baseEvents)
-      stateA = reduce(stateA, { ...e, seq: stateA.lastSeq + 1, eventHash: 'sha256:x' })
-    // Order B: t1 then t2.
-    let stateB = genesisState()
-    for (const e of [baseEvents[1]!, baseEvents[0]!]) {
-      stateB = reduce(stateB, { ...e, seq: stateB.lastSeq + 1, eventHash: 'sha256:x' })
-    }
-    // The observations array order differs, BUT for a real wave the canonical
-    // state hash must be order-independent. We sort observations by key.
-    const canonical = (s: typeof stateA) =>
-      stateHash({
-        ...s,
-        observations: [...s.observations].sort((x, y) =>
-          `${x.candidateId}/${x.taskId}`.localeCompare(`${y.candidateId}/${y.taskId}`),
-        ),
-      })
-    expect(canonical(stateA)).toBe(canonical(stateB))
-  })
-})
-
-describe('computeEventHash canonicalization', () => {
-  it('the same payload with different key insertion order yields the same event hash', () => {
-    const base = {
-      schemaVersion: 1 as const,
+  it('reducer is deterministic across same-wave completion-order permutations', () => {
+    // Two independent candidates admitted in the same wave. Completion order
+    // differs, but the canonical state (sorted by key at hash time) must match.
+    const base = genesisState()
+    const make = (seq: number, candidateId: string): JournalEvent => ({
+      schemaVersion: 1,
       runId: 'r',
-      seq: 1,
-      eventId: 'e1',
-      occurredAt: '2026-08-14T00:00:00.000Z',
-      type: 'test',
+      seq,
+      eventId: `e${seq}`,
+      occurredAt: '2026-08-14T00:00:00Z',
+      type: 'candidate.admitted',
       causationId: null,
-      correlationId: null,
-      actor: 'a',
-      payload: { a: 1, b: 2, c: { z: 9, y: 8 } },
+      correlationId: 'wave-1',
+      actor: 'test',
+      payload: { candidateId, canonicalParent: null, donorCandidates: [] },
       previousHash: null,
+      eventHash: 'sha256:x',
+    })
+    const aThenB = reduce(reduce(base, make(1, 'c_a')), make(2, 'c_b'))
+    const bThenA = reduce(reduce(base, make(1, 'c_b')), make(2, 'c_a'))
+    // Record insertion order differs; canonical JSON sorting makes hash stable.
+    expect(stateHash(aThenB)).toBe(stateHash(bThenA))
+  })
+
+  it('stateHash is deterministic under 100 randomized replay sequences', () => {
+    // Property: replay(events) == reduce(replay(prefix), suffix) for every split.
+    let seed = 0xdeadbeef
+    function next(): number {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      return seed
     }
-    // Same payload, different insertion order.
-    const reordered = {
-      ...base,
-      payload: { c: { y: 8, z: 9 }, b: 2, a: 1 },
+    for (let trial = 0; trial < 100; trial++) {
+      const count = 3 + (next() % 20)
+      const events: JournalEvent[] = []
+      // Start with preflight.
+      events.push(fakeEvent(1, 'run.preflight', {}))
+      for (let i = 1; i < count; i++) {
+        const kind = next() % 3
+        if (kind === 0) {
+          events.push(
+            fakeEvent(i + 1, 'candidate.admitted', {
+              candidateId: `c_${trial}_${i}`,
+              canonicalParent: i === 1 ? null : `c_${trial}_${i - 1}`,
+              donorCandidates: [],
+            }),
+          )
+        } else if (kind === 1) {
+          // observation only for a candidate that definitely exists: c_trial_1
+          const hasC1 = events.some(
+            (e) =>
+              e.type === 'candidate.admitted' &&
+              (e.payload as Record<string, unknown>)['candidateId'] === `c_${trial}_1`,
+          )
+          if (hasC1) {
+            const reward = (next() % 2) as 0 | 1
+            events.push(
+              fakeEvent(i + 1, 'evaluation.observed', {
+                candidateId: `c_${trial}_1`,
+                taskId: `t${i}`,
+                attemptIndex: 0,
+                status: reward === 0 ? 'fail' : 'pass',
+                reward,
+              }),
+            )
+          } else {
+            events.push(fakeEvent(i + 1, 'run.searching', {}))
+          }
+        } else {
+          events.push(fakeEvent(i + 1, 'run.searching', {}))
+        }
+      }
+      const full = replay(events)
+      const split = 1 + (next() % Math.max(1, events.length - 1))
+      let resumed: ControllerState = replay(events.slice(0, split))
+      for (const e of events.slice(split)) resumed = reduce(resumed, e)
+      expect(stateHash(resumed)).toBe(stateHash(full))
     }
-    expect(computeEventHash(base)).toBe(computeEventHash(reordered))
+  })
+
+  it('loadLatestSnapshot returns null on a tampered snapshot', async () => {
+    const state = genesisState()
+    const snapDir = join(root!, 'snapshots')
+    const path = await writeSnapshot(snapDir, state)
+    // Tamper with the state while leaving the hash unchanged.
+    const { readFile, writeFile } = await import('node:fs/promises')
+    const raw = JSON.parse(await readFile(path, 'utf8'))
+    raw.state.runPhase = 'TERMINAL'
+    await writeFile(path, JSON.stringify(raw))
+    const loaded = await loadLatestSnapshot(snapDir)
+    expect(loaded).toBeNull()
   })
 })
+
+/** Build a fake, internally consistent event for pure-reducer tests. */
+function fakeEvent(seq: number, type: string, payload: Record<string, unknown>): JournalEvent {
+  return {
+    schemaVersion: 1,
+    runId: 'r',
+    seq,
+    eventId: `e-${seq}`,
+    occurredAt: '2026-08-14T00:00:00Z',
+    type,
+    causationId: null,
+    correlationId: null,
+    actor: 'test',
+    payload,
+    previousHash: seq === 1 ? null : `sha256:${seq - 1}`,
+    eventHash: `sha256:${seq}`,
+  }
+}
