@@ -26,6 +26,7 @@ export const STABLE_DEMO_TRIAL_PLAN = Object.freeze({
   total: 15,
 })
 
+/** Validate and partition the frozen baseline outcomes without imposing a panel size. */
 export function buildDevelopmentPools(outcomes: BaselineTaskOutcome[]): DevelopmentPools {
   const seen = new Set<string>()
   for (const row of outcomes) {
@@ -35,13 +36,10 @@ export function buildDevelopmentPools(outcomes: BaselineTaskOutcome[]): Developm
     if (seen.has(row.taskId)) throw new Error(`duplicate baseline task outcome: ${row.taskId}`)
     seen.add(row.taskId)
   }
-  const failed = outcomes.filter((row) => row.reward === 0).sort(byTaskId)
-  const passed = outcomes.filter((row) => row.reward === 1).sort(byTaskId)
-  if (failed.length < 2)
-    throw new Error('low-consumption panel requires at least 2 baseline-failed tasks')
-  if (passed.length < 1)
-    throw new Error('low-consumption panel requires at least 1 baseline-passed task')
-  return { failed, passed }
+  return {
+    failed: outcomes.filter((row) => row.reward === 0).sort(byTaskId),
+    passed: outcomes.filter((row) => row.reward === 1).sort(byTaskId),
+  }
 }
 
 export function sampleLowConsumptionPanel(
