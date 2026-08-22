@@ -31,9 +31,7 @@ const SCHEMAS: Record<V011SchemaKind, string> = {
 const here = dirname(fileURLToPath(import.meta.url))
 function schemaRoot(): string {
   const injected = process.env['DSH_SELF_EVOLVING_V011_SCHEMA_ROOT']
-  return injected === undefined
-    ? resolve(here, '..', '..', '..', '..', 'schemas')
-    : resolve(injected)
+  return injected === undefined ? resolve(here, '..', '..', 'schemas') : resolve(injected)
 }
 const validators = new Map<V011SchemaKind, ValidateFunction>()
 let citationSchema: object | undefined
