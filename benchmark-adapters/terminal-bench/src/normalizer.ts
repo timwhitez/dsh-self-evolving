@@ -1,227 +1,244 @@
 /**
- * Per-trial result normalizer (spec 07 §4 Accept).
+ * Harbor trial result normalizer (spec 04 §4; spec 06 §9).
  *
- * A TB trial produces a Harbor job artifact tree. This module normalizes one
- * trial's raw artifacts into a content-addressed, canonical record. The rules
- * are fail-closed (spec 07 §1 rule 7):
- *
- *   - a planned trial whose result.json / reward / trajectory / candidate hash
- *     is missing, corrupt, unattributable or timed out is an explicit FAIL —
- *     it NEVER silently disappears from the denominator;
- *   - only pre-registered, reward-independent infrastructure classifications
- *     may be retried; everything else counts;
- *   - the normalized record is deterministic: re-parsing the same raw artifacts
- *     yields the same SHA-256.
+ * Reads a Harbor trial directory (result.json, reward.txt, agent/trajectory.json,
+ * verifier/...), validates required artifacts and task/candidate attribution,
+ * and emits one deterministic NormalizedTrialRecord. Infrastructure failures are
+ * NEVER scored as reward=0; they are status=invalid and excluded from Bernoulli
+ * statistics. Only pass/fail with reward in {0,1} enter search stats.
  */
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export type TrialStatus = 'pass' | 'fail' | 'invalid'
+export type InfraFailureReason =
+  | 'timeout'
+  | 'oom'
+  | 'image-build-failure'
+  | 'network-outage'
+  | 'artifact-corruption'
+  | 'provider-failure'
+  | 'verifier-error'
+  | 'unknown'
 
-/** The only classifications eligible for retry (spec 07 §1 rule 7). */
-export type InfraClass = 'docker-build-error' | 'network-pull-error' | 'oom-crash' | null
-
-export interface RawTrialArtifacts {
-  /** Path to the Harbor job trial directory (e.g. jobs/<job>/<trial-xyz>). */
-  trialDir: string
-  /** The candidate identity this trial was planned for (never inferred from artifacts). */
-  expectedCandidateId: string
-  /** The task id this trial was planned for. */
-  taskId: string
-  /** Require Harbor's real ACP/ATIF evidence set, not a script stand-in. */
-  requireAcpEvidence?: boolean
+export interface ArtifactRef {
+  algorithm: 'sha256'
+  digest: string
+  size: number
+  mediaType: string
 }
 
-export interface NormalizedTrial {
-  /** Canonical trial key: candidateId/taskId/attemptIndex. */
-  key: string
+export interface NormalizedTrialRecord {
+  schemaVersion: 1
+  trialKey: string
   taskId: string
   candidateId: string | null
   attemptIndex: number | null
   status: TrialStatus
-  /** 0.0/1.0 reward; null when unattributable (→ invalid). */
-  reward: number | null
-  /** sha256 of the trajectory file, or null when missing (→ invalid). */
-  trajectoryHash: string | null
-  /** Hashes of Harbor's raw ACP wire events and summary. */
-  acpEventsHash: string | null
-  acpSummaryHash: string | null
-  /** sha256 of the normalized record itself (content-addressed). */
-  recordHash: string
-  /** True if the trial is retry-eligible per the infra classification. */
-  retryEligible: boolean
-  infraClass: InfraClass
-  /** Human-readable reason for the assigned status. */
-  reason: string
+  reward: 0 | 1 | null
+  infraFailureReason: InfraFailureReason | null
+  invalidReason: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  wallSec: number | null
+  artifacts: {
+    result: ArtifactRef | null
+    reward: ArtifactRef | null
+    trajectory: ArtifactRef | null
+    verifier: ArtifactRef[]
+  }
+  sourceDir: string
 }
 
-async function hashFile(path: string): Promise<string | null> {
+export interface NormalizeInput {
+  trialDir: string
+  expectedCandidateId: string
+  expectedTaskId: string
+  attemptIndex: number
+  /** Optional candidate artifact dir containing candidate-attribution.json. */
+  candidateArtifactDir?: string
+}
+
+interface HarborResult {
+  task_id?: string
+  started_at?: string
+  finished_at?: string
+  agent_execution?: { started_at?: string; finished_at?: string; exception_info?: unknown }
+  verifier_execution?: { started_at?: string; finished_at?: string; exception_info?: unknown }
+  reward?: number | null
+}
+
+async function fileRef(path: string, mediaType: string): Promise<ArtifactRef | null> {
   try {
-    const data = await readFile(path)
-    return createHash('sha256').update(data).digest('hex')
+    const content = await readFile(path)
+    const s = await stat(path)
+    return {
+      algorithm: 'sha256',
+      digest: createHash('sha256').update(content).digest('hex'),
+      size: s.size,
+      mediaType,
+    }
   } catch {
     return null
   }
 }
 
-async function readJsonOrNull(path: string): Promise<unknown | null> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8'))
-  } catch {
-    return null
-  }
+function parseReward(text: string): number | null {
+  const n = Number(text.trim())
+  return Number.isFinite(n) ? n : null
 }
 
-async function firstHash(paths: string[]): Promise<string | null> {
-  for (const path of paths) {
-    const hash = await hashFile(path)
-    if (hash !== null) return hash
-  }
-  return null
-}
-
-async function firstJson(paths: string[]): Promise<unknown | null> {
-  for (const path of paths) {
-    const parsed = await readJsonOrNull(path)
-    if (parsed !== null) return parsed
-  }
-  return null
+function classifyInfra(result: HarborResult | null, resultText: string | null): InfraFailureReason {
+  const haystack = `${resultText ?? ''} ${JSON.stringify(result ?? {})}`.toLowerCase()
+  if (haystack.includes('timeout') || haystack.includes('timed out')) return 'timeout'
+  if (haystack.includes('oom') || haystack.includes('out of memory')) return 'oom'
+  if (haystack.includes('image') && haystack.includes('build')) return 'image-build-failure'
+  if (haystack.includes('network') || haystack.includes('connection')) return 'network-outage'
+  if (haystack.includes('checksum') || haystack.includes('corrupt')) return 'artifact-corruption'
+  if (haystack.includes('provider') || haystack.includes('rate limit')) return 'provider-failure'
+  if (haystack.includes('verifier')) return 'verifier-error'
+  return 'unknown'
 }
 
 /**
- * Normalize one trial. The denominator (planned inventory) is fixed by the
- * caller; this function never drops a trial — a missing artifact yields an
- * explicit invalid/fail record that remains in the count.
- *
- * Reads Harbor's actual trial result.json structure:
- *   verifier_result.rewards.reward  — the numeric reward (0.0 / 1.0 for TB)
- *   exception_info                  — Harbor's exception classification
- * plus a controller-written sidecar `attribution.json` carrying the candidate
- * id + attempt index (Harbor itself is candidate-agnostic; attribution is the
- * TCB's job). A trajectory is any `trajectory.json` or `acp-events.jsonl` the
- * adapter records alongside the trial.
+ * Normalize one Harbor trial directory. Fail-closed: missing required artifacts,
+ * attribution mismatch, or non-binary reward => invalid (never fail/reward=0).
  */
-export async function normalizeTrial(raw: RawTrialArtifacts): Promise<NormalizedTrial> {
-  const resultJson = (await readJsonOrNull(join(raw.trialDir, 'result.json'))) as {
-    verifier_result?: { rewards?: { reward?: unknown } }
-    exception_info?: { type?: string; classification?: string } | null
-  } | null
-  const attribution = (await readJsonOrNull(join(raw.trialDir, 'attribution.json'))) as {
-    candidate_id?: string
-    attempt_index?: number
-  } | null
-  // Harbor stores installed-agent evidence below trial/agent/. Retain the old
-  // root fallback for imported fixtures, but prefer the real layout.
-  const trajectoryHash = await firstHash([
-    join(raw.trialDir, 'agent', 'trajectory.json'),
-    join(raw.trialDir, 'trajectory.json'),
-    join(raw.trialDir, 'agent', 'acp-events.jsonl'),
-    join(raw.trialDir, 'acp-events.jsonl'),
-  ])
-  const acpEventsHash = await firstHash([
-    join(raw.trialDir, 'agent', 'acp-events.jsonl'),
-    join(raw.trialDir, 'acp-events.jsonl'),
-  ])
-  const acpSummaryHash = await firstHash([
-    join(raw.trialDir, 'agent', 'acp-summary.json'),
-    join(raw.trialDir, 'acp-summary.json'),
-  ])
-  const acpSummary = await firstJson([
-    join(raw.trialDir, 'agent', 'acp-summary.json'),
-    join(raw.trialDir, 'acp-summary.json'),
+export async function normalizeTrial(input: NormalizeInput): Promise<NormalizedTrialRecord> {
+  const resultPath = join(input.trialDir, 'result.json')
+  const rewardPath = join(input.trialDir, 'reward.txt')
+  const trajectoryPath = join(input.trialDir, 'agent', 'trajectory.json')
+
+  const [resultRef, rewardRef, trajectoryRef] = await Promise.all([
+    fileRef(resultPath, 'application/json'),
+    fileRef(rewardPath, 'text/plain'),
+    fileRef(trajectoryPath, 'application/json'),
   ])
 
-  // Candidate attribution: the controller-written sidecar MUST match the plan.
-  const recordedCandidateId = attribution?.candidate_id ?? null
-  const candidateMatch = recordedCandidateId === raw.expectedCandidateId
-  const attemptIndex = attribution?.attempt_index ?? null
+  let result: HarborResult | null = null
+  let resultText: string | null = null
+  try {
+    resultText = await readFile(resultPath, 'utf8')
+    result = JSON.parse(resultText) as HarborResult
+  } catch {
+    // handled below as invalid
+  }
 
-  const rewardRaw = resultJson?.verifier_result?.rewards?.reward
-  const reward = typeof rewardRaw === 'number' ? rewardRaw : null
+  let rewardValue: number | null = null
+  try {
+    rewardValue = parseReward(await readFile(rewardPath, 'utf8'))
+  } catch {
+    // handled below
+  }
 
-  let status: TrialStatus
-  let reason: string
-  let infraClass: InfraClass = null
+  // Candidate attribution: the candidate capsule writes this file; the adapter
+  // verifies it matches the action's expected candidate + attempt.
+  let attribution: { candidate_id?: unknown; task_id?: unknown; attempt_index?: unknown } | null =
+    null
+  if (input.candidateArtifactDir) {
+    try {
+      attribution = JSON.parse(
+        await readFile(join(input.candidateArtifactDir, 'candidate-attribution.json'), 'utf8'),
+      ) as typeof attribution
+    } catch {
+      // missing attribution => invalid
+    }
+  }
 
-  if (resultJson === null) {
-    status = 'invalid'
-    reason = 'result.json missing'
-  } else if (!candidateMatch) {
-    status = 'invalid'
-    reason = `candidate_id mismatch: recorded ${recordedCandidateId} != planned ${raw.expectedCandidateId}`
-  } else if (reward === null) {
-    status = 'invalid'
-    reason = 'reward missing or non-numeric (verifier_result.rewards.reward)'
-  } else if (trajectoryHash === null) {
-    status = 'invalid'
-    reason = 'trajectory missing (no trajectory.json or acp-events.jsonl)'
-  } else if (raw.requireAcpEvidence === true && acpEventsHash === null) {
-    status = 'invalid'
-    reason = 'ACP events missing (no agent/acp-events.jsonl)'
-  } else if (raw.requireAcpEvidence === true && acpSummaryHash === null) {
-    status = 'invalid'
-    reason = 'ACP summary missing (no agent/acp-summary.json)'
-  } else if (raw.requireAcpEvidence === true && acpSummary === null) {
-    status = 'invalid'
-    reason = 'ACP summary is not valid JSON'
+  const candidateId =
+    typeof attribution?.candidate_id === 'string' ? attribution.candidate_id : null
+  const attributedTaskId =
+    typeof attribution?.task_id === 'string' ? attribution.task_id : result?.task_id
+  const rawAttemptIndex = attribution?.attempt_index
+  const attemptIndex =
+    typeof rawAttemptIndex === 'number' &&
+    Number.isSafeInteger(rawAttemptIndex) &&
+    rawAttemptIndex >= 0
+      ? rawAttemptIndex
+      : null
+
+  // Collect verifier artifacts (best-effort list of known paths).
+  const verifierRefs: ArtifactRef[] = []
+  for (const [rel, media] of [
+    ['verifier/reward.json', 'application/json'],
+    ['verifier/ctrf.txt', 'text/plain'],
+    ['verifier/stdout.txt', 'text/plain'],
+    ['verifier/stderr.txt', 'text/plain'],
+  ] as const) {
+    const ref = await fileRef(join(input.trialDir, rel), media)
+    if (ref) verifierRefs.push(ref)
+  }
+
+  let status: TrialStatus = 'invalid'
+  let reward: 0 | 1 | null = null
+  let invalidReason: string | null = null
+  let infraFailureReason: InfraFailureReason | null = null
+
+  if (!resultRef) invalidReason = 'missing or unreadable result.json'
+  else if (!rewardRef || rewardValue === null) invalidReason = 'missing or invalid reward.txt'
+  else if (!trajectoryRef) invalidReason = 'missing agent trajectory'
+  else if (result?.task_id !== input.expectedTaskId || attributedTaskId !== input.expectedTaskId) {
+    invalidReason = `task attribution mismatch: expected ${input.expectedTaskId}`
+  } else if (candidateId !== input.expectedCandidateId) {
+    invalidReason = `candidate attribution mismatch: expected ${input.expectedCandidateId}`
+  } else if (attemptIndex === null) {
+    invalidReason = 'attempt attribution missing or invalid'
+  } else if (attemptIndex !== input.attemptIndex) {
+    invalidReason = `attempt attribution mismatch: expected ${input.attemptIndex}`
+  } else if (rewardValue !== 0 && rewardValue !== 1) {
+    invalidReason = `reward outside {0,1}: ${rewardValue}`
+  } else if (result?.agent_execution?.exception_info || result?.verifier_execution?.exception_info) {
+    invalidReason = 'infrastructure execution exception'
   } else {
-    status = reward >= 1.0 ? 'pass' : 'fail'
-    reason = reward >= 1.0 ? 'reward >= 1.0' : `reward ${reward} < 1.0`
-    // Infrastructure classification for retry eligibility (reward-independent).
-    const exc = resultJson.exception_info
-    const cls = typeof exc?.classification === 'string' ? exc.classification : ''
-    const type = typeof exc?.type === 'string' ? exc.type : ''
-    const hay = `${cls} ${type}`
-    if (hay.includes('docker') && hay.includes('build')) infraClass = 'docker-build-error'
-    else if (hay.includes('network') || hay.includes('pull')) infraClass = 'network-pull-error'
-    else if (hay.includes('oom') || hay.includes('memory')) infraClass = 'oom-crash'
+    reward = rewardValue as 0 | 1
+    status = reward === 1 ? 'pass' : 'fail'
   }
 
-  const retryEligible = infraClass !== null
+  if (status === 'invalid') {
+    infraFailureReason = classifyInfra(result, resultText)
+  }
 
-  const key = `${raw.expectedCandidateId}/${raw.taskId}/${attemptIndex ?? '?'}`
-  const recordBody = JSON.stringify({
-    key,
-    taskId: raw.taskId,
-    candidateId: recordedCandidateId,
-    attemptIndex,
-    status,
-    reward,
-    trajectoryHash,
-    acpEventsHash,
-    acpSummaryHash,
-    retryEligible,
-    infraClass,
-    reason,
-  })
-  const recordHash = createHash('sha256').update(recordBody).digest('hex')
+  const startedAt = result?.started_at ?? result?.agent_execution?.started_at ?? null
+  const finishedAt = result?.finished_at ?? result?.verifier_execution?.finished_at ?? null
+  const wallSec =
+    startedAt && finishedAt
+      ? Math.max(0, (new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000)
+      : null
 
+  const keyMaterial = `${input.expectedCandidateId}\0${input.expectedTaskId}\0${String(attemptIndex)}`
   return {
-    key,
-    taskId: raw.taskId,
-    candidateId: recordedCandidateId,
+    schemaVersion: 1,
+    trialKey: 'sha256:' + createHash('sha256').update(keyMaterial).digest('hex'),
+    taskId: input.expectedTaskId,
+    candidateId,
     attemptIndex,
     status,
     reward,
-    trajectoryHash,
-    acpEventsHash,
-    acpSummaryHash,
-    recordHash,
-    retryEligible,
-    infraClass,
-    reason,
+    infraFailureReason,
+    invalidReason,
+    startedAt,
+    finishedAt,
+    wallSec,
+    artifacts: {
+      result: resultRef,
+      reward: rewardRef,
+      trajectory: trajectoryRef,
+      verifier: verifierRefs,
+    },
+    sourceDir: input.trialDir,
   }
 }
 
 /**
- * Verify a trial directory exists and is non-empty (structural guard before
- * normalization, so a missing trial dir is caught explicitly rather than
- * producing a spurious "missing result.json").
+ * Validate a normalized record for search statistics. Returns true only for
+ * Bernoulli-valid trials; invalid rows are never coerced to 0.
  */
-export async function assertTrialDirExists(trialDir: string): Promise<void> {
-  const st = await stat(trialDir).catch(() => null)
-  if (!st || !st.isDirectory()) {
-    throw new Error(`normalizer: trial directory missing or not a directory: ${trialDir}`)
-  }
+export function isBernoulliValid(record: NormalizedTrialRecord): boolean {
+  return (
+    (record.status === 'pass' || record.status === 'fail') &&
+    (record.reward === 0 || record.reward === 1) &&
+    record.candidateId !== null &&
+    record.attemptIndex !== null
+  )
 }
