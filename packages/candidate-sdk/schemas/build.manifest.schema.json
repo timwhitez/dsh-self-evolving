@@ -4,7 +4,16 @@
   "title": "Build manifest",
   "description": "Builder-appended, non-proposer-decidable fields (spec 02 §6 builder fields; spec 02 §11 admission). Hashes are SHA-256 hex.",
   "type": "object",
-  "required": ["schemaVersion", "candidateId", "sourceHash", "bundleHash", "capsuleHash", "parentDiffHash", "compiler", "buildReceipts"],
+  "required": [
+    "schemaVersion",
+    "candidateId",
+    "sourceHash",
+    "bundleHash",
+    "capsuleHash",
+    "parentDiffHash",
+    "compiler",
+    "buildReceipts"
+  ],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "type": "integer", "minimum": 1 },
@@ -15,12 +24,26 @@
     "parentDiffHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "fileList": { "type": "array", "items": { "type": "string" } },
     "lineCounts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
-    "compiler": { "type": "object", "required": ["typescript", "node"], "additionalProperties": false, "properties": { "typescript": { "type": "string" }, "node": { "type": "string" } } },
+    "compiler": {
+      "type": "object",
+      "required": ["typescript", "node"],
+      "additionalProperties": false,
+      "properties": { "typescript": { "type": "string" }, "node": { "type": "string" } }
+    },
     "dependencies": { "type": "object", "additionalProperties": { "type": "string" } },
     "sbom": { "type": "object", "additionalProperties": { "type": "string" } },
     "buildReceipts": {
       "type": "object",
-      "required": ["schema", "diffBoundary", "policyScan", "reproducibleBuild", "typeLintUnit", "realLoaderBoot", "unloadInvariant", "mockReplay"],
+      "required": [
+        "schema",
+        "diffBoundary",
+        "policyScan",
+        "reproducibleBuild",
+        "typeLintUnit",
+        "realLoaderBoot",
+        "unloadInvariant",
+        "mockReplay"
+      ],
       "additionalProperties": false,
       "properties": {
         "schema": { "$ref": "#/$defs/receipt" },
@@ -36,5 +59,17 @@
     "builderImageDigest": { "type": "string" },
     "buildTimestamp": { "type": "string" }
   },
-  "$defs": { "receipt": { "type": "object", "required": ["status"], "additionalProperties": true, "properties": { "status": { "type": "string", "enum": ["pass", "fail"] }, "durationMs": { "type": "integer", "minimum": 0 }, "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "note": { "type": "string" } } } }
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": true,
+      "properties": {
+        "status": { "type": "string", "enum": ["pass", "fail"] },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "note": { "type": "string" }
+      }
+    }
+  }
 }

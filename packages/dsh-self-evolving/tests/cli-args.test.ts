@@ -8,9 +8,9 @@ import {
 
 describe('strict CLI argument parser', () => {
   it('does not consume the next long option as a missing value', () => {
-    expect(() =>
-      parseStatusCliArguments(['--state-dir', '--run-id', 'run-1']),
-    ).toThrow(/missing required --state-dir/)
+    expect(() => parseStatusCliArguments(['--state-dir', '--run-id', 'run-1'])).toThrow(
+      /missing required --state-dir/,
+    )
   })
 
   it('rejects duplicate options across separated and inline forms', () => {
@@ -68,18 +68,12 @@ describe('strict CLI argument parser', () => {
 
 describe('status CLI schema', () => {
   it('requires exactly one state directory and run id', () => {
-    expect(
-      parseStatusCliArguments(['--state-dir=/state', '--run-id', 'run-1']),
-    ).toEqual({ stateDir: '/state', runId: 'run-1' })
+    expect(parseStatusCliArguments(['--state-dir=/state', '--run-id', 'run-1'])).toEqual({
+      stateDir: '/state',
+      runId: 'run-1',
+    })
     expect(() =>
-      parseStatusCliArguments([
-        '--state-dir',
-        '/state',
-        '--run-id',
-        'run-1',
-        '--run-id',
-        'run-2',
-      ]),
+      parseStatusCliArguments(['--state-dir', '/state', '--run-id', 'run-1', '--run-id', 'run-2']),
     ).toThrow(/duplicate option --run-id/)
   })
 })

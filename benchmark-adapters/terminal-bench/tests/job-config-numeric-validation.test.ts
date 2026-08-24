@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildJobConfig,
-  type JobConfigInput,
-} from '../src/index.js'
+import { buildJobConfig, type JobConfigInput } from '../src/index.js'
 
 function validInput(): JobConfigInput {
   return {
@@ -33,10 +30,7 @@ function validInput(): JobConfigInput {
 }
 
 type NumericField =
-  | 'nAttempts'
-  | 'nConcurrentTrials'
-  | 'verifier.timeoutSec'
-  | 'verifier.agentTimeoutSec'
+  'nAttempts' | 'nConcurrentTrials' | 'verifier.timeoutSec' | 'verifier.agentTimeoutSec'
 
 function withNumericField(field: NumericField, value: number): JobConfigInput {
   const input = validInput()

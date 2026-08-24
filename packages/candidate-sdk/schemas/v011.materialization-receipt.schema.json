@@ -4,7 +4,21 @@
   "title": "v0.1.1 materialization receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "proposalId", "parentDigest", "sourceDigest", "exportManifestDigest", "analysisDigest", "proposalDigest", "transcriptDigest", "toolTraceDigest", "operations", "capabilityCatalogDigest", "retainedCapabilityRequests", "proposerUsage"],
+  "required": [
+    "schemaVersion",
+    "proposalId",
+    "parentDigest",
+    "sourceDigest",
+    "exportManifestDigest",
+    "analysisDigest",
+    "proposalDigest",
+    "transcriptDigest",
+    "toolTraceDigest",
+    "operations",
+    "capabilityCatalogDigest",
+    "retainedCapabilityRequests",
+    "proposerUsage"
+  ],
   "properties": {
     "schemaVersion": { "const": 1 },
     "proposalId": { "type": "string", "pattern": "^p_[0-9a-f]{32}$" },
@@ -15,7 +29,19 @@
     "proposalDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "transcriptDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "toolTraceDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "operations": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["op", "path"], "properties": { "op": { "enum": ["add", "modify", "remove"] }, "path": { "type": "string" } } } },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "path"],
+        "properties": {
+          "op": { "enum": ["add", "modify", "remove"] },
+          "path": { "type": "string" }
+        }
+      }
+    },
     "capabilityCatalogDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "retainedCapabilityRequests": { "type": "array", "maxItems": 3 },
     "proposerUsage": { "type": "object" }

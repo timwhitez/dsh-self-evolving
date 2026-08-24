@@ -28,11 +28,12 @@ describe('pilot candidate identity', () => {
           },
         ]
       },
-      async build() {
+      async build(child) {
         buildCount += 1
         return {
           candidateId: `candidate-${buildCount}`,
           digest: `sha256:content-${buildCount}`,
+          source: `baseline source\n${child.sourceDiff}`,
         }
       },
       async evaluate(candidateId) {
