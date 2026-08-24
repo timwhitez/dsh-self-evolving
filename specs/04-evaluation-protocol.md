@@ -65,9 +65,13 @@ difficulty bin 是可选分层维度，且有严格因果约束：为 89 个 tas
 MUST NOT 用 development-only baseline 给 sealed task 定难度，也 MUST NOT 让全集校准的逐
 task 结果在 candidate lock 前离开 sealed store。
 
-层太小时使用 iterative multilabel stratification；目标是三组类别/难度近似平衡，而不是按 task name
-手调。Splitter code、input metadata hash、seed commitment 和输出 Merkle root 均写入 ceremony
-receipt。
+层太小时使用 global controlled rounding：先从一个冻结的全局 48:12:29 目标矩阵计算每个
+metadata stratum × label 的有理 ideal quota，再只在每格的 floor/ceil 之间求满足全部 row/column margin
+的整数矩阵。主目标为最小化全矩阵 L1 quota error；同一最优值由冻结 seed 的 cell rank 决定，仍相同则按
+canonical metadata tuple 与固定 label 顺序作 total-order fallback。不得按已消耗的剩余 quota 逐层贪心，
+也不得让 task/stratum 输入枚举顺序改变 mapping。每个 stratum 内先按 task ID canonical 排序，再用独立
+seeded stream 分配具体 task。Splitter code、input metadata hash、seed commitment 和输出 Merkle root
+均写入 ceremony receipt。
 
 ### 3.3 Concealment
 

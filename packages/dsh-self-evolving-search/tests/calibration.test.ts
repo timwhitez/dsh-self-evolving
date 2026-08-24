@@ -34,7 +34,7 @@ describe('calibration splitter (spec 04 §3)', () => {
     expect(strata.length).toBeGreaterThan(0)
     for (const s of strata) {
       expect(s.taskIds.length).toBeGreaterThan(0)
-      expect(s.key).toBe(`${s.category}|${s.difficulty}|${String(s.allowInternet)}`)
+      expect(s.key).toBe(JSON.stringify([s.category, s.difficulty, s.allowInternet]))
     }
   })
 
