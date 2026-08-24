@@ -105,11 +105,20 @@ export function deterministicSplit(
   return assignment
 }
 
+function shuffleInPlace<T>(values: T[], rng: RngStream): void {
+  for (let i = values.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.nextDouble() * (i + 1))
+    ;[values[i], values[j]] = [values[j]!, values[i]!]
+  }
+}
+
 /**
- * Sample a representative calibration stratum: pick `perStratum` tasks from
- * each (category, difficulty, allowInternet) stratum, up to `maxTasks` total.
- * Used by the calibration pilot to measure cost/wall WITHOUT running the whole
- * dev set.
+ * Sample a representative calibration set under a global cap. Strata are first
+ * placed in a deterministic seeded order, their tasks are shuffled, and then
+ * sampling proceeds in rounds so every selected stratum contributes its first
+ * task before any stratum contributes a second. The cap therefore cannot turn
+ * into a lexicographic-prefix filter. Strata preserve category, difficulty,
+ * and network policy as independent public metadata dimensions.
  */
 export function sampleCalibrationStratum(
   tasks: TaskMeta[],
@@ -117,18 +126,34 @@ export function sampleCalibrationStratum(
   perStratum: number,
   maxTasks: number,
 ): TaskMeta[] {
-  const strata = stratify(tasks)
-  const rng = new RngStream(masterSeed, 'calibration-sample')
-  const out: TaskMeta[] = []
-  for (const s of strata) {
-    const inStratum = tasks.filter((t) => s.taskIds.includes(t.taskId))
-    // Shuffle and take perStratum.
-    const shuffled = [...inStratum]
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(rng.nextDouble() * (i + 1))
-      ;[shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!]
-    }
-    out.push(...shuffled.slice(0, perStratum))
+  if (!Number.isSafeInteger(perStratum) || perStratum < 0) {
+    throw new Error('calibration sample: perStratum must be a non-negative integer')
   }
-  return out.slice(0, maxTasks)
+  if (!Number.isSafeInteger(maxTasks) || maxTasks < 0) {
+    throw new Error('calibration sample: maxTasks must be a non-negative integer')
+  }
+
+  const rng = new RngStream(masterSeed, 'calibration-sample')
+  const orderedStrata = [...stratify(tasks)]
+  shuffleInPlace(orderedStrata, rng)
+  const byId = new Map(tasks.map((task) => [task.taskId, task]))
+  const candidates = orderedStrata.map((stratum) => {
+    const rows = stratum.taskIds.map((taskId) => {
+      const task = byId.get(taskId)
+      if (task === undefined) throw new Error(`calibration sample: missing task ${taskId}`)
+      return task
+    })
+    shuffleInPlace(rows, rng)
+    return rows.slice(0, perStratum)
+  })
+
+  const out: TaskMeta[] = []
+  for (let round = 0; round < perStratum && out.length < maxTasks; round += 1) {
+    for (const rows of candidates) {
+      const task = rows[round]
+      if (task !== undefined) out.push(task)
+      if (out.length === maxTasks) break
+    }
+  }
+  return out
 }
