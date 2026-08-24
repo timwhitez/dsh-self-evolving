@@ -11,6 +11,7 @@ import {
   type InitConfigInput,
 } from './config.js'
 import { parseInitProfile } from './init-profile.js'
+import { parseDshCliArguments } from './arguments.js'
 import { runDoctor } from './doctor.js'
 import { readControllerStatus } from '@dsh-self-evolving/core'
 import { runStableDemo } from './engine.js'
@@ -23,17 +24,6 @@ import {
   requestCrashInjection,
 } from './crash.js'
 import { readSourceArchiveIdentity } from './source-identity.js'
-
-function option(name: string): string | undefined {
-  const index = process.argv.indexOf(name)
-  return index === -1 ? undefined : process.argv[index + 1]
-}
-
-function required(name: string): string {
-  const value = option(name)
-  if (value === undefined || value.length === 0) throw new Error(`missing required ${name}`)
-  return value
-}
 
 function gitHead(repoRoot: string): Promise<string | null> {
   return new Promise((done) => {
@@ -52,19 +42,22 @@ async function sourceCommit(repoRoot: string): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const command = process.argv[2]
+  const cli = parseDshCliArguments(process.argv[2], process.argv.slice(3))
+  const { command } = cli
   if (command === 'init') {
-    const profile = parseInitProfile(option('--profile'))
-    const repoRoot = resolve(option('--repo-root') ?? process.cwd())
+    const profile = parseInitProfile(cli.value('--profile'))
+    const repoRoot = resolve(cli.value('--repo-root') ?? process.cwd())
     const input: InitConfigInput = {
-      runId: required('--run-id'),
-      stateDir: resolve(required('--state-dir')),
+      runId: cli.value('--run-id')!,
+      stateDir: resolve(cli.value('--state-dir')!),
       repoRoot,
       codeCommit: await sourceCommit(repoRoot),
-      ...(option('--tb-root') === undefined ? {} : { terminalBenchRoot: option('--tb-root')! }),
-      ...(option('--budget-usd') === undefined
+      ...(cli.value('--tb-root') === undefined
         ? {}
-        : { budgetUsd: Number(option('--budget-usd')) }),
+        : { terminalBenchRoot: cli.value('--tb-root')! }),
+      ...(cli.value('--budget-usd') === undefined
+        ? {}
+        : { budgetUsd: Number(cli.value('--budget-usd')) }),
     }
     const config =
       profile === V011_STABLE_DEMO_PROFILE
@@ -76,12 +69,8 @@ async function main(): Promise<void> {
     )
     return
   }
-  if (!['run', 'resume', 'status', 'audit', 'doctor'].includes(command ?? '')) {
-    throw new Error(
-      'usage: dsh-self-evolving <init|run|resume|status|audit|doctor> --state-dir <path>',
-    )
-  }
-  const config = await loadProjectConfig(resolve(required('--state-dir')))
+
+  const config = await loadProjectConfig(resolve(cli.value('--state-dir')!))
   if (command === 'doctor') {
     const report = await runDoctor(config)
     process.stdout.write(JSON.stringify(report, null, 2) + '\n')
@@ -118,7 +107,7 @@ async function main(): Promise<void> {
     config.profile === V011_STABLE_DEMO_PROFILE
       ? await createV011RealCapabilities(config)
       : await createRealCapabilities(config)
-  if (command === 'run' && process.argv.includes('--inject-crash-after-first-candidate')) {
+  if (command === 'run' && cli.flag('--inject-crash-after-first-candidate')) {
     await requestCrashInjection(config, {
       schemaVersion: 1,
       actionId: 'eval:candidate:1',
