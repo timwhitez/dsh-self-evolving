@@ -16,6 +16,10 @@ export interface OutcomeTrial {
   role: 'target-baseline' | 'target-child' | 'preservation-baseline' | 'preservation-child'
   status: 'pass' | 'fail' | 'invalid'
   reward: 0 | 1 | null
+  /** Opaque task identity shared by the baseline and child arms. */
+  taskId: string
+  /** Frozen attempt identity shared by the baseline and child arms. */
+  attemptIndex: number
 }
 
 export interface MechanismOutcomeRecord {
@@ -32,6 +36,98 @@ export interface MechanismOutcomeRecord {
   status: MechanismOutcomeStatus
   singleTrialObservable: boolean
   label: 'DEV_OBSERVED'
+}
+
+type TrialDomain = 'target' | 'preservation'
+type BaselineRole = 'target-baseline' | 'preservation-baseline'
+type ChildRole = 'target-child' | 'preservation-child'
+
+interface TrialPair {
+  taskId: string
+  attemptIndex: number
+  baseline: OutcomeTrial
+  child: OutcomeTrial
+}
+
+interface PairingResult {
+  pairs: TrialPair[]
+  valid: boolean
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function validTaskId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    value.trim() === value &&
+    !value.includes('\0')
+  )
+}
+
+function trialShapeIsValid(trial: OutcomeTrial): boolean {
+  if (!/^sha256:[0-9a-f]{64}$/.test(trial.ref)) return false
+  if (!validTaskId(trial.taskId)) return false
+  if (!Number.isSafeInteger(trial.attemptIndex) || trial.attemptIndex < 0) return false
+  if (
+    trial.role !== 'target-baseline' &&
+    trial.role !== 'target-child' &&
+    trial.role !== 'preservation-baseline' &&
+    trial.role !== 'preservation-child'
+  ) {
+    return false
+  }
+  if (trial.status === 'pass') return trial.reward === 1
+  if (trial.status === 'fail') return trial.reward === 0
+  if (trial.status === 'invalid') return trial.reward === null
+  return false
+}
+
+function pairDomain(trials: OutcomeTrial[], domain: TrialDomain): PairingResult {
+  if (trials.length === 0) return { pairs: [], valid: true }
+  const baselineRole: BaselineRole =
+    domain === 'target' ? 'target-baseline' : 'preservation-baseline'
+  const childRole: ChildRole = domain === 'target' ? 'target-child' : 'preservation-child'
+  if (
+    trials.some((trial) => !validTaskId(trial.taskId) || !Number.isSafeInteger(trial.attemptIndex))
+  ) {
+    return { pairs: [], valid: false }
+  }
+  const grouped = new Map<string, { baseline?: OutcomeTrial; child?: OutcomeTrial }>()
+  for (const trial of trials) {
+    const key = canonicalV011({ attemptIndex: trial.attemptIndex, taskId: trial.taskId })
+    const pair = grouped.get(key) ?? {}
+    if (trial.role === baselineRole) {
+      if (pair.baseline !== undefined) return { pairs: [], valid: false }
+      pair.baseline = trial
+    } else if (trial.role === childRole) {
+      if (pair.child !== undefined) return { pairs: [], valid: false }
+      pair.child = trial
+    } else {
+      return { pairs: [], valid: false }
+    }
+    grouped.set(key, pair)
+  }
+  const pairs: TrialPair[] = []
+  for (const pair of grouped.values()) {
+    if (pair.baseline === undefined || pair.child === undefined) {
+      return { pairs: [], valid: false }
+    }
+    pairs.push({
+      taskId: pair.baseline.taskId,
+      attemptIndex: pair.baseline.attemptIndex,
+      baseline: pair.baseline,
+      child: pair.child,
+    })
+  }
+  pairs.sort(
+    (left, right) =>
+      compareText(left.taskId, right.taskId) || left.attemptIndex - right.attemptIndex,
+  )
+  return { pairs, valid: true }
 }
 
 async function readRegularTextFile(path: string): Promise<string | null> {
@@ -68,32 +164,57 @@ export async function deriveMechanismOutcome(input: {
 }): Promise<MechanismOutcomeRecord> {
   const target = input.trials.filter((trial) => trial.role.startsWith('target-'))
   const preservation = input.trials.filter((trial) => trial.role.startsWith('preservation-'))
-  const invalid = input.trials.some((trial) => trial.status === 'invalid' || trial.reward === null)
-  const preservationRegressed = preservation.some(
-    (baseline) =>
-      baseline.role === 'preservation-baseline' &&
-      baseline.status === 'pass' &&
-      preservation.some((child) => child.role === 'preservation-child' && child.status !== 'pass'),
+  const targetPairing = pairDomain(target, 'target')
+  const preservationPairing = pairDomain(preservation, 'preservation')
+  const uniqueRefs = new Set(input.trials.map((trial) => trial.ref))
+  const invalid =
+    input.trials.some((trial) => !trialShapeIsValid(trial)) ||
+    input.trials.some((trial) => trial.status === 'invalid') ||
+    uniqueRefs.size !== input.trials.length ||
+    !targetPairing.valid ||
+    !preservationPairing.valid ||
+    target.some((trial) => trial.taskId !== input.targetTaskHandle)
+
+  const preservationRegressed = preservationPairing.pairs.some(
+    (pair) => pair.baseline.status === 'pass' && pair.child.status !== 'pass',
   )
-  const baseline = target.find((trial) => trial.role === 'target-baseline')
-  const child = target.find((trial) => trial.role === 'target-child')
+  const targetImproved =
+    targetPairing.pairs.length > 0 &&
+    targetPairing.pairs.every(
+      (pair) => pair.baseline.status === 'fail' && pair.child.status === 'pass',
+    )
+
   let status: MechanismOutcomeStatus
   if (invalid) status = 'INVALID_TRIALS'
   else if (preservationRegressed) status = 'PRESERVATION_REGRESSED'
-  else if (baseline === undefined || child === undefined) status = 'TARGET_NOT_MEASURED'
-  else if (baseline.status !== 'pass' && child.status === 'pass') status = 'TARGET_IMPROVED'
+  else if (targetPairing.pairs.length === 0) status = 'TARGET_NOT_MEASURED'
+  else if (targetImproved) status = 'TARGET_IMPROVED'
   else status = 'TARGET_UNCHANGED'
-  const trialRefs = input.trials.map((trial) => trial.ref).sort()
+
+  const trialCommitment = input.trials
+    .map((trial) => ({
+      attemptIndex: Number.isSafeInteger(trial.attemptIndex) ? trial.attemptIndex : null,
+      ref: trial.ref,
+      reward: trial.reward,
+      role: trial.role,
+      status: trial.status,
+      taskId: typeof trial.taskId === 'string' ? trial.taskId : null,
+    }))
+    .sort((left, right) => compareText(canonicalV011(left), canonicalV011(right)))
+  const trialRefs = [...uniqueRefs].sort(compareText)
+  const hypothesisDigest = digestV011(input.hypothesis)
   const record: MechanismOutcomeRecord = {
     schemaVersion: 1,
     idempotencyKey: digestV011({
-      proposalDigest: input.proposalDigest,
       candidateDigest: input.candidateDigest,
+      hypothesisDigest,
+      proposalDigest: input.proposalDigest,
+      targetClusterSlug: input.targetClusterSlug,
       targetTaskHandle: input.targetTaskHandle,
-      trialRefs,
+      trialCommitment,
     }),
     proposalDigest: input.proposalDigest,
-    hypothesisDigest: digestV011(input.hypothesis),
+    hypothesisDigest,
     candidateDigest: input.candidateDigest,
     targetClusterSlug: input.targetClusterSlug,
     targetTaskHandle: input.targetTaskHandle,
@@ -101,8 +222,7 @@ export async function deriveMechanismOutcome(input: {
     targetTrials: target.length,
     preservationTrials: preservation.length,
     status,
-    singleTrialObservable:
-      input.trials.filter((trial) => trial.role === 'target-child').length === 1,
+    singleTrialObservable: !invalid && targetPairing.pairs.length === 1,
     label: 'DEV_OBSERVED',
   }
   await assertV011('mechanism-outcome', record)

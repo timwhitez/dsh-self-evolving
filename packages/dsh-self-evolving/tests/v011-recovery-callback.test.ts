@@ -122,12 +122,16 @@ describe('v0.1.1 recovery post-publish callbacks', () => {
           role: 'target-baseline' as const,
           status: 'fail' as const,
           reward: 0 as const,
+          taskId: 'task-a',
+          attemptIndex: 0,
         },
         {
           ref: digest('4'),
           role: 'target-child' as const,
           status: 'pass' as const,
           reward: 1 as const,
+          taskId: 'task-a',
+          attemptIndex: 0,
         },
       ],
     }
@@ -246,12 +250,16 @@ describe('v0.1.1 recovery post-publish callbacks', () => {
           role: 'target-baseline' as const,
           status: 'fail' as const,
           reward: 0 as const,
+          taskId: 'task-a',
+          attemptIndex: 0,
         },
         {
           ref: digest('4'),
           role: 'target-child' as const,
           status: 'pass' as const,
           reward: 1 as const,
+          taskId: 'task-a',
+          attemptIndex: 0,
         },
       ],
     }

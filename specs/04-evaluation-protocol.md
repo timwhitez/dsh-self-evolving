@@ -138,6 +138,13 @@ task/attempt 随机交错；scheduler 不读取中间 reward。
 TB primary reward 的具体 key 在 preflight 从真实 task result 验证并冻结。不得取 reward map 最大值、
 只取成功 trial 或对 missing trial 改分母。
 
+Mechanism outcome 只能由 canonical paired trials 推导。每个 baseline/child arm 必须带相同的实际
+`task handle + attempt index`，且每个 domain/key 恰好各有一个 baseline 和一个 child；缺失、重复、
+跨 task/attempt 配对、重复 evidence ref 或任一 `INVALID` arm 均产生 `INVALID_TRIALS`。Target arm 的
+task handle 还必须等于 outcome 声明的 target。配对后的完整 role/task/attempt/ref/status/reward multiset、
+proposal/candidate、hypothesis digest、target cluster 与 target handle 一并进入 idempotency commitment；
+输入枚举顺序不得改变 outcome bytes。
+
 ## 6. Retry policy
 
 允许重试的例子：Harbor provider control-plane 5xx、sandbox provisioning 在 agent 启动前失败、artifact

@@ -139,8 +139,22 @@ try {
       targetClusterSlug: 'transient-tool-stop',
       targetTaskHandle: 'opaque-1',
       trials: [
-        { ref: digest('3'), role: 'target-baseline', status: 'fail', reward: 0 },
-        { ref: digest('4'), role: 'target-child', status: 'pass', reward: 1 },
+        {
+          ref: digest('3'),
+          role: 'target-baseline',
+          status: 'fail',
+          reward: 0,
+          taskId: 'opaque-1',
+          attemptIndex: 0,
+        },
+        {
+          ref: digest('4'),
+          role: 'target-child',
+          status: 'pass',
+          reward: 1,
+          taskId: 'opaque-1',
+          attemptIndex: 0,
+        },
       ],
       afterDurablePublish: reconcile,
     })
