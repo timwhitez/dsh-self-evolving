@@ -1,9 +1,9 @@
 /**
  * Manifest validators (spec 02 §6, §11 step 2 Schema).
  *
- * Loads the versioned JSON Schemas from schemas/ and compiles them with ajv.
- * The proposer drafts the candidate manifest; the builder RE-validates and
- * never trusts the proposer's self-assigned hashes — it recomputes them.
+ * Loads the versioned JSON Schemas shipped inside this package and compiles
+ * them with ajv. The proposer drafts the candidate manifest; the builder
+ * RE-validates and never trusts the proposer's self-assigned hashes.
  */
 import { Ajv, type ErrorObject } from 'ajv'
 import addFormats from 'ajv-formats'
@@ -11,13 +11,12 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// ajv-formats v3 default export is callable at runtime; the bundled .d.ts does
-// not always express that, so we cast through the module namespace.
 const addAllFormats = addFormats as unknown as (ajv: Ajv) => void
 
 const here = dirname(fileURLToPath(import.meta.url))
-// From lib/validate/ up to repo root, then schemas/.
-const schemasRoot = resolve(here, '..', '..', '..', '..', 'schemas')
+// Works from both src/validate and lib/validate after compilation. Keeping the
+// assets under the package root makes packed/relocated installs self-contained.
+const schemasRoot = resolve(here, '..', '..', 'schemas')
 
 export interface ValidationResult {
   valid: boolean

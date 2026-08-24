@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-self-evolving/v011.capability-catalog.schema.json",
+  "title": "v0.1.1 exact capability catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocol", "dshCommit", "capabilities"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "dsh-self-evolving-candidate-tree-v2" },
+    "dshCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "capabilities": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "object", "additionalProperties": false, "required": ["id", "tier", "kind", "signature", "enabled", "fixtureDigest"], "properties": { "id": { "type": "string", "minLength": 1, "maxLength": 200 }, "tier": { "enum": ["T0", "T1", "T2", "T3"] }, "kind": { "enum": ["package-export", "service", "event", "tool", "composition"] }, "signature": { "type": "string", "minLength": 1, "maxLength": 4096 }, "enabled": { "type": "boolean" }, "fixtureDigest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" } } } }
+  }
+}
