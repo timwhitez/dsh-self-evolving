@@ -77,7 +77,7 @@ describe('stable-demo versioned config', () => {
     })
     const path = await initializeState(config)
     expect((await stat(path)).mode & 0o777).toBe(0o600)
-    await expect(initializeState(config)).rejects.toMatchObject({ code: 'EEXIST' })
+    await expect(initializeState(config)).resolves.toBe(path)
     expect(await loadConfig(stateDir)).toEqual(config)
     expect(JSON.parse(await readFile(path, 'utf8'))).not.toHaveProperty('credential')
   })

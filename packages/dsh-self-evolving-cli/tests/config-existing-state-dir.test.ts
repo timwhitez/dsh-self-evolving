@@ -27,7 +27,7 @@ describe('state directory ownership', () => {
     await mkdir(stateDir, { mode: 0o755 })
     await chmod(stateDir, 0o755)
 
-    await expect(initializeState(configFor(stateDir))).rejects.toMatchObject({ code: 'EEXIST' })
+    await expect(initializeState(configFor(stateDir))).rejects.toThrow(/mode 0700/)
     expect((await stat(stateDir)).mode & 0o777).toBe(0o755)
     await expect(readFile(configPath(stateDir))).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -41,21 +41,26 @@ describe('state directory ownership', () => {
     await chmod(target, 0o755)
     await symlink(target, stateDir, 'dir')
 
-    await expect(initializeState(configFor(stateDir))).rejects.toMatchObject({ code: 'EEXIST' })
+    await expect(initializeState(configFor(stateDir))).rejects.toThrow(/symlink/)
     expect((await stat(target)).mode & 0o777).toBe(0o755)
     await expect(readFile(join(target, 'config.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('allows exactly one concurrent initializer to claim the final directory', async () => {
+  it('lets concurrent same-identity initializers converge on one complete config', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-state-race-'))
     roots.push(root)
     const stateDir = join(root, 'state')
     const config = configFor(stateDir)
 
-    const results = await Promise.allSettled([initializeState(config), initializeState(config)])
-    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
-    const rejected = results.find((result) => result.status === 'rejected')
-    expect(rejected).toMatchObject({ status: 'rejected', reason: { code: 'EEXIST' } })
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, () => initializeState(config)),
+    )
+    expect(results).toEqual(
+      Array.from({ length: 8 }, () => ({
+        status: 'fulfilled',
+        value: configPath(stateDir),
+      })),
+    )
     expect(JSON.parse(await readFile(configPath(stateDir), 'utf8'))).toEqual(config)
   })
 })
