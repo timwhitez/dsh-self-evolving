@@ -26,6 +26,8 @@ v0.1 predecessor 证据仍见
 
 **v0.1.1 successor**：schema-v2 multi-file candidate、精确父 Loader、raw-evidence citation、受限工具、
 trusted materialization/admission、mechanism outcome 与 schema-11 CLI 已实现并验收。fresh run
+的 mechanism outcome 按实际 task/attempt 对 baseline/child 作完整配对；缺失、重复、错配及 invalid
+trial 均 fail closed，且相同 trial multiset 的排列产生相同 idempotency bytes。
 `v011-20260815-v13` 在执行 commit `9ae960c4b7d39ce7a446fd633500b7fddfbe0bb0` 上完成 2 个 baseline 和
 3 个 candidate Harbor trials，连续 admitted 3 个 unique multi-file children，lineage depth 3；真实 external
 launch 后 `SIGKILL` 的 resume 只保留一次 launch/observation/commit。独立 audit 接受 52 个 events，状态为

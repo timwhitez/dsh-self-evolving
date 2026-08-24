@@ -1034,12 +1034,16 @@ export async function createV011RealCapabilities(
             role: 'target-baseline',
             status: baselineObservation.status,
             reward: baselineObservation.reward as 0 | 1 | null,
+            taskId: baselineObservation.taskId,
+            attemptIndex: baselineObservation.attemptIndex,
           },
           {
             ref: digestV011(childObservation),
             role: 'target-child',
             status: childObservation.status,
             reward: childObservation.reward as 0 | 1 | null,
+            taskId: childObservation.taskId,
+            attemptIndex: childObservation.attemptIndex,
           },
         ],
       })

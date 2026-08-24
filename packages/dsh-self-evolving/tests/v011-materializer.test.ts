@@ -307,8 +307,22 @@ describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
       targetClusterSlug: 'transient-tool-stop',
       targetTaskHandle: 'opaque-observed-1',
       trials: [
-        { ref: `sha256:${'3'.repeat(64)}`, role: 'target-baseline', status: 'fail', reward: 0 },
-        { ref: `sha256:${'4'.repeat(64)}`, role: 'target-child', status: 'pass', reward: 1 },
+        {
+          ref: `sha256:${'3'.repeat(64)}`,
+          role: 'target-baseline',
+          status: 'fail',
+          reward: 0,
+          taskId: 'opaque-observed-1',
+          attemptIndex: 0,
+        },
+        {
+          ref: `sha256:${'4'.repeat(64)}`,
+          role: 'target-child',
+          status: 'pass',
+          reward: 1,
+          taskId: 'opaque-observed-1',
+          attemptIndex: 0,
+        },
       ],
     })
     expect(record.status).toBe('TARGET_IMPROVED')
