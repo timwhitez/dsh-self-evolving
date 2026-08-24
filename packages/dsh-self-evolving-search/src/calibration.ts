@@ -30,11 +30,56 @@ export interface TaskStratum {
   taskIds: string[]
 }
 
+const SPLIT_LABELS: readonly SplitLabel[] = ['dev-observed', 'dev-guard', 'sealed']
+type LabelCounts = Record<SplitLabel, number>
+
+function compareText(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1
+}
+
+function isProtocolText(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value === value.trim() &&
+    ![...value].some((character) => {
+      const codePoint = character.codePointAt(0)!
+      return codePoint <= 0x1f || codePoint === 0x7f
+    })
+  )
+}
+
+function validateTasks(tasks: TaskMeta[]): void {
+  if (!Array.isArray(tasks)) throw new Error('split: tasks must be an array')
+  const taskIds = new Set<string>()
+  for (const [index, task] of tasks.entries()) {
+    if (typeof task !== 'object' || task === null) {
+      throw new Error(`split: task ${index} must be an object`)
+    }
+    if (!isProtocolText(task.taskId)) throw new Error(`split: task ${index} has invalid taskId`)
+    if (taskIds.has(task.taskId)) throw new Error(`split: duplicate taskId ${task.taskId}`)
+    taskIds.add(task.taskId)
+    if (!isProtocolText(task.category)) {
+      throw new Error(`split: task ${task.taskId} has invalid category`)
+    }
+    if (!isProtocolText(task.difficulty)) {
+      throw new Error(`split: task ${task.taskId} has invalid difficulty`)
+    }
+    if (!Number.isSafeInteger(task.agentTimeoutSec) || task.agentTimeoutSec <= 0) {
+      throw new Error(`split: task ${task.taskId} has invalid timeout`)
+    }
+    if (typeof task.allowInternet !== 'boolean') {
+      throw new Error(`split: task ${task.taskId} has invalid network flag`)
+    }
+  }
+}
+
 /** Partition tasks into (category, difficulty, allowInternet) strata. */
 export function stratify(tasks: TaskMeta[]): TaskStratum[] {
+  validateTasks(tasks)
   const map = new Map<string, TaskStratum>()
   for (const t of tasks) {
-    const key = `${t.category}|${t.difficulty}|${String(t.allowInternet)}`
+    const key = JSON.stringify([t.category, t.difficulty, t.allowInternet])
     if (!map.has(key)) {
       map.set(key, {
         key,
@@ -46,15 +91,182 @@ export function stratify(tasks: TaskMeta[]): TaskStratum[] {
     }
     map.get(key)!.taskIds.push(t.taskId)
   }
-  return [...map.values()].sort((a, b) => a.key.localeCompare(b.key))
+  const strata = [...map.values()].sort((a, b) => compareText(a.key, b.key))
+  for (const stratum of strata) stratum.taskIds.sort(compareText)
+  return strata
+}
+
+interface RoundedStratum {
+  stratum: TaskStratum
+  floors: LabelCounts
+  remainders: Record<SplitLabel, bigint>
+  tieRanks: Record<SplitLabel, bigint>
+  masks: number[]
+}
+
+interface AllocationState {
+  used: LabelCounts
+  remainderScore: bigint
+  tieScore: bigint
+  signature: string
+  masks: number[]
+}
+
+function validatedTargetCounts(
+  taskCount: number,
+  sizes: { devObserved: number; devGuard: number; sealed: number },
+): LabelCounts {
+  const counts: LabelCounts = {
+    'dev-observed': sizes.devObserved,
+    'dev-guard': sizes.devGuard,
+    sealed: sizes.sealed,
+  }
+  for (const label of SPLIT_LABELS) {
+    if (!Number.isSafeInteger(counts[label]) || counts[label] < 0) {
+      throw new Error(`split: ${label} size must be a non-negative safe integer`)
+    }
+  }
+  const total = SPLIT_LABELS.reduce((sum, label) => sum + BigInt(counts[label]), 0n)
+  if (total !== BigInt(taskCount)) {
+    throw new Error(`split: received ${taskCount} tasks, expected exactly ${total}`)
+  }
+  return counts
+}
+
+function masksWithCardinality(eligibleMask: number, count: number): number[] {
+  const masks: number[] = []
+  for (let mask = 0; mask < 1 << SPLIT_LABELS.length; mask += 1) {
+    if ((mask & ~eligibleMask) !== 0) continue
+    let bits = 0
+    for (let index = 0; index < SPLIT_LABELS.length; index += 1) {
+      if ((mask & (1 << index)) !== 0) bits += 1
+    }
+    if (bits === count) masks.push(mask)
+  }
+  return masks
+}
+
+function stateKey(counts: LabelCounts): string {
+  return SPLIT_LABELS.map((label) => counts[label]).join(',')
+}
+
+function isBetterState(candidate: AllocationState, current: AllocationState | undefined): boolean {
+  if (current === undefined) return true
+  if (candidate.remainderScore !== current.remainderScore) {
+    return candidate.remainderScore > current.remainderScore
+  }
+  if (candidate.tieScore !== current.tieScore) return candidate.tieScore > current.tieScore
+  return candidate.signature < current.signature
 }
 
 /**
- * Deterministic 48/12/29 split via per-stratum round-robin assignment with a
- * fixed seed. Strata are sorted; within each stratum tasks are shuffled by the
- * seeded RNG, then dealt round-robin into the three labels in the ratio
- * 48:12:29 until sizes are met. This approximates iterative multilabel
- * stratification (spec 04 §3.2) using public metadata only.
+ * Controlled-round the complete stratum × label ideal matrix. Every cell is
+ * floor/ceil of its one frozen global ideal, row/column totals remain exact,
+ * and the globally minimum L1-error matrix wins. Seeded ranks break equal
+ * optima; the canonical matrix signature is the final total-order fallback.
+ */
+function allocateGlobalQuotas(
+  strata: TaskStratum[],
+  targets: LabelCounts,
+  total: number,
+  masterSeed: bigint,
+): LabelCounts[] {
+  if (total === 0) return []
+  const totalBig = BigInt(total)
+  const columnFloors: LabelCounts = { 'dev-observed': 0, 'dev-guard': 0, sealed: 0 }
+  const plans: RoundedStratum[] = strata.map((stratum) => {
+    const floors: LabelCounts = { 'dev-observed': 0, 'dev-guard': 0, sealed: 0 }
+    const remainders = {} as Record<SplitLabel, bigint>
+    const tieRanks = {} as Record<SplitLabel, bigint>
+    let floorSum = 0
+    let eligibleMask = 0
+    for (const [labelIndex, label] of SPLIT_LABELS.entries()) {
+      const numerator = BigInt(stratum.taskIds.length) * BigInt(targets[label])
+      const floor = Number(numerator / totalBig)
+      const remainder = numerator % totalBig
+      floors[label] = floor
+      remainders[label] = remainder
+      columnFloors[label] += floor
+      floorSum += floor
+      if (remainder > 0n) eligibleMask |= 1 << labelIndex
+      tieRanks[label] = new RngStream(
+        masterSeed,
+        JSON.stringify(['split-quota-tie-v1', stratum.key, label]),
+      ).nextU64()
+    }
+    const extraCount = stratum.taskIds.length - floorSum
+    const masks = masksWithCardinality(eligibleMask, extraCount)
+    if (masks.length === 0) {
+      throw new Error(`split: no controlled-rounding choice for stratum ${stratum.key}`)
+    }
+    return { stratum, floors, remainders, tieRanks, masks }
+  })
+
+  const requiredExtras: LabelCounts = {
+    'dev-observed': targets['dev-observed'] - columnFloors['dev-observed'],
+    'dev-guard': targets['dev-guard'] - columnFloors['dev-guard'],
+    sealed: targets.sealed - columnFloors.sealed,
+  }
+  let states = new Map<string, AllocationState>()
+  const empty: LabelCounts = { 'dev-observed': 0, 'dev-guard': 0, sealed: 0 }
+  states.set(stateKey(empty), {
+    used: empty,
+    remainderScore: 0n,
+    tieScore: 0n,
+    signature: '',
+    masks: [],
+  })
+
+  for (const plan of plans) {
+    const next = new Map<string, AllocationState>()
+    for (const state of states.values()) {
+      for (const mask of plan.masks) {
+        const used: LabelCounts = { ...state.used }
+        let remainderScore = state.remainderScore
+        let tieScore = state.tieScore
+        let feasible = true
+        for (const [labelIndex, label] of SPLIT_LABELS.entries()) {
+          if ((mask & (1 << labelIndex)) === 0) continue
+          used[label] += 1
+          if (used[label] > requiredExtras[label]) {
+            feasible = false
+            break
+          }
+          remainderScore += plan.remainders[label]
+          tieScore += plan.tieRanks[label]
+        }
+        if (!feasible) continue
+        const candidate: AllocationState = {
+          used,
+          remainderScore,
+          tieScore,
+          signature: state.signature + mask.toString(16),
+          masks: [...state.masks, mask],
+        }
+        const key = stateKey(used)
+        const current = next.get(key)
+        if (isBetterState(candidate, current)) next.set(key, candidate)
+      }
+    }
+    states = next
+  }
+
+  const winner = states.get(stateKey(requiredExtras))
+  if (winner === undefined || winner.masks.length !== plans.length) {
+    throw new Error('split: global controlled rounding did not converge')
+  }
+  return plans.map((plan, planIndex) => {
+    const quota: LabelCounts = { ...plan.floors }
+    const mask = winner.masks[planIndex]!
+    for (const [labelIndex, label] of SPLIT_LABELS.entries()) {
+      if ((mask & (1 << labelIndex)) !== 0) quota[label] += 1
+    }
+    return quota
+  })
+}
+
+/**
+ * Deterministic globally quota-aware split using public metadata only.
  */
 export function deterministicSplit(
   tasks: TaskMeta[],
@@ -66,41 +278,29 @@ export function deterministicSplit(
   },
 ): SplitAssignment[] {
   const strata = stratify(tasks)
-  const rng = new RngStream(masterSeed, 'split')
-  // Shuffle each stratum deterministically.
-  const shuffled: string[] = []
-  for (const s of strata) {
-    const ids = [...s.taskIds]
-    // Fisher-Yates with the seeded RNG.
-    for (let i = ids.length - 1; i > 0; i--) {
-      const j = Math.floor(rng.nextDouble() * (i + 1))
-      ;[ids[i], ids[j]] = [ids[j]!, ids[i]!]
-    }
-    shuffled.push(...ids)
-  }
-  // Deal round-robin: assign each label its target proportion.
-  const total = sizes.devObserved + sizes.devGuard + sizes.sealed
-  const targets: Array<{ label: SplitLabel; remaining: number }> = [
-    { label: 'dev-observed', remaining: sizes.devObserved },
-    { label: 'dev-guard', remaining: sizes.devGuard },
-    { label: 'sealed', remaining: sizes.sealed },
-  ]
+  const targets = validatedTargetCounts(tasks.length, sizes)
+  const quotas = allocateGlobalQuotas(strata, targets, tasks.length, masterSeed)
   const assignment: SplitAssignment[] = []
-  let labelIdx = 0
-  for (const taskId of shuffled) {
-    // Find the next label that still needs tasks (round-robin by remaining ratio).
-    let attempts = 0
-    while (targets[labelIdx]!.remaining === 0 && attempts < 3) {
-      labelIdx = (labelIdx + 1) % 3
-      attempts++
+  for (const [stratumIndex, stratum] of strata.entries()) {
+    const ids = [...stratum.taskIds]
+    const rng = new RngStream(masterSeed, JSON.stringify(['split-task-order-v1', stratum.key]))
+    shuffleInPlace(ids, rng)
+    const quota = quotas[stratumIndex]!
+    let offset = 0
+    for (const label of SPLIT_LABELS) {
+      const end = offset + quota[label]
+      for (const taskId of ids.slice(offset, end)) assignment.push({ taskId, label })
+      offset = end
     }
-    if (targets.every((t) => t.remaining === 0)) break
-    assignment.push({ taskId, label: targets[labelIdx]!.label })
-    targets[labelIdx]!.remaining -= 1
-    labelIdx = (labelIdx + 1) % 3
+    if (offset !== ids.length) throw new Error(`split: stratum ${stratum.key} was not exhausted`)
   }
-  if (assignment.length !== total) {
-    throw new Error(`split: produced ${assignment.length} assignments, expected ${total}`)
+  const actual: LabelCounts = { 'dev-observed': 0, 'dev-guard': 0, sealed: 0 }
+  for (const row of assignment) actual[row.label] += 1
+  if (
+    assignment.length !== tasks.length ||
+    SPLIT_LABELS.some((label) => actual[label] !== targets[label])
+  ) {
+    throw new Error('split: global assignment did not meet the exact target margins')
   }
   return assignment
 }
