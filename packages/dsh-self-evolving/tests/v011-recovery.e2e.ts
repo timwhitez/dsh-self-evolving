@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,7 +14,33 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-function run(root: string, action: 'proposal' | 'outcome', phase: 'crash' | 'resume') {
+type Action = 'proposal' | 'outcome'
+type CrashPhase =
+  | 'before-entry'
+  | 'during'
+  | 'append-segment-write'
+  | 'append-segment-fsync'
+  | 'append-segment-directory-fsync'
+  | 'append-head-staging-write'
+  | 'append-head-staging-fsync'
+  | 'append-head-rename'
+  | 'append-head-directory-fsync'
+  | 'after-commit'
+type Phase = CrashPhase | 'resume' | 'uninterrupted'
+
+interface WorkerResult {
+  result: { status: 'CREATED' | 'REUSED'; record?: { status: string } }
+  reconciliationStatus: 'CREATED' | 'REUSED'
+  events: Array<{
+    eventId: string
+    eventHash: string
+    type: string
+    payload: Record<string, unknown>
+  }>
+  controller: { eventCount: number; stateHash: string; head: Record<string, unknown> }
+}
+
+function run(root: string, action: Action, phase: Phase) {
   return new Promise<{
     code: number | null
     signal: NodeJS.Signals | null
@@ -41,30 +67,77 @@ function run(root: string, action: 'proposal' | 'outcome', phase: 'crash' | 'res
 }
 
 describe('v0.1.1 rejection and real crash recovery', () => {
-  it('reuses a published proposal after SIGKILL without another model call', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-crash-proposal-'))
-    roots.push(root)
-    expect((await run(root, 'proposal', 'crash')).signal).toBe('SIGKILL')
-    const resumed = await run(root, 'proposal', 'resume')
-    expect(resumed.code, resumed.stderr).toBe(0)
-    expect(JSON.parse(resumed.stdout)).toMatchObject({ status: 'REUSED' })
-    expect((await readFile(join(root, 'model-calls.txt'), 'utf8')).trim().split('\n')).toHaveLength(
-      1,
-    )
-  })
+  it.each(['proposal', 'outcome'] as const)(
+    'converges %s publication across every callback SIGKILL boundary',
+    async (action) => {
+      const baselineRoot = await mkdtemp(
+        join(tmpdir(), `dsh-self-evolving-v011-baseline-${action}-`),
+      )
+      roots.push(baselineRoot)
+      const baselineProcess = await run(baselineRoot, action, 'uninterrupted')
+      expect(baselineProcess.code, baselineProcess.stderr).toBe(0)
+      const baseline = JSON.parse(baselineProcess.stdout) as WorkerResult
+      expect(baseline.result.status).toBe('CREATED')
+      expect(baseline.reconciliationStatus).toBe('CREATED')
+      expect(baseline.events).toHaveLength(2)
+      expect(
+        baseline.events.filter((event) => event.type === 'v011.artifact.reconciled'),
+      ).toHaveLength(1)
 
-  it('reuses exactly one outcome after SIGKILL between settlement and controller commit', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-self-evolving-v011-crash-outcome-'))
-    roots.push(root)
-    expect((await run(root, 'outcome', 'crash')).signal).toBe('SIGKILL')
-    const resumed = await run(root, 'outcome', 'resume')
-    expect(resumed.code, resumed.stderr).toBe(0)
-    const parsed = JSON.parse(resumed.stdout) as { status: string; record: { status: string } }
-    expect(parsed).toMatchObject({ status: 'REUSED', record: { status: 'TARGET_IMPROVED' } })
-    expect(JSON.parse(await readFile(join(root, 'outcome.json'), 'utf8'))).toMatchObject({
-      status: 'TARGET_IMPROVED',
-    })
-  })
+      const crashPhases: CrashPhase[] = [
+        'before-entry',
+        'during',
+        'append-segment-write',
+        'append-segment-fsync',
+        'append-segment-directory-fsync',
+        'append-head-staging-write',
+        'append-head-staging-fsync',
+        'append-head-rename',
+        'append-head-directory-fsync',
+        'after-commit',
+      ]
+      for (const phase of crashPhases) {
+        const root = await mkdtemp(join(tmpdir(), `dsh-self-evolving-v011-${action}-${phase}-`))
+        roots.push(root)
+        expect((await run(root, action, phase)).signal).toBe('SIGKILL')
+        if (phase === 'during') {
+          expect(await readFile(join(root, 'callback-started.txt'), 'utf8')).toMatch(
+            /^sha256:[0-9a-f]{64}\n$/,
+          )
+        }
+
+        const resumedProcess = await run(root, action, 'resume')
+        expect(resumedProcess.code, resumedProcess.stderr).toBe(0)
+        const resumed = JSON.parse(resumedProcess.stdout) as WorkerResult
+        expect(resumed.result.status).toBe('REUSED')
+        expect(resumed.events).toEqual(baseline.events)
+        expect(resumed.controller).toEqual(baseline.controller)
+        const committedBeforeCrash = [
+          'append-head-rename',
+          'append-head-directory-fsync',
+          'after-commit',
+        ].includes(phase)
+        expect(resumed.reconciliationStatus).toBe(committedBeforeCrash ? 'REUSED' : 'CREATED')
+        expect(
+          resumed.events.filter((event) => event.type === 'v011.artifact.reconciled'),
+        ).toHaveLength(1)
+        if (phase.startsWith('append-') && !committedBeforeCrash) {
+          expect(await readdir(join(root, 'journal', 'crash-residue'))).not.toHaveLength(0)
+        }
+        if (action === 'proposal') {
+          expect(
+            (await readFile(join(root, 'model-calls.txt'), 'utf8')).trim().split('\n'),
+          ).toHaveLength(1)
+        } else {
+          expect(resumed.result.record).toMatchObject({ status: 'TARGET_IMPROVED' })
+          expect(JSON.parse(await readFile(join(root, 'outcome.json'), 'utf8'))).toMatchObject({
+            status: 'TARGET_IMPROVED',
+          })
+        }
+      }
+    },
+    60_000,
+  )
 
   it('retains one invalid child, replaces it, and deterministically exhausts three attempts', () => {
     const rejected = { attempt: 1, status: 'REJECTED' as const, classification: 'POLICY_REJECT' }

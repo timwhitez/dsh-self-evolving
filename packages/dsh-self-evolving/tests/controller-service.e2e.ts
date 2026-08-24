@@ -67,6 +67,26 @@ describe('Gate 3 — Cordis controller service lifecycle', () => {
     expect(status.head?.seq).toBe(1)
     expect(status.stateHash).toMatch(/^sha256:[0-9a-f]{64}$/)
 
+    const onceInput = {
+      eventId: 'semantic-event-once',
+      occurredAt: '2026-08-14T00:00:00.000Z',
+      type: 'artifact.reconciled',
+      causationId: 'action-once',
+      correlationId: null,
+      actor: 'controller-service-e2e',
+      payload: { artifactDigest: `sha256:${'a'.repeat(64)}` },
+    }
+    const once = await Promise.all(Array.from({ length: 16 }, () => service!.recordOnce(onceInput)))
+    expect(once.filter((result) => result.status === 'CREATED')).toHaveLength(1)
+    expect(once.filter((result) => result.status === 'REUSED')).toHaveLength(15)
+    expect((await service!.status()).eventCount).toBe(2)
+    await expect(
+      service!.recordOnce({
+        ...onceInput,
+        payload: { artifactDigest: `sha256:${'b'.repeat(64)}` },
+      }),
+    ).rejects.toThrow(/conflicting event reuse/)
+
     await Promise.all(
       Array.from({ length: 16 }, (_, index) =>
         service!.record({
@@ -80,7 +100,7 @@ describe('Gate 3 — Cordis controller service lifecycle', () => {
         }),
       ),
     )
-    expect((await service!.status()).eventCount).toBe(17)
+    expect((await service!.status()).eventCount).toBe(18)
 
     await ctx.fiber.dispose()
     expect(ctx.get('selfEvolving')).toBeUndefined()
@@ -95,7 +115,7 @@ describe('Gate 3 — Cordis controller service lifecycle', () => {
       [statusCli, '--state-dir', root!, '--run-id', 'run-service-e2e'],
       { encoding: 'utf8' },
     )
-    expect((JSON.parse(stdout) as { eventCount: number }).eventCount).toBe(17)
+    expect((JSON.parse(stdout) as { eventCount: number }).eventCount).toBe(18)
     expect(await readFile(join(root!, 'journal', 'HEAD'), 'utf8')).toBe(headBeforeStatus)
 
     // A fresh controller can acquire the same durable run and replay it.
@@ -105,9 +125,10 @@ describe('Gate 3 — Cordis controller service lifecycle', () => {
       runId: 'run-service-e2e',
       segmentMaxBytes: 1_000_000,
     })
-    expect(
-      (await ctx.get<SelfEvolvingBundle.SelfEvolvingService>('selfEvolving')!.status()).eventCount,
-    ).toBe(17)
+    const restarted = ctx.get<SelfEvolvingBundle.SelfEvolvingService>('selfEvolving')!
+    expect((await restarted.status()).eventCount).toBe(18)
+    expect((await restarted.recordOnce(onceInput)).status).toBe('REUSED')
+    expect((await restarted.status()).eventCount).toBe(18)
     await ctx.fiber.dispose()
     ctx = undefined
     const leaked = activeHandleNames().filter((handle) => !baselineHandles.includes(handle))

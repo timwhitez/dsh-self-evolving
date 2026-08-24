@@ -5,9 +5,13 @@ import Schema from '@deepseek-ai/schemastery'
 import {
   acquireLock,
   append,
+  appendOnce,
+  snapshotAppendInput,
   readAll,
   readHead,
   type Journal,
+  type AppendOnceResult,
+  type JournalAppendInput,
   type JournalEvent,
   type LockHandle,
 } from './journal/index.js'
@@ -33,31 +37,27 @@ export const Config: Schema<Config> = Schema.object({
     .default(16 * 1024 * 1024),
 })
 
-export type RecordInput<P = Record<string, unknown>> = Omit<
-  JournalEvent<P>,
-  'schemaVersion' | 'runId' | 'seq' | 'eventHash' | 'previousHash'
-> & { payload: P }
+export type RecordInput<P = Record<string, unknown>> = JournalAppendInput<P>
 
 /**
  * The sole controller capability exposed to trusted in-process consumers.
  * Its writer lock and teardown are owned by the mounting Cordis fiber.
  */
 export class SelfEvolvingService extends Service {
+  readonly config: Readonly<Config>
   readonly journal: Journal
   private lock: LockHandle | undefined
   private acceptingRecords = false
   private writeTail: Promise<void> = Promise.resolve()
 
-  constructor(
-    ctx: Context,
-    readonly config: Config,
-  ) {
+  constructor(ctx: Context, config: Config) {
     super(ctx, 'selfEvolving')
-    this.journal = {
-      journalDir: join(config.stateDir, 'journal'),
-      runId: config.runId,
-      segmentMaxBytes: config.segmentMaxBytes,
-    }
+    this.config = Object.freeze({ ...config })
+    this.journal = Object.freeze({
+      journalDir: join(this.config.stateDir, 'journal'),
+      runId: this.config.runId,
+      segmentMaxBytes: this.config.segmentMaxBytes,
+    })
   }
 
   async start(): Promise<void> {
@@ -88,6 +88,19 @@ export class SelfEvolvingService extends Service {
   }
 
   async record<P = Record<string, unknown>>(input: RecordInput<P>): Promise<JournalEvent<P>> {
+    const frozenInput = snapshotAppendInput(input)
+    return this.withWriter(() => append(this.journal, frozenInput))
+  }
+
+  /** Commit one immutable semantic event, idempotently across action recovery. */
+  async recordOnce<P = Record<string, unknown>>(
+    input: RecordInput<P>,
+  ): Promise<AppendOnceResult<P>> {
+    const frozenInput = snapshotAppendInput(input)
+    return this.withWriter(() => appendOnce(this.journal, frozenInput))
+  }
+
+  private async withWriter<T>(operation: () => Promise<T>): Promise<T> {
     if (this.lock === undefined || !this.acceptingRecords) {
       throw new Error('controller service is not active')
     }
@@ -99,7 +112,7 @@ export class SelfEvolvingService extends Service {
     this.writeTail = previous.then(() => gate)
     await previous
     try {
-      return await append(this.journal, input)
+      return await operation()
     } finally {
       release()
     }

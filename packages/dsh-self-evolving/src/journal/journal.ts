@@ -13,7 +13,8 @@
  * Single-writer lock: an exclusive flock-style lock file with owner + lease.
  * A second writer fails fast rather than corrupting the chain.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import { link, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { types as utilTypes } from 'node:util'
@@ -45,6 +46,30 @@ export interface Journal {
   journalDir: string
   runId: string
   segmentMaxBytes: number
+}
+
+export type JournalAppendInput<P = Record<string, unknown>> = Omit<
+  JournalEvent<P>,
+  'schemaVersion' | 'runId' | 'seq' | 'eventHash' | 'previousHash'
+> & { payload: P }
+
+export interface AppendOnceResult<P = Record<string, unknown>> {
+  status: 'CREATED' | 'REUSED'
+  event: JournalEvent<P>
+}
+
+export type JournalCommitBoundary =
+  | 'segment-write'
+  | 'segment-fsync'
+  | 'segment-directory-fsync'
+  | 'head-staging-write'
+  | 'head-staging-fsync'
+  | 'head-rename'
+  | 'head-directory-fsync'
+
+export interface JournalAppendHooks {
+  /** Internal fault-injection boundary used by process-crash acceptance tests. */
+  afterBoundary?: (boundary: JournalCommitBoundary) => void | Promise<void>
 }
 
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
@@ -252,7 +277,7 @@ function validatedJournalSnapshot(j: Journal): Readonly<Journal> {
   return Object.freeze({ journalDir, runId, segmentMaxBytes })
 }
 
-async function assertNoDurableJournalWithoutHead(j: Journal): Promise<void> {
+async function inspectJournalDirectoryAfterMissingHead(j: Journal): Promise<void> {
   let names: string[]
   try {
     names = await readdir(j.journalDir)
@@ -271,7 +296,11 @@ async function assertNoDurableJournalWithoutHead(j: Journal): Promise<void> {
     }
     throw journalIoError('cannot inspect journal after missing HEAD', error)
   }
-  if (names.some((name) => name === 'HEAD' || name === 'HEAD.tmp' || name.startsWith('events-'))) {
+  // A directory entry named HEAD that readFile reported as ENOENT is a dangling
+  // symlink or a concurrent path race, not an empty journal. Segment bytes and
+  // HEAD.tmp, however, are uncommitted crash residue because HEAD is the v1
+  // commit point; readAll classifies them as outside the committed prefix.
+  if (names.includes('HEAD')) {
     throw new Error('EVIDENCE_CORRUPT: journal contains durable artifacts but HEAD is missing')
   }
 }
@@ -307,42 +336,393 @@ function parseHead(j: Journal, raw: string): JournalHead {
 
 async function readHeadFromSnapshot(j: Readonly<Journal>): Promise<JournalHead | null> {
   const headPath = join(j.journalDir, 'HEAD')
-  let raw: string
+  let raw: Buffer
   try {
-    raw = await readFile(headPath, 'utf8')
+    raw = (await readStableRegularFile(headPath, 'cannot read HEAD')).bytes
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw journalIoError('cannot read HEAD', error)
+      throw error
     }
-    await assertNoDurableJournalWithoutHead(j)
+    await inspectJournalDirectoryAfterMissingHead(j)
     return null
   }
-  return parseHead(j, raw)
+  return parseHead(j, raw.toString('utf8'))
 }
 
 export async function readHead(j: Journal): Promise<JournalHead | null> {
   return readHeadFromSnapshot(validatedJournalSnapshot(j))
 }
 
-async function writeHead(j: Journal, head: JournalHead): Promise<void> {
+async function writeHead(
+  j: Journal,
+  head: JournalHead,
+  hooks: JournalAppendHooks | undefined,
+): Promise<void> {
   const headPath = join(j.journalDir, 'HEAD')
   const tmpPath = headPath + '.tmp'
-  const fh = await open(tmpPath, 'w')
+  const fh = await open(tmpPath, 'wx', 0o600)
   try {
     await fh.writeFile(canonicalJson(head) + '\n')
+    await hooks?.afterBoundary?.('head-staging-write')
     await fh.sync()
+    await hooks?.afterBoundary?.('head-staging-fsync')
   } finally {
     await fh.close()
   }
   await rename(tmpPath, headPath)
+  await hooks?.afterBoundary?.('head-rename')
   const dirFh = await open(j.journalDir, 'r')
   try {
     await dirFh.sync()
-  } catch {
-    // fsync dir best-effort
+    await hooks?.afterBoundary?.('head-directory-fsync')
   } finally {
     await dirFh.close()
   }
+}
+
+interface SegmentEntry {
+  name: string
+  index: number
+}
+
+interface StableFileSnapshot {
+  bytes: Buffer
+  dev: number
+  ino: number
+}
+
+interface CommittedJournalState {
+  head: JournalHead | null
+  events: JournalEvent[]
+  segments: SegmentEntry[]
+  headSegmentBytes: Buffer | null
+  headEndOffset: number
+}
+
+async function listJournalSegments(
+  j: Readonly<Journal>,
+  allowMissingDirectory: boolean,
+): Promise<SegmentEntry[]> {
+  let names: string[]
+  try {
+    names = await readdir(j.journalDir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' && allowMissingDirectory) return []
+    throw journalIoError('cannot enumerate segments', error)
+  }
+  const candidates = names
+    .filter((name) => name.startsWith('events-'))
+    .map((name) => ({ index: parseSegmentIndex(name), name }))
+  if (candidates.some(({ index }) => index === null)) {
+    fail('EVIDENCE_CORRUPT', 'journal contains an invalid segment filename')
+  }
+  return candidates
+    .map(({ index, name }) => ({ index: index!, name }))
+    .sort((left, right) => left.index - right.index)
+}
+
+async function readStableRegularFile(path: string, context: string): Promise<StableFileSnapshot> {
+  let file
+  try {
+    file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+  } catch (error) {
+    throw journalIoError(context, error)
+  }
+  try {
+    const [held, canonical] = await Promise.all([file.stat(), lstat(path)])
+    if (
+      !held.isFile() ||
+      !canonical.isFile() ||
+      held.dev !== canonical.dev ||
+      held.ino !== canonical.ino
+    ) {
+      throw new Error(`EVIDENCE_CORRUPT: ${context} is not one stable regular file`)
+    }
+    return { bytes: await file.readFile(), dev: held.dev, ino: held.ino }
+  } finally {
+    await file.close()
+  }
+}
+
+async function readCommittedJournalState(j: Readonly<Journal>): Promise<CommittedJournalState> {
+  const head = await readHeadFromSnapshot(j)
+  const segments = await listJournalSegments(j, head === null)
+  if (head === null) {
+    return { head, events: [], segments, headSegmentBytes: null, headEndOffset: 0 }
+  }
+
+  const headIndex = parseSegmentIndex(head.segment)!
+  const events: JournalEvent[] = []
+  let expectedPreviousHash: string | null = null
+  let expectedSeq = 1
+  let headSegmentBytes: Buffer | null = null
+  let headEndOffset = 0
+  let foundHead = false
+
+  for (const segment of segments) {
+    if (segment.index > headIndex) break
+    const snapshot = await readStableRegularFile(
+      segmentPath(j, segment.name),
+      `cannot read segment ${segment.name}`,
+    )
+    const raw = snapshot.bytes
+    if (raw.length === 0) fail('EVIDENCE_CORRUPT', `journal segment ${segment.name} is empty`)
+    let offset = 0
+    let segmentEvents = 0
+    while (offset < raw.length) {
+      const terminator = raw.indexOf(0x0a, offset)
+      if (terminator === -1) {
+        fail(
+          'EVIDENCE_CORRUPT',
+          `journal segment ${segment.name} is missing a committed record terminator`,
+        )
+      }
+      const line = raw.subarray(offset, terminator).toString('utf8')
+      offset = terminator + 1
+      if (line.trim() === '') {
+        fail('EVIDENCE_CORRUPT', `journal segment ${segment.name} contains a blank record`)
+      }
+      let decoded: unknown
+      try {
+        decoded = JSON.parse(line) as unknown
+      } catch (error) {
+        fail('EVIDENCE_CORRUPT', `journal event ${expectedSeq} is not valid JSON`, error)
+      }
+      if (canonicalJson(decoded) !== line) {
+        fail('EVIDENCE_CORRUPT', `journal event ${expectedSeq} is not canonically encoded`)
+      }
+      const event = parseEvent(j, decoded, expectedSeq)
+      if (event.previousHash !== expectedPreviousHash) {
+        throw new Error(`EVIDENCE_CORRUPT: previousHash break at seq ${event.seq}`)
+      }
+      const recomputed = computeEventHash(event as unknown as Omit<JournalEvent, 'eventHash'>)
+      if (recomputed !== event.eventHash) {
+        throw new Error(`EVIDENCE_CORRUPT: eventHash mismatch at seq ${event.seq}`)
+      }
+      events.push(event)
+      expectedPreviousHash = event.eventHash
+      expectedSeq = event.seq + 1
+      segmentEvents += 1
+
+      if (segment.name === head.segment && event.seq === head.seq) {
+        if (event.eventHash !== head.eventHash) {
+          fail('EVIDENCE_CORRUPT', 'journal HEAD does not identify the exact committed event')
+        }
+        foundHead = true
+        headSegmentBytes = raw
+        headEndOffset = offset
+        break
+      }
+    }
+    if (segmentEvents === 0) fail('EVIDENCE_CORRUPT', `journal segment ${segment.name} is empty`)
+    if (segment.name === head.segment) break
+  }
+
+  if (!foundHead || headSegmentBytes === null || events.length !== head.seq) {
+    fail('EVIDENCE_CORRUPT', 'journal HEAD does not identify an exact verified event')
+  }
+  return { head, events, segments, headSegmentBytes, headEndOffset }
+}
+
+async function syncDirectoryStrict(path: string): Promise<void> {
+  const directory = await open(path, 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
+  }
+}
+
+async function persistCrashResidue(
+  j: Readonly<Journal>,
+  label: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const residueDir = join(j.journalDir, 'crash-residue')
+  await mkdir(residueDir, { recursive: true, mode: 0o700 })
+  const residueInfo = await lstat(residueDir)
+  if (!residueInfo.isDirectory() || residueInfo.isSymbolicLink()) {
+    fail('EVIDENCE_CORRUPT', 'journal crash-residue path is not a real directory')
+  }
+  // Make the evidence directory identity durable before any source bytes can
+  // be truncated or unlinked.
+  await syncDirectoryStrict(j.journalDir)
+  const fingerprint = createHash('sha256').update(bytes).digest('hex')
+  const destination = join(residueDir, `${label}.uncommitted-${fingerprint}`)
+  const staging = `${destination}.staging-${process.pid}-${randomUUID()}`
+  const file = await open(staging, 'wx', 0o600)
+  try {
+    await file.writeFile(bytes)
+    await file.sync()
+  } finally {
+    await file.close()
+  }
+  try {
+    try {
+      await link(staging, destination)
+      await syncDirectoryStrict(residueDir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const existing = await readStableRegularFile(destination, 'cannot verify crash residue')
+      if (!existing.bytes.equals(Buffer.from(bytes))) {
+        fail('EVIDENCE_CORRUPT', `journal crash-residue collision for ${label}`)
+      }
+      await syncDirectoryStrict(residueDir)
+    }
+  } finally {
+    await rm(staging, { force: true })
+  }
+}
+
+async function quarantineWholeFile(j: Readonly<Journal>, name: string): Promise<void> {
+  const source = join(j.journalDir, name)
+  const snapshot = await readStableRegularFile(source, `cannot quarantine ${name}`)
+  await persistCrashResidue(j, name, snapshot.bytes)
+  const current = await lstat(source)
+  if (current.dev !== snapshot.dev || current.ino !== snapshot.ino || !current.isFile()) {
+    fail('EVIDENCE_CORRUPT', `journal residue ${name} changed during quarantine`)
+  }
+  await rm(source)
+  await syncDirectoryStrict(j.journalDir)
+}
+
+async function truncateHeadSegmentResidue(
+  j: Readonly<Journal>,
+  committed: CommittedJournalState,
+): Promise<void> {
+  const head = committed.head!
+  const expected = committed.headSegmentBytes!
+  const path = segmentPath(j, head.segment)
+  let file
+  try {
+    file = await open(path, fsConstants.O_RDWR | fsConstants.O_NOFOLLOW)
+  } catch (error) {
+    throw journalIoError(`cannot repair segment ${head.segment}`, error)
+  }
+  try {
+    const [held, canonical] = await Promise.all([file.stat(), lstat(path)])
+    if (
+      !held.isFile() ||
+      !canonical.isFile() ||
+      held.dev !== canonical.dev ||
+      held.ino !== canonical.ino
+    ) {
+      fail('EVIDENCE_CORRUPT', `journal segment ${head.segment} changed during repair`)
+    }
+    const current = await file.readFile()
+    if (
+      current.length < committed.headEndOffset ||
+      !current
+        .subarray(0, committed.headEndOffset)
+        .equals(expected.subarray(0, committed.headEndOffset))
+    ) {
+      fail('EVIDENCE_CORRUPT', `journal committed prefix changed during repair`)
+    }
+    if (current.length === committed.headEndOffset) return
+    await persistCrashResidue(
+      j,
+      `${head.segment}.after-seq-${head.seq}`,
+      current.subarray(committed.headEndOffset),
+    )
+    await file.truncate(committed.headEndOffset)
+    await file.sync()
+  } finally {
+    await file.close()
+  }
+}
+
+async function activeSegmentEndsAtHead(j: Readonly<Journal>, head: JournalHead): Promise<boolean> {
+  const path = segmentPath(j, head.segment)
+  let file
+  try {
+    file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+  } catch (error) {
+    throw journalIoError(`cannot inspect active segment ${head.segment}`, error)
+  }
+  try {
+    const [held, canonical] = await Promise.all([file.stat(), lstat(path)])
+    if (
+      !held.isFile() ||
+      !canonical.isFile() ||
+      held.dev !== canonical.dev ||
+      held.ino !== canonical.ino ||
+      held.size <= 0
+    ) {
+      return false
+    }
+    const finalByte = Buffer.alloc(1)
+    const finalRead = await file.read(finalByte, 0, 1, held.size - 1)
+    if (finalRead.bytesRead !== 1 || finalByte[0] !== 0x0a) return false
+
+    const pieces: Buffer[] = []
+    let cursor = held.size - 1
+    while (cursor > 0) {
+      const length = Math.min(64 * 1024, cursor)
+      const start = cursor - length
+      const chunk = Buffer.alloc(length)
+      const read = await file.read(chunk, 0, length, start)
+      if (read.bytesRead !== length) return false
+      const separator = chunk.lastIndexOf(0x0a)
+      if (separator !== -1) {
+        pieces.unshift(chunk.subarray(separator + 1))
+        break
+      }
+      pieces.unshift(chunk)
+      cursor = start
+    }
+    const line = Buffer.concat(pieces).toString('utf8')
+    try {
+      const decoded = JSON.parse(line) as unknown
+      if (canonicalJson(decoded) !== line) return false
+      const event = parseEvent(j, decoded, head.seq)
+      return (
+        event.eventHash === head.eventHash &&
+        computeEventHash(event as unknown as Omit<JournalEvent, 'eventHash'>) === event.eventHash
+      )
+    } catch {
+      return false
+    }
+  } finally {
+    await file.close()
+  }
+}
+
+async function journalMayContainUncommittedResidue(j: Readonly<Journal>): Promise<boolean> {
+  const head = await readHeadFromSnapshot(j)
+  const segments = await listJournalSegments(j, head === null)
+  const stagingExists = await lstat(join(j.journalDir, 'HEAD.tmp')).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return false
+      throw error
+    },
+  )
+  if (head === null) return stagingExists || segments.length > 0
+  if (stagingExists) return true
+  const headIndex = parseSegmentIndex(head.segment)!
+  if (segments.some((segment) => segment.index > headIndex)) return true
+  return !(await activeSegmentEndsAtHead(j, head))
+}
+
+async function recoverUncommittedJournalResidue(j: Readonly<Journal>): Promise<void> {
+  if (!(await journalMayContainUncommittedResidue(j))) return
+  const committed = await readCommittedJournalState(j)
+  if (committed.head === null) {
+    for (const segment of committed.segments) await quarantineWholeFile(j, segment.name)
+  } else {
+    await truncateHeadSegmentResidue(j, committed)
+    const headIndex = parseSegmentIndex(committed.head.segment)!
+    for (const segment of committed.segments) {
+      if (segment.index > headIndex) await quarantineWholeFile(j, segment.name)
+    }
+  }
+  const staging = await lstat(join(j.journalDir, 'HEAD.tmp')).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    },
+  )
+  if (staging !== null) await quarantineWholeFile(j, 'HEAD.tmp')
 }
 
 async function selectAppendSegment(
@@ -371,21 +751,7 @@ async function selectAppendSegment(
   return head.segment
 }
 
-/**
- * Append an event to the journal, computing its hash from the current HEAD.
- * Returns the committed event (with seq + eventHash filled in).
- *
- * This is the ONLY writer path. Callers must hold the single-writer lock.
- */
-export async function append<P>(
-  j: Journal,
-  partial: Omit<
-    JournalEvent<P>,
-    'schemaVersion' | 'runId' | 'seq' | 'eventHash' | 'previousHash'
-  > & {
-    payload: P
-  },
-): Promise<JournalEvent<P>> {
+export function snapshotAppendInput<P>(partial: JournalAppendInput<P>): JournalAppendInput<P> {
   assertExactObject(partial, APPEND_KEYS, 'journal: append input')
   if (!isProtocolText(partial.eventId)) throw new Error('journal: append eventId is invalid')
   if (!isCanonicalTimestamp(partial.occurredAt)) {
@@ -407,10 +773,25 @@ export async function append<P>(
     throw new Error('journal: append payload must be a JSON object')
   }
   assertJsonValue(partial.payload, 'journal: append payload')
+  return JSON.parse(canonicalJson(partial)) as JournalAppendInput<P>
+}
+
+/**
+ * Append an event to the journal, computing its hash from the current HEAD.
+ * Returns the committed event (with seq + eventHash filled in).
+ *
+ * This is the ONLY writer path. Callers must hold the single-writer lock.
+ */
+export async function append<P>(
+  j: Journal,
+  partial: JournalAppendInput<P>,
+  hooks?: JournalAppendHooks,
+): Promise<JournalEvent<P>> {
   const frozenJournal = validatedJournalSnapshot(j)
-  const frozenPartial = JSON.parse(canonicalJson(partial)) as typeof partial
+  const frozenPartial = snapshotAppendInput(partial)
 
   await mkdir(frozenJournal.journalDir, { recursive: true })
+  await recoverUncommittedJournalResidue(frozenJournal)
   const head = await readHeadFromSnapshot(frozenJournal)
   const seq = head === null ? 1 : head.seq + 1
   if (!Number.isSafeInteger(seq) || seq <= 0) {
@@ -438,11 +819,12 @@ export async function append<P>(
   try {
     // New segments are evidence identities. Exclusive creation prevents a
     // restart or lock failure from appending over an orphan/crash residue.
-    segmentFile = await open(
-      segmentPath(frozenJournal, segment),
-      createsSegment ? 'ax' : 'a',
-      0o600,
-    )
+    const flags =
+      fsConstants.O_WRONLY |
+      fsConstants.O_APPEND |
+      fsConstants.O_NOFOLLOW |
+      (createsSegment ? fsConstants.O_CREAT | fsConstants.O_EXCL : 0)
+    segmentFile = await open(segmentPath(frozenJournal, segment), flags, 0o600)
   } catch (error) {
     throw journalIoError(
       `${createsSegment ? 'cannot create' : 'cannot open'} segment ${segment}`,
@@ -450,20 +832,84 @@ export async function append<P>(
     )
   }
   try {
+    const [held, canonical] = await Promise.all([
+      segmentFile.stat(),
+      lstat(segmentPath(frozenJournal, segment)),
+    ])
+    if (
+      !held.isFile() ||
+      !canonical.isFile() ||
+      held.dev !== canonical.dev ||
+      held.ino !== canonical.ino
+    ) {
+      fail('EVIDENCE_CORRUPT', `journal append segment ${segment} is not one stable regular file`)
+    }
     await segmentFile.writeFile(line, { encoding: 'utf8' })
+    await hooks?.afterBoundary?.('segment-write')
     // The chain event must reach durable storage before HEAD can point at it.
     await segmentFile.sync()
+    await hooks?.afterBoundary?.('segment-fsync')
+    if (createsSegment) {
+      // A new HEAD must never become durable while its segment directory entry
+      // can still disappear after host failure.
+      await syncDirectoryStrict(frozenJournal.journalDir)
+      await hooks?.afterBoundary?.('segment-directory-fsync')
+    }
   } finally {
     await segmentFile.close()
   }
-  await writeHead(frozenJournal, {
-    schemaVersion: 1,
-    runId: frozenJournal.runId,
-    seq,
-    eventHash,
-    segment,
-  })
+  await writeHead(
+    frozenJournal,
+    {
+      schemaVersion: 1,
+      runId: frozenJournal.runId,
+      seq,
+      eventHash,
+      segment,
+    },
+    hooks,
+  )
   return event
+}
+
+function appendInputFromEvent<P>(event: JournalEvent<P>): JournalAppendInput<P> {
+  return {
+    eventId: event.eventId,
+    occurredAt: event.occurredAt,
+    type: event.type,
+    causationId: event.causationId,
+    correlationId: event.correlationId,
+    actor: event.actor,
+    payload: event.payload,
+  }
+}
+
+/**
+ * Append one immutable semantic event, or return the byte-equivalent event
+ * already committed under the same eventId. Callers must hold the journal's
+ * single-writer lock and serialize this read/append transaction.
+ */
+export async function appendOnce<P>(
+  j: Journal,
+  partial: JournalAppendInput<P>,
+  hooks?: JournalAppendHooks,
+): Promise<AppendOnceResult<P>> {
+  const frozenJournal = validatedJournalSnapshot(j)
+  const frozenPartial = snapshotAppendInput(partial)
+  const matches = (await readAll(frozenJournal)).filter(
+    (event) => event.eventId === frozenPartial.eventId,
+  )
+  if (matches.length > 1) {
+    throw new Error(`EVIDENCE_CORRUPT: duplicate journal eventId ${frozenPartial.eventId}`)
+  }
+  const existing = matches[0]
+  if (existing !== undefined) {
+    if (canonicalJson(appendInputFromEvent(existing)) !== canonicalJson(frozenPartial)) {
+      throw new Error(`journal: conflicting event reuse for eventId ${frozenPartial.eventId}`)
+    }
+    return { status: 'REUSED', event: existing as JournalEvent<P> }
+  }
+  return { status: 'CREATED', event: await append(frozenJournal, frozenPartial, hooks) }
 }
 
 function parseEvent(j: Journal, value: unknown, expectedSeq: number): JournalEvent {
@@ -514,77 +960,7 @@ function parseEvent(j: Journal, value: unknown, expectedSeq: number): JournalEve
  */
 export async function readAll(j: Journal): Promise<JournalEvent[]> {
   const frozenJournal = validatedJournalSnapshot(j)
-  const events: JournalEvent[] = []
-  const head = await readHeadFromSnapshot(frozenJournal)
-  if (head === null) return events
-  // Walk segments in order.
-  let segmentFiles: string[]
-  try {
-    const names = await readdir(frozenJournal.journalDir)
-    const candidates = names
-      .filter((name) => name.startsWith('events-'))
-      .map((name) => ({ index: parseSegmentIndex(name), name }))
-    if (candidates.some(({ index }) => index === null)) {
-      fail('EVIDENCE_CORRUPT', 'journal contains an invalid segment filename')
-    }
-    segmentFiles = candidates
-      .sort((left, right) => left.index! - right.index!)
-      .map(({ name }) => name)
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('EVIDENCE_CORRUPT:')) throw error
-    throw journalIoError('cannot enumerate segments after reading HEAD', error)
-  }
-  let expectedPrev: string | null = null
-  let expectedSeq = 1
-  let tailSegment: string | null = null
-  for (const seg of segmentFiles) {
-    const raw = await readFile(join(frozenJournal.journalDir, seg), 'utf8')
-    if (raw.length === 0) fail('EVIDENCE_CORRUPT', `journal segment ${seg} is empty`)
-    if (!raw.endsWith('\n')) {
-      fail('EVIDENCE_CORRUPT', `journal segment ${seg} is missing its record terminator`)
-    }
-    const lines = raw.split('\n')
-    let segmentEvents = 0
-    for (const [lineIndex, line] of lines.entries()) {
-      if (line === '' && lineIndex === lines.length - 1) continue
-      if (line.trim() === '') {
-        fail('EVIDENCE_CORRUPT', `journal segment ${seg} contains a blank record`)
-      }
-      let decoded: unknown
-      try {
-        decoded = JSON.parse(line) as unknown
-      } catch (error) {
-        fail('EVIDENCE_CORRUPT', `journal event ${expectedSeq} is not valid JSON`, error)
-      }
-      if (canonicalJson(decoded) !== line) {
-        fail('EVIDENCE_CORRUPT', `journal event ${expectedSeq} is not canonically encoded`)
-      }
-      const ev = parseEvent(frozenJournal, decoded, expectedSeq)
-      if (ev.previousHash !== expectedPrev) {
-        throw new Error(`EVIDENCE_CORRUPT: previousHash break at seq ${ev.seq}`)
-      }
-      const recomputed = computeEventHash(ev as unknown as Omit<JournalEvent, 'eventHash'>)
-      if (recomputed !== ev.eventHash) {
-        throw new Error(`EVIDENCE_CORRUPT: eventHash mismatch at seq ${ev.seq}`)
-      }
-      events.push(ev)
-      expectedPrev = ev.eventHash
-      expectedSeq = ev.seq + 1
-      tailSegment = seg
-      segmentEvents += 1
-    }
-    if (segmentEvents === 0) fail('EVIDENCE_CORRUPT', `journal segment ${seg} is empty`)
-  }
-  const tail = events.at(-1)
-  if (
-    tail === undefined ||
-    head.seq !== tail.seq ||
-    head.eventHash !== tail.eventHash ||
-    head.segment !== tailSegment
-  ) {
-    throw new Error('EVIDENCE_CORRUPT: HEAD does not match the durable journal chain tail')
-  }
-  return events
+  return (await readCommittedJournalState(frozenJournal)).events
 }
 
 /**

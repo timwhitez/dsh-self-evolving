@@ -136,18 +136,24 @@ describe('journal byte-size segmentation', () => {
     }
   })
 
-  it('fails closed instead of appending over a pre-existing rotation target', async () => {
+  it('quarantines a pre-existing uncommitted rotation target before append', async () => {
     const j = journal(1, 'orphan-target')
-    const first = await appendFixture(j, 1)
+    await appendFixture(j, 1)
     const target = join(j.journalDir, 'events-000002.jsonl')
     await writeFile(target, 'orphan crash residue\n')
 
-    await expect(appendFixture(j, 2)).rejects.toMatchObject({ code: 'EEXIST' })
-    expect(await readFile(target, 'utf8')).toBe('orphan crash residue\n')
+    const second = await appendFixture(j, 2)
+    expect(second.seq).toBe(2)
+    expect(await readFile(target, 'utf8')).toContain('"seq":2')
+    const residueNames = await readdir(join(j.journalDir, 'crash-residue'))
+    expect(residueNames).toHaveLength(1)
+    expect(await readFile(join(j.journalDir, 'crash-residue', residueNames[0]!), 'utf8')).toBe(
+      'orphan crash residue\n',
+    )
     expect(await readHead(j)).toMatchObject({
-      seq: 1,
-      eventHash: first.eventHash,
-      segment: 'events-000001.jsonl',
+      seq: 2,
+      eventHash: second.eventHash,
+      segment: 'events-000002.jsonl',
     })
   })
 
@@ -155,7 +161,7 @@ describe('journal byte-size segmentation', () => {
     const empty = journal(1_000_000, 'empty-active')
     await appendFixture(empty, 1)
     await writeFile(join(empty.journalDir, 'events-000001.jsonl'), '')
-    await expect(appendFixture(empty, 2)).rejects.toThrow(/HEAD segment is empty/)
+    await expect(appendFixture(empty, 2)).rejects.toThrow(/segment.*is empty/)
 
     const linked = journal(1_000_000, 'linked-active')
     await appendFixture(linked, 1)
@@ -165,7 +171,7 @@ describe('journal byte-size segmentation', () => {
     await rm(linkedSegment)
     await symlink(outside, linkedSegment)
 
-    await expect(appendFixture(linked, 2)).rejects.toThrow(/not a regular file/)
+    await expect(appendFixture(linked, 2)).rejects.toThrow(/not a regular file|ELOOP/)
     expect(await readFile(outside, 'utf8')).toBe('outside bytes\n')
   })
 })
