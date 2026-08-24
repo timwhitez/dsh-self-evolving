@@ -139,10 +139,7 @@ describe('mechanism outcome trial pairing', () => {
   })
 
   it('keeps duplicate evidence deterministic and schema-valid', async () => {
-    const trials = [
-      trial('3', 'target-baseline', 'fail'),
-      trial('3', 'target-child', 'pass'),
-    ]
+    const trials = [trial('3', 'target-baseline', 'fail'), trial('3', 'target-child', 'pass')]
     const first = await deriveMechanismOutcome({ ...baseInput, trials })
     const second = await deriveMechanismOutcome({ ...baseInput, trials: [...trials].reverse() })
     expect(first).toEqual(second)
