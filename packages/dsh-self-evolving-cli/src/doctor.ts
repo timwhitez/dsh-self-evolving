@@ -4,6 +4,7 @@ import { constants } from 'node:fs'
 import { join } from 'node:path'
 import type { ProjectConfig } from './config.js'
 import { readSourceArchiveIdentity, verifySourceArchiveIdentity } from './source-identity.js'
+import { inspectTaskMaterializations } from './task-materialization.js'
 import {
   loadTrustedRoute,
   OFFICIAL_DEEPSEEK_BASE_URL,
@@ -53,6 +54,29 @@ async function officialModelAvailable(apiKey: string): Promise<boolean> {
   }
 }
 
+function taskMaterializationDetail(input: {
+  expectedCount: number
+  suppliedCount: number
+  malformed: string[]
+  duplicates: string[]
+  missing: string[]
+}): string {
+  const problems: string[] = []
+  if (input.suppliedCount !== input.expectedCount) {
+    problems.push(`planned task count ${input.suppliedCount}/${input.expectedCount}`)
+  }
+  if (input.malformed.length > 0) problems.push(`malformed task ids: ${input.malformed.join(', ')}`)
+  if (input.duplicates.length > 0) {
+    problems.push(`duplicate task ids: ${input.duplicates.join(', ')}`)
+  }
+  if (input.missing.length > 0) {
+    problems.push(`missing planned task material: ${input.missing.join(', ')}`)
+  }
+  return problems.length === 0
+    ? `${input.expectedCount}/${input.expectedCount} planned observed tasks are readable`
+    : problems.join('; ')
+}
+
 export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
   const route = await loadTrustedRoute().catch(() => null)
   const credentialAvailable = route !== null
@@ -66,15 +90,25 @@ export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
   const observed = JSON.parse(await readFile(config.splitCommitmentPath, 'utf8')) as {
     observedTaskIds?: unknown
   }
-  const ids = Array.isArray(observed.observedTaskIds)
-    ? observed.observedTaskIds.filter((id): id is string => typeof id === 'string')
-    : []
-  const taskProbe = ids[0]
+  const observedTaskIds = Array.isArray(observed.observedTaskIds) ? observed.observedTaskIds : []
+  const expectedTaskCount = config.limits.baselineFailureDiscoveryMax
+  const plannedTaskValues = observedTaskIds.slice(0, expectedTaskCount)
+  const taskInspection = await inspectTaskMaterializations(
+    config.terminalBenchRoot,
+    plannedTaskValues,
+  )
   const taskMaterialized =
-    taskProbe !== undefined &&
-    (await access(join(config.terminalBenchRoot, taskProbe, 'task.toml'), constants.R_OK)
-      .then(() => true)
-      .catch(() => false))
+    plannedTaskValues.length === expectedTaskCount &&
+    taskInspection.malformed.length === 0 &&
+    taskInspection.duplicates.length === 0 &&
+    taskInspection.missing.length === 0
+  const taskDetail = taskMaterializationDetail({
+    expectedCount: expectedTaskCount,
+    suppliedCount: plannedTaskValues.length,
+    malformed: taskInspection.malformed,
+    duplicates: taskInspection.duplicates,
+    missing: taskInspection.missing,
+  })
   const gitCommit = await commandOutput('/usr/bin/git', [
     '-C',
     config.repoRoot,
@@ -143,7 +177,7 @@ export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
       await commandOk(join(config.repoRoot, 'harbor', '.venv', 'bin', 'harbor'), ['--help']),
       'pinned Harbor CLI starts',
     ),
-    check('task-materialization', taskMaterialized, 'published observed task material is readable'),
+    check('task-materialization', taskMaterialized, taskDetail),
     check(
       'writable-state',
       await access(config.stateDir, constants.R_OK | constants.W_OK | constants.X_OK)
