@@ -28,7 +28,7 @@ import {
 export interface PilotCapabilities {
   /** Generate >=1 child proposal from a parent. Returns accepted children. */
   propose: (parentDigest: string, parentSource: string) => Promise<ProposedChild[]>
-  /** Build a proposed child into an admitted candidate; returns its digest or null on reject. */
+  /** Build a proposed child into an admitted candidate with a separate content digest. */
   build: (child: ProposedChild) => Promise<{ candidateId: string; digest: string } | null>
   /** Evaluate a candidate on one dev task; returns reward. */
   evaluate: (
@@ -56,9 +56,14 @@ export interface PilotObservation {
   wallSec: number
 }
 
-/** The pilot's archive view (NodeUtility + pilot observations). */
+/** Scheduler identity plus immutable canonical content identity. */
+export interface PilotNode extends NodeUtility {
+  digest: string
+}
+
+/** The pilot's archive view (NodeUtility + canonical digest + observations). */
 export interface PilotArchive {
-  nodes: NodeUtility[]
+  nodes: PilotNode[]
   observations: PilotObservation[]
 }
 
@@ -83,9 +88,14 @@ export interface PilotState {
   reason: string | null
 }
 
-export function initialPilotState(baselineId: string, config: PilotConfig): PilotState {
-  const baselineNode: NodeUtility = {
+export function initialPilotState(
+  baselineId: string,
+  config: PilotConfig,
+  baselineDigest: string = baselineId,
+): PilotState {
+  const baselineNode: PilotNode = {
     candidateId: baselineId,
+    digest: baselineDigest,
     canonicalParent: null,
     donorCandidates: [],
     s: 0,
@@ -150,7 +160,7 @@ export async function runPilotLoop(
   baselineDigest: string,
   config: PilotConfig,
   caps: PilotCapabilities,
-  state: PilotState = initialPilotState(baselineId, config),
+  state: PilotState = initialPilotState(baselineId, config, baselineDigest),
 ): Promise<PilotState> {
   validateDevTaskIds(config.devTaskIds)
   // PilotConfig predates SearchParams.K. Treat the explicit pilot K as the
@@ -201,23 +211,30 @@ export async function runPilotLoop(
         state.reason = 'NO_ELIGIBLE_PARENT'
         break
       }
-      const parentDigest = parentId === baselineId ? baselineDigest : `sha256:${parentId}`
+      const parentNode = state.archive.nodes.find((node) => node.candidateId === parentId)
+      if (parentNode === undefined) {
+        throw new Error(`pilot: selected parent is absent from archive: ${parentId}`)
+      }
       const parentSrc = parentId === baselineId ? baselineSource : ''
-      const children = await caps.propose(parentDigest, parentSrc)
+      const children = await caps.propose(parentNode.digest, parentSrc)
       for (const child of children) {
         const built = await caps.build(child)
         if (built === null) {
           state.buildRejects += 1
           continue
         }
-        // Dedup: if the digest already exists, record a duplicate edge, not a new candidate.
-        const existing = state.archive.nodes.find((n) => n.candidateId === built.digest)
+        // Dedup is content-addressed, while scheduler/evaluator identity remains candidateId.
+        const existing = state.archive.nodes.find((node) => node.digest === built.digest)
         if (existing) {
           state.duplicateEdges += 1
           continue
         }
-        const newNode: NodeUtility = {
-          candidateId: built.digest,
+        if (state.archive.nodes.some((node) => node.candidateId === built.candidateId)) {
+          throw new Error(`pilot: candidate id reused for different content: ${built.candidateId}`)
+        }
+        const newNode: PilotNode = {
+          candidateId: built.candidateId,
+          digest: built.digest,
           canonicalParent: parentId,
           donorCandidates: child.donorCandidates,
           s: 0,
