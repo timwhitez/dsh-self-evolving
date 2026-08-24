@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/issue-47-stable-capability-ledger-order
+  pull_request:
 
 permissions:
   contents: read
