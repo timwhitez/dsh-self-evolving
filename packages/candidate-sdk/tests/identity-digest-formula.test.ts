@@ -3,11 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  buildCanonicalArchive,
-  candidateIdFromArchive,
-  declareFiles,
-} from '../src/index.js'
+import { buildCanonicalArchive, candidateIdFromArchive, declareFiles } from '../src/index.js'
 
 const roots: string[] = []
 
@@ -18,9 +14,7 @@ afterEach(async () => {
 /** Independent bit-string reference implementation for the test oracle. */
 function base32Prefix(bytes: Uint8Array, length = 26): string {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz234567'
-  const bitString = [...bytes]
-    .map((byte) => byte.toString(2).padStart(8, '0'))
-    .join('')
+  const bitString = [...bytes].map((byte) => byte.toString(2).padStart(8, '0')).join('')
   let output = ''
   for (let offset = 0; output.length < length; offset += 5) {
     const chunk = bitString.slice(offset, offset + 5).padEnd(5, '0')
@@ -47,9 +41,7 @@ describe('candidate ID digest formula', () => {
     const archive = await archiveWithContent('export const value = 1\n')
 
     expect(archive.candidateId).toBe(expectedCandidateId(archive.bytes))
-    expect(archive.candidateId).toBe(
-      `c_${base32Prefix(Buffer.from(archive.hash, 'hex'))}`,
-    )
+    expect(archive.candidateId).toBe(`c_${base32Prefix(Buffer.from(archive.hash, 'hex'))}`)
     expect(candidateIdFromArchive(archive.bytes)).toEqual({
       hash: archive.hash,
       candidateId: archive.candidateId,

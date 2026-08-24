@@ -28,11 +28,13 @@ function config(overrides: Partial<PilotConfig> = {}): PilotConfig {
 }
 
 /** Deterministic stub capabilities: each proposal produces a unique child. */
-function stubCaps(options: {
-  duplicateEvery?: number
-  rejectEvery?: number
-  evalReward?: 0 | 1
-} = {}): PilotCapabilities & { calls: { propose: number; build: number; evaluate: number } } {
+function stubCaps(
+  options: {
+    duplicateEvery?: number
+    rejectEvery?: number
+    evalReward?: 0 | 1
+  } = {},
+): PilotCapabilities & { calls: { propose: number; build: number; evaluate: number } } {
   const calls = { propose: 0, build: 0, evaluate: 0 }
   let childSeq = 0
   const caps: PilotCapabilities & { calls: typeof calls } = {
@@ -75,13 +77,7 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
   it('autonomously admits K candidates and terminates', async () => {
     const cfg = config({ K: 4 })
     const caps = stubCaps()
-    const result = await runPilotLoop(
-      'baseline',
-      BASELINE_SOURCE,
-      BASELINE_DIGEST,
-      cfg,
-      caps,
-    )
+    const result = await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps)
     expect(result.terminal).toBe(true)
     expect(result.admittedCount).toBeGreaterThanOrEqual(4)
     expect(result.reason).toMatch(/SEARCH_COMPLETE/)
@@ -133,14 +129,7 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
       },
     }
 
-    await runPilotLoop(
-      'baseline',
-      BASELINE_SOURCE,
-      BASELINE_DIGEST,
-      cfg,
-      caps,
-      resumed,
-    )
+    await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps, resumed)
 
     expect(seen).toEqual([{ digest: childDigest, source: childSource }])
   })
@@ -158,13 +147,7 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
   it('deduplicates children with the same canonical digest', async () => {
     const cfg = config({ K: 3, B_eval: 5 })
     const caps = stubCaps({ duplicateEvery: 1 })
-    const result = await runPilotLoop(
-      'baseline',
-      BASELINE_SOURCE,
-      BASELINE_DIGEST,
-      cfg,
-      caps,
-    )
+    const result = await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps)
     expect(result.duplicateEdges).toBeGreaterThan(0)
     const ids = result.archive.nodes.map((n) => n.candidateId)
     expect(new Set(ids).size).toBe(ids.length)
@@ -173,13 +156,7 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
   it('records build rejects without admitting the child', async () => {
     const cfg = config({ K: 3, B_eval: 5 })
     const caps = stubCaps({ rejectEvery: 1 })
-    const result = await runPilotLoop(
-      'baseline',
-      BASELINE_SOURCE,
-      BASELINE_DIGEST,
-      cfg,
-      caps,
-    )
+    const result = await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps)
     expect(result.buildRejects).toBeGreaterThan(0)
     expect(result.admittedCount).toBe(1) // only baseline
   })
@@ -189,13 +166,7 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
     // Force evaluation by setting a large initial archive? The UCB decision will
     // alternate; with K=100 and B_eval=3 it eventually exhausts.
     const caps = stubCaps({ rejectEvery: 1 }) // no new admissions
-    const result = await runPilotLoop(
-      'baseline',
-      BASELINE_SOURCE,
-      BASELINE_DIGEST,
-      cfg,
-      caps,
-    )
+    const result = await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps)
     expect(result.terminal).toBe(true)
     expect(result.reason).toMatch(/B_EVAL_EXHAUSTED|ITERATION_CAP/)
   })
@@ -203,13 +174,7 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
   it('records evaluation observations with attribution', async () => {
     const cfg = config({ K: 3, B_eval: 10 })
     const caps = stubCaps({ evalReward: 1 })
-    const result = await runPilotLoop(
-      'baseline',
-      BASELINE_SOURCE,
-      BASELINE_DIGEST,
-      cfg,
-      caps,
-    )
+    const result = await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps)
     // Depending on UCB scheduling, evaluations should occur before K reached.
     if (result.archive.observations.length > 0) {
       const obs = result.archive.observations[0]!

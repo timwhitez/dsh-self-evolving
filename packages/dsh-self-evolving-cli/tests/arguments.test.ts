@@ -3,30 +3,21 @@ import { parseDshCliArguments } from '../src/arguments.js'
 
 describe('dsh-self-evolving command argument schemas', () => {
   it('rejects a missing init value before the next recognized option', () => {
-    expect(() =>
-      parseDshCliArguments('init', [
-        '--state-dir',
-        '--run-id',
-        'run-1',
-      ]),
-    ).toThrow(/missing required --state-dir/)
+    expect(() => parseDshCliArguments('init', ['--state-dir', '--run-id', 'run-1'])).toThrow(
+      /missing required --state-dir/,
+    )
   })
 
   it('rejects duplicate, unknown, and positional arguments', () => {
     expect(() =>
-      parseDshCliArguments('status', [
-        '--state-dir',
-        '/a',
-        '--state-dir',
-        '/b',
-      ]),
+      parseDshCliArguments('status', ['--state-dir', '/a', '--state-dir', '/b']),
     ).toThrow(/duplicate option --state-dir/)
-    expect(() =>
-      parseDshCliArguments('status', ['--state-dir', '/a', '--typo']),
-    ).toThrow(/unknown option --typo/)
-    expect(() =>
-      parseDshCliArguments('status', ['--state-dir', '/a', 'extra']),
-    ).toThrow(/unexpected positional argument/)
+    expect(() => parseDshCliArguments('status', ['--state-dir', '/a', '--typo'])).toThrow(
+      /unknown option --typo/,
+    )
+    expect(() => parseDshCliArguments('status', ['--state-dir', '/a', 'extra'])).toThrow(
+      /unexpected positional argument/,
+    )
   })
 
   it('accepts inline values and the run-only crash flag', () => {

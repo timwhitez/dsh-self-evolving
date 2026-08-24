@@ -60,8 +60,6 @@ describe('v0.1.1 evidence citation deduplication', () => {
       locator: { endLine: 2, startLine: 1, kind: 'jsonl-lines' },
     })
 
-    expect(
-      deduplicateEvidenceCitations([first, sameLocatorDifferentConstruction]),
-    ).toEqual([first])
+    expect(deduplicateEvidenceCitations([first, sameLocatorDifferentConstruction])).toEqual([first])
   })
 })

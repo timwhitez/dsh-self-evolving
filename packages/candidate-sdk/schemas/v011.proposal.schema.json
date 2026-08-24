@@ -4,19 +4,92 @@
   "title": "v0.1.1 proposal envelope",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "proposalId", "canonicalParentDigest", "evidenceExport", "donorCandidates", "analysisPath", "hypothesis", "evidenceCitations", "declaredOperations", "mechanismAssertions", "preservationAssertions", "capabilityRequests"],
+  "required": [
+    "schemaVersion",
+    "proposalId",
+    "canonicalParentDigest",
+    "evidenceExport",
+    "donorCandidates",
+    "analysisPath",
+    "hypothesis",
+    "evidenceCitations",
+    "declaredOperations",
+    "mechanismAssertions",
+    "preservationAssertions",
+    "capabilityRequests"
+  ],
   "properties": {
     "schemaVersion": { "const": 2 },
     "proposalId": { "type": "string", "pattern": "^p_[0-9a-f]{32}$" },
     "canonicalParentDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "evidenceExport": { "type": "object", "additionalProperties": false, "required": ["manifestDigest", "merkleRoot"], "properties": { "manifestDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "merkleRoot": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } },
-    "donorCandidates": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
+    "evidenceExport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestDigest", "merkleRoot"],
+      "properties": {
+        "manifestDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "merkleRoot": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "donorCandidates": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    },
     "analysisPath": { "const": "analysis.json" },
     "hypothesis": { "type": "string", "minLength": 20, "maxLength": 4096 },
-    "evidenceCitations": { "type": "array", "minItems": 2, "maxItems": 64, "items": { "$ref": "v011.evidence-citation.schema.json" } },
-    "declaredOperations": { "type": "array", "minItems": 1, "maxItems": 25, "uniqueItems": true, "items": { "type": "object", "additionalProperties": false, "required": ["op", "path"], "properties": { "op": { "enum": ["add", "modify", "remove"] }, "path": { "type": "string", "minLength": 1, "maxLength": 180 } } } },
-    "mechanismAssertions": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } },
-    "preservationAssertions": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } },
-    "capabilityRequests": { "type": "array", "maxItems": 3, "items": { "type": "object", "additionalProperties": false, "required": ["capability", "tier", "motivation", "evidenceCitations"], "properties": { "capability": { "type": "string", "pattern": "^[a-zA-Z0-9@/_*-]{1,160}$" }, "tier": { "enum": ["T0", "T1", "T2"] }, "motivation": { "type": "string", "minLength": 1, "maxLength": 2048 }, "evidenceCitations": { "type": "array", "maxItems": 16, "items": { "$ref": "v011.evidence-citation.schema.json" } } } } }
+    "evidenceCitations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 64,
+      "items": { "$ref": "v011.evidence-citation.schema.json" }
+    },
+    "declaredOperations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 25,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "path"],
+        "properties": {
+          "op": { "enum": ["add", "modify", "remove"] },
+          "path": { "type": "string", "minLength": 1, "maxLength": 180 }
+        }
+      }
+    },
+    "mechanismAssertions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+    },
+    "preservationAssertions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+    },
+    "capabilityRequests": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "tier", "motivation", "evidenceCitations"],
+        "properties": {
+          "capability": { "type": "string", "pattern": "^[a-zA-Z0-9@/_*-]{1,160}$" },
+          "tier": { "enum": ["T0", "T1", "T2"] },
+          "motivation": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "evidenceCitations": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "$ref": "v011.evidence-citation.schema.json" }
+          }
+        }
+      }
+    }
   }
 }
