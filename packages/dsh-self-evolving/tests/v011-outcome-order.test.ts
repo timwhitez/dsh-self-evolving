@@ -86,6 +86,19 @@ describe('mechanism outcome trial pairing', () => {
     expect(record.singleTrialObservable).toBe(false)
   })
 
+  it('keeps malformed runtime evidence schema-valid and fail-closed', async () => {
+    const malformed = {
+      ...trial('3', 'target-baseline', 'fail'),
+      ref: 'not-a-digest',
+    } as unknown as OutcomeTrial
+    const record = await deriveMechanismOutcome({
+      ...baseInput,
+      trials: [malformed, trial('4', 'target-child', 'pass')],
+    })
+    expect(record.status).toBe('INVALID_TRIALS')
+    expect(record.trialRefs).toEqual([digest('4')])
+  })
+
   it('keeps invalid evidence fail-closed instead of treating it as a failed baseline', async () => {
     const record = await deriveMechanismOutcome({
       ...baseInput,

@@ -68,21 +68,30 @@ function validTaskId(value: unknown): value is string {
   )
 }
 
-function trialShapeIsValid(trial: OutcomeTrial): boolean {
-  if (!/^sha256:[0-9a-f]{64}$/.test(trial.ref)) return false
-  if (!validTaskId(trial.taskId)) return false
-  if (!Number.isSafeInteger(trial.attemptIndex) || trial.attemptIndex < 0) return false
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function trialShapeIsValid(trial: unknown): trial is OutcomeTrial {
+  if (!isRecord(trial)) return false
+  if (typeof trial['ref'] !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(trial['ref'])) {
+    return false
+  }
+  if (!validTaskId(trial['taskId'])) return false
+  if (!Number.isSafeInteger(trial['attemptIndex']) || (trial['attemptIndex'] as number) < 0) {
+    return false
+  }
   if (
-    trial.role !== 'target-baseline' &&
-    trial.role !== 'target-child' &&
-    trial.role !== 'preservation-baseline' &&
-    trial.role !== 'preservation-child'
+    trial['role'] !== 'target-baseline' &&
+    trial['role'] !== 'target-child' &&
+    trial['role'] !== 'preservation-baseline' &&
+    trial['role'] !== 'preservation-child'
   ) {
     return false
   }
-  if (trial.status === 'pass') return trial.reward === 1
-  if (trial.status === 'fail') return trial.reward === 0
-  if (trial.status === 'invalid') return trial.reward === null
+  if (trial['status'] === 'pass') return trial['reward'] === 1
+  if (trial['status'] === 'fail') return trial['reward'] === 0
+  if (trial['status'] === 'invalid') return trial['reward'] === null
   return false
 }
 
@@ -130,6 +139,21 @@ function pairDomain(trials: OutcomeTrial[], domain: TrialDomain): PairingResult 
   return { pairs, valid: true }
 }
 
+function sameStableRegularFile(
+  left: Awaited<ReturnType<typeof lstat>>,
+  right: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
+}
+
 async function readRegularTextFile(path: string): Promise<string | null> {
   const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch(
     (error: NodeJS.ErrnoException) => {
@@ -139,16 +163,23 @@ async function readRegularTextFile(path: string): Promise<string | null> {
   )
   if (file === null) return null
   try {
-    const [held, canonical] = await Promise.all([file.stat(), lstat(path)])
-    if (
-      !held.isFile() ||
-      !canonical.isFile() ||
-      held.dev !== canonical.dev ||
-      held.ino !== canonical.ino
-    ) {
+    const before = await file.stat()
+    const pathBefore = await lstat(path).catch(() => null)
+    if (pathBefore === null || !sameStableRegularFile(before, pathBefore)) {
       throw new Error('v0.1.1 outcome: artifact path is not one stable regular file')
     }
-    return await file.readFile('utf8')
+    const contents = await file.readFile()
+    const after = await file.stat()
+    const pathAfter = await lstat(path).catch(() => null)
+    if (
+      pathAfter === null ||
+      !sameStableRegularFile(before, after) ||
+      !sameStableRegularFile(after, pathAfter) ||
+      contents.byteLength !== after.size
+    ) {
+      throw new Error('v0.1.1 outcome: artifact changed while it was read')
+    }
+    return contents.toString('utf8')
   } finally {
     await file.close()
   }
@@ -162,15 +193,16 @@ export async function deriveMechanismOutcome(input: {
   targetTaskHandle: string
   trials: OutcomeTrial[]
 }): Promise<MechanismOutcomeRecord> {
-  const target = input.trials.filter((trial) => trial.role.startsWith('target-'))
-  const preservation = input.trials.filter((trial) => trial.role.startsWith('preservation-'))
+  const validTrials = input.trials.filter(trialShapeIsValid)
+  const target = validTrials.filter((trial) => trial.role.startsWith('target-'))
+  const preservation = validTrials.filter((trial) => trial.role.startsWith('preservation-'))
   const targetPairing = pairDomain(target, 'target')
   const preservationPairing = pairDomain(preservation, 'preservation')
-  const uniqueRefs = new Set(input.trials.map((trial) => trial.ref))
+  const uniqueRefs = new Set(validTrials.map((trial) => trial.ref))
   const invalid =
-    input.trials.some((trial) => !trialShapeIsValid(trial)) ||
-    input.trials.some((trial) => trial.status === 'invalid') ||
-    uniqueRefs.size !== input.trials.length ||
+    validTrials.length !== input.trials.length ||
+    validTrials.some((trial) => trial.status === 'invalid') ||
+    uniqueRefs.size !== validTrials.length ||
     !targetPairing.valid ||
     !preservationPairing.valid ||
     target.some((trial) => trial.taskId !== input.targetTaskHandle)
@@ -192,14 +224,19 @@ export async function deriveMechanismOutcome(input: {
   else status = 'TARGET_UNCHANGED'
 
   const trialCommitment = input.trials
-    .map((trial) => ({
-      attemptIndex: Number.isSafeInteger(trial.attemptIndex) ? trial.attemptIndex : null,
-      ref: trial.ref,
-      reward: trial.reward,
-      role: trial.role,
-      status: trial.status,
-      taskId: typeof trial.taskId === 'string' ? trial.taskId : null,
-    }))
+    .map((trial) => {
+      const value: Record<string, unknown> = isRecord(trial) ? trial : {}
+      return {
+        attemptIndex: Number.isSafeInteger(value['attemptIndex'])
+          ? (value['attemptIndex'] as number)
+          : null,
+        ref: typeof value['ref'] === 'string' ? value['ref'] : null,
+        reward: value['reward'] === 0 || value['reward'] === 1 ? value['reward'] : null,
+        role: typeof value['role'] === 'string' ? value['role'] : null,
+        status: typeof value['status'] === 'string' ? value['status'] : null,
+        taskId: typeof value['taskId'] === 'string' ? value['taskId'] : null,
+      }
+    })
     .sort((left, right) => compareText(canonicalV011(left), canonicalV011(right)))
   const trialRefs = [...uniqueRefs].sort(compareText)
   const hypothesisDigest = digestV011(input.hypothesis)
