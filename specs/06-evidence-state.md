@@ -165,6 +165,14 @@ available -> reserved -> spent | released
 
 Hard limit denial 产生 event；operator 若要增加预算必须终止当前 run 并创建新 signed manifest。
 
+Budget accounting protocol v1 使用固定精度：USD 的 ledger/API 数值必须精确映射到非负 safe-integer
+micros（最多六位小数），token、trial、call、wall-clock second、concurrency slot 与 storage byte
+必须是非负 safe integer；所有 limit 使用相同域。Replay 必须 runtime-validate entry 的完整且无扩展字段的
+schema（seq、kind、dimension、actionId、amount、canonical ISO timestamp、hash chain），以整数单位执行
+每一步运算，并在接受下一项前检查 action/global reserved、spent 和 `spent + reserved` 均非负、未溢出且
+不超过冻结 limit。`refund` 是 `spend` 的逆向转移（spent 回到 reserved），且不得超过该 action 已 spent
+余额。任何 schema、精度、余额或算术不变量失败都属于 `EVIDENCE_CORRUPT`，不得写入修复记录或继续运行。
+
 ## 9. RNG and decisions
 
 Run manifest 固定 master seed commitment。每类随机性使用独立 counter stream：split、scheduler
