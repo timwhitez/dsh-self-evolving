@@ -2,6 +2,8 @@ export {
   runPilotLoop,
   initialPilotState,
   validateDevTaskIds,
+  PILOT_PROTOCOL_VERSION,
+  NO_ADMISSIBLE_CHILD,
   type PilotCapabilities,
   type ProposedChild,
   type PilotConfig,

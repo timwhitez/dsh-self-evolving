@@ -88,10 +88,12 @@ describe('low-consumption development panel', () => {
       ),
     ).toThrow(/at least 2 baseline-failed/)
     expect(() =>
-      sampleLowConsumptionPanel(
-        [{ taskId: 'fail-a', reward: 0, stratum: 'hard' }],
-        { candidateId: 'candidate-a', masterSeed: 42n, failureTasks: 1, regressionTasks: 1 },
-      ),
+      sampleLowConsumptionPanel([{ taskId: 'fail-a', reward: 0, stratum: 'hard' }], {
+        candidateId: 'candidate-a',
+        masterSeed: 42n,
+        failureTasks: 1,
+        regressionTasks: 1,
+      }),
     ).toThrow(/at least 1 baseline-passed/)
   })
 

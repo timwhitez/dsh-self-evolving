@@ -105,10 +105,7 @@ export function requireNoPositionals(positionals: readonly string[]): void {
   }
 }
 
-export function stringOption(
-  parsed: ParsedCliArguments,
-  name: string,
-): string | undefined {
+export function stringOption(parsed: ParsedCliArguments, name: string): string | undefined {
   const value = parsed.options[name]
   if (value === undefined) return undefined
   if (value === true) throw new Error(`option ${name} is not a value option`)

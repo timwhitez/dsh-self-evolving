@@ -19,6 +19,7 @@ import {
   type SearchParams,
   ucbAirDecision,
   selectParentByCladeThompson,
+  selectNodeByThompson,
   needsColdStart,
   RngStream,
   attributeObservation,
@@ -70,20 +71,41 @@ export interface PilotArchive {
   observations: PilotObservation[]
 }
 
+export const PILOT_PROTOCOL_VERSION = 1 as const
+export const NO_ADMISSIBLE_CHILD = 'NO_ADMISSIBLE_CHILD' as const
+
 export interface PilotConfig {
+  protocolVersion: typeof PILOT_PROTOCOL_VERSION
   K: number
   B_eval: number
   params: SearchParams
   /** The dev task ids to evaluate on (never sealed). */
   devTaskIds: string[]
   masterSeed: bigint
+  /** Frozen liveness bound for consecutive expansions that admit no child. */
+  maxConsecutiveExpansionFailures: number
+}
+
+interface PendingExpansion {
+  attempt: number
+  parentId: string
+  admittedCountBefore: number
 }
 
 export interface PilotState {
+  protocolVersion: typeof PILOT_PROTOCOL_VERSION
+  /** State-bound copy of the frozen expansion liveness policy. */
+  maxConsecutiveExpansionFailures: number
   archive: PilotArchive
   admittedCount: number
   N: number
   B_evalRemaining: number
+  /** Persisted counter for the deterministic scheduler RNG stream. */
+  schedulerRngCounter: number
+  expansionAttempts: number
+  consecutiveExpansionFailures: number
+  /** Durable intent left non-null until one expansion attempt is reconciled. */
+  pendingExpansion: PendingExpansion | null
   duplicateEdges: number
   buildRejects: number
   evalFailures: number
@@ -107,10 +129,16 @@ export function initialPilotState(
     f: 0,
   }
   return {
+    protocolVersion: PILOT_PROTOCOL_VERSION,
+    maxConsecutiveExpansionFailures: config.maxConsecutiveExpansionFailures,
     archive: { nodes: [baselineNode], observations: [] },
     admittedCount: 1, // baseline counts as admitted
     N: 0,
     B_evalRemaining: config.B_eval,
+    schedulerRngCounter: 0,
+    expansionAttempts: 0,
+    consecutiveExpansionFailures: 0,
+    pendingExpansion: null,
     duplicateEdges: 0,
     buildRejects: 0,
     evalFailures: 0,
@@ -162,6 +190,79 @@ function resolveParent(archive: PilotArchive, candidateId: string): PilotNode {
   return parent
 }
 
+function nextUntestedDevTask(
+  archive: PilotArchive,
+  candidateId: string,
+  devTaskIds: readonly string[],
+): string | null {
+  const tested = new Set(
+    archive.observations
+      .filter((observation) => observation.candidateId === candidateId)
+      .map((observation) => observation.taskId),
+  )
+  return devTaskIds.find((taskId) => !tested.has(taskId)) ?? null
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function validateExpansionProtocol(config: PilotConfig, state: PilotState): void {
+  if (config.protocolVersion !== PILOT_PROTOCOL_VERSION) {
+    throw new Error('pilot: unsupported protocol version')
+  }
+  if (
+    !Number.isSafeInteger(config.maxConsecutiveExpansionFailures) ||
+    config.maxConsecutiveExpansionFailures <= 0
+  ) {
+    throw new Error('pilot: maxConsecutiveExpansionFailures must be a positive safe integer')
+  }
+  if (
+    state.protocolVersion !== PILOT_PROTOCOL_VERSION ||
+    state.maxConsecutiveExpansionFailures !== config.maxConsecutiveExpansionFailures
+  ) {
+    throw new Error('pilot: state does not match the frozen expansion failure policy')
+  }
+  if (
+    !isNonNegativeSafeInteger(state.expansionAttempts) ||
+    !isNonNegativeSafeInteger(state.consecutiveExpansionFailures) ||
+    state.consecutiveExpansionFailures > state.expansionAttempts
+  ) {
+    throw new Error('pilot: invalid expansion counters')
+  }
+  if (state.pendingExpansion !== null) {
+    const pending = state.pendingExpansion
+    if (
+      !isNonNegativeSafeInteger(pending.attempt) ||
+      pending.attempt !== state.expansionAttempts ||
+      typeof pending.parentId !== 'string' ||
+      pending.parentId.length === 0 ||
+      !state.archive.nodes.some((node) => node.candidateId === pending.parentId) ||
+      !isNonNegativeSafeInteger(pending.admittedCountBefore) ||
+      pending.admittedCountBefore > state.admittedCount
+    ) {
+      throw new Error('pilot: invalid pending expansion intent')
+    }
+  }
+}
+
+function reconcilePendingExpansion(state: PilotState): boolean {
+  const pending = state.pendingExpansion
+  if (pending === null) throw new Error('pilot: no pending expansion to reconcile')
+  const admitted = state.admittedCount > pending.admittedCountBefore
+  state.pendingExpansion = null
+  if (admitted) state.consecutiveExpansionFailures = 0
+  else state.consecutiveExpansionFailures += 1
+  return admitted
+}
+
+function stopAfterExpansionFailures(state: PilotState): boolean {
+  if (state.consecutiveExpansionFailures < state.maxConsecutiveExpansionFailures) return false
+  state.terminal = true
+  state.reason = NO_ADMISSIBLE_CHILD
+  return true
+}
+
 /**
  * Run the pilot loop to terminal state. Pure except for the injected
  * capabilities (which perform the real model/Harbor work). Each iteration:
@@ -179,14 +280,25 @@ export async function runPilotLoop(
   state: PilotState = initialPilotState(baselineId, config, baselineDigest, baselineSource),
 ): Promise<PilotState> {
   validateDevTaskIds(config.devTaskIds)
+  validateExpansionProtocol(config, state)
   // PilotConfig predates SearchParams.K. Treat the explicit pilot K as the
   // single source of truth so a profile default cannot terminate a custom run.
   const params: SearchParams = { ...config.params, K: config.K }
-  const rng = new RngStream(config.masterSeed, 'pilot-scheduler')
-  let taskIdCursor = 0
-  // Hard iteration cap as a liveness guard; a healthy run terminates via K or
-  // B_eval. This prevents an infinite loop if the scheduler/deps misbehave.
+  // Hard iteration cap as a last-resort invariant guard; normal unsuccessful
+  // expansion now terminates through the explicit frozen expansion budget.
   const MAX_ITERATIONS = config.K * 50 + config.B_eval + 100
+  const maxRngCounter = MAX_ITERATIONS * Math.max(config.K, state.archive.nodes.length, 1)
+  if (
+    !Number.isSafeInteger(state.schedulerRngCounter) ||
+    state.schedulerRngCounter < 0 ||
+    state.schedulerRngCounter > maxRngCounter
+  ) {
+    throw new Error('pilot: invalid scheduler RNG counter')
+  }
+  const rng = new RngStream(config.masterSeed, 'pilot-scheduler')
+  for (let counter = 0; counter < state.schedulerRngCounter; counter += 1) rng.nextU64()
+  if (state.pendingExpansion !== null) reconcilePendingExpansion(state)
+  if (!state.terminal && stopAfterExpansionFailures(state)) return state
   let iterations = 0
   while (!state.terminal) {
     iterations += 1
@@ -222,12 +334,19 @@ export async function runPilotLoop(
         params,
         rng,
       )
+      state.schedulerRngCounter = rng.currentCounter()
       if (parentId === null) {
         state.terminal = true
         state.reason = 'NO_ELIGIBLE_PARENT'
         break
       }
       const parent = resolveParent(state.archive, parentId)
+      state.expansionAttempts += 1
+      state.pendingExpansion = {
+        attempt: state.expansionAttempts,
+        parentId,
+        admittedCountBefore: state.admittedCount,
+      }
       const children = await caps.propose(parent.digest, parent.source)
       for (const child of children) {
         const built = await caps.build(child)
@@ -260,13 +379,36 @@ export async function runPilotLoop(
         state.admittedCount += 1
         if (state.admittedCount >= config.K) break
       }
+
+      const admitted = reconcilePendingExpansion(state)
+      if (!admitted && stopAfterExpansionFailures(state)) break
     } else {
-      // Evaluate: pick a node needing cold-start (q0), else the first node.
-      const evalNode =
-        state.archive.nodes.find((n) => needsColdStart(n, params)) ?? state.archive.nodes[0]
-      if (!evalNode) continue
-      const taskId = config.devTaskIds[taskIdCursor % config.devTaskIds.length]!
-      taskIdCursor += 1
+      // This pilot dispatches evaluations serially, so every node is below the
+      // per-node pending cap at each decision. A node is otherwise eligible
+      // only while the frozen development inventory has an untested task.
+      const eligible = state.archive.nodes.flatMap((node) => {
+        const taskId = nextUntestedDevTask(state.archive, node.candidateId, config.devTaskIds)
+        return taskId === null ? [] : [{ node, taskId }]
+      })
+      const coldStartNode = eligible.find(({ node }) => needsColdStart(node, params))
+      const selectedNodeId =
+        coldStartNode?.node.candidateId ??
+        selectNodeByThompson(
+          toArchiveView(state.archive),
+          eligible.map(({ node }) => node.candidateId),
+          rng,
+        )
+      state.schedulerRngCounter = rng.currentCounter()
+      const selection =
+        selectedNodeId === null
+          ? undefined
+          : eligible.find(({ node }) => node.candidateId === selectedNodeId)
+      if (selection === undefined) {
+        state.terminal = true
+        state.reason = 'NO_ELIGIBLE_EVALUATION_NODE'
+        break
+      }
+      const { node: evalNode, taskId } = selection
       const attempt = evalNode.s + evalNode.f
       try {
         const result = await caps.evaluate(evalNode.candidateId, taskId, attempt)

@@ -156,6 +156,14 @@ candidate_to_evaluate = argmax theta_node(a)
 这保持 HGM 的 infinite-arm trade-off，但明确处理 pending work。`alpha`、计数定义和 off-by-one 必须
 有 golden tests；不得把 proposal 次数当 `N`。
 
+Pilot protocol version 1 必须在 run config 中冻结 `maxConsecutiveExpansionFailures`（默认 profile
+显式取 `3`），并把同一个值、累计 `expansionAttempts`、连续失败计数及未完成 expansion intent
+写入可恢复状态。每次实际 proposer dispatch 在外部调用前消耗一个 expansion attempt；空 proposal、
+全部 build reject、全部 duplicate，以及恢复时仍未完成且没有 admitted child 的 intent，都计作一次失败，
+但不消耗只用于 completed development trial 的 `B_eval`。任一 attempt admitted child 后连续失败计数归零。
+达到冻结上限时，唯一协议结果为 `NO_ADMISSIBLE_CHILD`，不得继续调用 proposer，也不得退回通用 iteration
+guard。恢复时若 protocol version 或冻结上限与 state 不一致，必须在任何外部工作前 fail closed。
+
 ## 8. Wave-synchronous concurrency
 
 完全按完成时间更新会偏向短任务/快候选。完全串行则浪费 benchmark 并发。因此采用冻结快照的

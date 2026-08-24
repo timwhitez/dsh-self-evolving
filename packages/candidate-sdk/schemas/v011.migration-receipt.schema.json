@@ -4,7 +4,15 @@
   "title": "v0.1 to v0.1.1 baseline migration receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "protocol", "v01ReleaseCommit", "v01SourceDigest", "v011SourceDigest", "mapping", "inheritedResultsPolicy"],
+  "required": [
+    "schemaVersion",
+    "protocol",
+    "v01ReleaseCommit",
+    "v01SourceDigest",
+    "v011SourceDigest",
+    "mapping",
+    "inheritedResultsPolicy"
+  ],
   "properties": {
     "schemaVersion": { "const": 1 },
     "protocol": { "const": "dsh-self-evolving-candidate-tree-v2" },
