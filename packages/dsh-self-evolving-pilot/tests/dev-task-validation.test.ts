@@ -9,11 +9,13 @@ import {
 
 function config(devTaskIds: string[]): PilotConfig {
   return {
+    protocolVersion: 1,
     K: 2,
     B_eval: 1,
     params: DEFAULT_PARAMS,
     devTaskIds,
     masterSeed: 42n,
+    maxConsecutiveExpansionFailures: 3,
   }
 }
 
