@@ -8,11 +8,13 @@ import {
 } from '../src/index.js'
 
 const config: PilotConfig = {
+  protocolVersion: 1,
   K: 3,
   B_eval: 1,
   params: DEFAULT_PARAMS,
   devTaskIds: ['task-a'],
   masterSeed: 42n,
+  maxConsecutiveExpansionFailures: 3,
 }
 
 describe('pilot evaluation scheduling', () => {

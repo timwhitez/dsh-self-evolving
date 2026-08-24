@@ -89,11 +89,13 @@ async function main(): Promise<void> {
     baselineSource,
     baselineDigest,
     {
+      protocolVersion: 1,
       K,
       B_eval: B_EVAL,
       params: DEFAULT_PARAMS,
       devTaskIds,
       masterSeed: 0x70170n,
+      maxConsecutiveExpansionFailures: 3,
     },
     caps,
   )

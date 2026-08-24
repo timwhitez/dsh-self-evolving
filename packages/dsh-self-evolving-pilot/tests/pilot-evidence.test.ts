@@ -84,11 +84,13 @@ describe('pilot crash/resume determinism', () => {
       baselineSource,
       baselineDigest,
       {
+        protocolVersion: 1,
         K: 5,
         B_eval: 30,
         params: DEFAULT_PARAMS,
         devTaskIds,
         masterSeed: 99n,
+        maxConsecutiveExpansionFailures: 3,
       },
       capsFull,
     )
@@ -99,11 +101,13 @@ describe('pilot crash/resume determinism', () => {
       baselineSource,
       baselineDigest,
       {
+        protocolVersion: 1,
         K: 5,
         B_eval: 30,
         params: DEFAULT_PARAMS,
         devTaskIds,
         masterSeed: 99n,
+        maxConsecutiveExpansionFailures: 3,
       },
       capsResume,
     )

@@ -18,11 +18,13 @@ const BASELINE_DIGEST = 'sha256:baseline'
 
 function config(overrides: Partial<PilotConfig> = {}): PilotConfig {
   return {
+    protocolVersion: 1,
     K: 4,
     B_eval: 20,
     params: DEFAULT_PARAMS,
     devTaskIds: ['task-a', 'task-b', 'task-c'],
     masterSeed: 42n,
+    maxConsecutiveExpansionFailures: 3,
     ...overrides,
   }
 }
@@ -161,14 +163,13 @@ describe('pilot loop (spec 07 §8 Gate 6)', () => {
     expect(result.admittedCount).toBe(1) // only baseline
   })
 
-  it('terminates when B_eval is exhausted', async () => {
-    const cfg = config({ K: 100, B_eval: 3 })
-    // Force evaluation by setting a large initial archive? The UCB decision will
-    // alternate; with K=100 and B_eval=3 it eventually exhausts.
-    const caps = stubCaps({ rejectEvery: 1 }) // no new admissions
+  it('terminates before external work when B_eval is already exhausted', async () => {
+    const cfg = config({ K: 100, B_eval: 0 })
+    const caps = stubCaps()
     const result = await runPilotLoop('baseline', BASELINE_SOURCE, BASELINE_DIGEST, cfg, caps)
     expect(result.terminal).toBe(true)
-    expect(result.reason).toMatch(/B_EVAL_EXHAUSTED|ITERATION_CAP/)
+    expect(result.reason).toMatch(/^B_EVAL_EXHAUSTED/)
+    expect(caps.calls).toEqual({ propose: 0, build: 0, evaluate: 0 })
   })
 
   it('records evaluation observations with attribution', async () => {
