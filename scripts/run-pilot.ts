@@ -66,10 +66,12 @@ async function main(): Promise<void> {
       ]
     },
     async build(child: ProposedChild) {
-      // Deterministic build: digest the sourceDiff; reject empty.
+      // Deterministic build: materialize a complete source from the fixture
+      // baseline plus this child diff and retain it for later generations.
       if (child.sourceDiff.trim().length === 0) return null
-      const digest = 'sha256:' + createHash('sha256').update(child.sourceDiff).digest('hex')
-      return { candidateId: digest, digest }
+      const source = `${baselineSource}\n${child.sourceDiff}\n`
+      const digest = 'sha256:' + createHash('sha256').update(source).digest('hex')
+      return { candidateId: digest, digest, source }
     },
     async evaluate(candidateId: string, taskId: string, attempt: number) {
       const sample = createHash('sha256')

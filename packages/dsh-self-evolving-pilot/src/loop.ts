@@ -26,10 +26,12 @@ import {
 
 /** The capabilities the loop drives (injected for testability). */
 export interface PilotCapabilities {
-  /** Generate >=1 child proposal from a parent. Returns accepted children. */
+  /** Generate >=1 child proposal from a full canonical parent source. */
   propose: (parentDigest: string, parentSource: string) => Promise<ProposedChild[]>
-  /** Build a proposed child into an admitted candidate with a separate content digest. */
-  build: (child: ProposedChild) => Promise<{ candidateId: string; digest: string } | null>
+  /** Build a proposed child into an admitted candidate and retain its full source. */
+  build: (
+    child: ProposedChild,
+  ) => Promise<{ candidateId: string; digest: string; source: string } | null>
   /** Evaluate a candidate on one dev task; returns reward. */
   evaluate: (
     candidateId: string,
@@ -56,12 +58,13 @@ export interface PilotObservation {
   wallSec: number
 }
 
-/** Scheduler identity plus immutable canonical content identity. */
+/** Scheduler identity plus the exact immutable source used for future expansion. */
 export interface PilotNode extends NodeUtility {
   digest: string
+  source: string
 }
 
-/** The pilot's archive view (NodeUtility + canonical digest + observations). */
+/** The pilot's archive view (node utility + canonical source identity). */
 export interface PilotArchive {
   nodes: PilotNode[]
   observations: PilotObservation[]
@@ -92,10 +95,12 @@ export function initialPilotState(
   baselineId: string,
   config: PilotConfig,
   baselineDigest: string = baselineId,
+  baselineSource = '',
 ): PilotState {
   const baselineNode: PilotNode = {
     candidateId: baselineId,
     digest: baselineDigest,
+    source: baselineSource,
     canonicalParent: null,
     donorCandidates: [],
     s: 0,
@@ -146,6 +151,17 @@ function toArchiveView(archive: PilotArchive): ArchiveView {
   }
 }
 
+function resolveParent(archive: PilotArchive, candidateId: string): PilotNode {
+  const parent = archive.nodes.find((node) => node.candidateId === candidateId)
+  if (parent === undefined) {
+    throw new Error(`pilot: selected parent is absent from archive: ${candidateId}`)
+  }
+  if (parent.digest.length === 0 || parent.source.length === 0) {
+    throw new Error(`pilot: selected parent has no resolvable canonical source: ${candidateId}`)
+  }
+  return parent
+}
+
 /**
  * Run the pilot loop to terminal state. Pure except for the injected
  * capabilities (which perform the real model/Harbor work). Each iteration:
@@ -160,7 +176,7 @@ export async function runPilotLoop(
   baselineDigest: string,
   config: PilotConfig,
   caps: PilotCapabilities,
-  state: PilotState = initialPilotState(baselineId, config, baselineDigest),
+  state: PilotState = initialPilotState(baselineId, config, baselineDigest, baselineSource),
 ): Promise<PilotState> {
   validateDevTaskIds(config.devTaskIds)
   // PilotConfig predates SearchParams.K. Treat the explicit pilot K as the
@@ -211,19 +227,18 @@ export async function runPilotLoop(
         state.reason = 'NO_ELIGIBLE_PARENT'
         break
       }
-      const parentNode = state.archive.nodes.find((node) => node.candidateId === parentId)
-      if (parentNode === undefined) {
-        throw new Error(`pilot: selected parent is absent from archive: ${parentId}`)
-      }
-      const parentSrc = parentId === baselineId ? baselineSource : ''
-      const children = await caps.propose(parentNode.digest, parentSrc)
+      const parent = resolveParent(state.archive, parentId)
+      const children = await caps.propose(parent.digest, parent.source)
       for (const child of children) {
         const built = await caps.build(child)
         if (built === null) {
           state.buildRejects += 1
           continue
         }
-        // Dedup is content-addressed, while scheduler/evaluator identity remains candidateId.
+        if (built.digest.length === 0 || built.source.length === 0) {
+          throw new Error('pilot: admitted child is missing canonical digest or source')
+        }
+        // Dedup is content-addressed while scheduler/evaluator identity remains candidateId.
         const existing = state.archive.nodes.find((node) => node.digest === built.digest)
         if (existing) {
           state.duplicateEdges += 1
@@ -235,6 +250,7 @@ export async function runPilotLoop(
         const newNode: PilotNode = {
           candidateId: built.candidateId,
           digest: built.digest,
+          source: built.source,
           canonicalParent: parentId,
           donorCandidates: child.donorCandidates,
           s: 0,
