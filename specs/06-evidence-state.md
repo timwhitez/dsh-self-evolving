@@ -104,6 +104,11 @@ payload，以及严格的 SHA-256 previous/event hash。持久化 event 必须�
 未知字段、非 canonical number 或非法 segment 文件名均 fail closed。HEAD 本身使用同一 protocol/run binding，
 完整字段为 `schemaVersion/runId/seq/eventHash/segment`，并通过 seq/hash/segment 精确引用已验证的 tail event。
 
+`segmentMaxBytes` 必须是正 safe integer，并按持久化 canonical event 加换行后的 UTF-8 byte length 执行。
+若下一条完整 record 会使当前非空 segment 超过上限，writer 必须先以 exclusive-create 打开下一个 canonical
+segment；恰好等于上限时不得提前 rotate。单条 record 自身超过上限时不得拆分，它独占一个 segment，下一条
+append 再 rotate。已有的目标 segment、空或非 regular 的 active segment 均视为损坏并 fail closed。
+
 Wall-clock timestamp 只用于审计，不决定排序或策略；`seq` 是 commit order，external occurrence
 作为 payload fact。
 

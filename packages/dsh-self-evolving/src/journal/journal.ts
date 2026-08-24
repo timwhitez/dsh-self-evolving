@@ -3,9 +3,9 @@
  *
  * A single writer appends canonical JSON events to segmented files
  * (events-000001.jsonl, …). Each event carries previousHash + eventHash,
- * forming a tamper-evident chain. Segment close writes size/Merkle root; HEAD
- * records the last committed seq + hash and is updated atomically (tmp + dir
- * fsync).
+ * forming a tamper-evident chain. A new segment is opened before an append that
+ * would exceed `segmentMaxBytes`; an individual oversized event occupies one
+ * segment because journal records are never split.
  *
  * Wall-clock `occurredAt` is audit-only; `seq` is the commit order and is the
  * only ordering that matters. The reducer never reads wall-clock time.
@@ -204,11 +204,11 @@ export function computeEventHash<P = Record<string, unknown>>(
   return 'sha256:' + createHash('sha256').update(canonicalJson(withoutHash)).digest('hex')
 }
 
-function segmentName(seq: number): string {
-  // Each segment holds up to segmentMaxBytes; for simplicity, one segment per
-  // 10k events OR byte threshold. We name by the segment index derived from seq.
-  const idx = Math.floor(seq / 10_000) + 1
-  return `events-${String(idx).padStart(6, '0')}.jsonl`
+function formatSegment(index: number): string {
+  if (!Number.isSafeInteger(index) || index <= 0) {
+    throw new Error(`journal: invalid segment index ${index}`)
+  }
+  return `events-${String(index).padStart(6, '0')}.jsonl`
 }
 
 function parseSegmentIndex(name: unknown): number | null {
@@ -220,8 +220,11 @@ function parseSegmentIndex(name: unknown): number | null {
   return name === `events-${String(index).padStart(6, '0')}.jsonl` ? index : null
 }
 
-function segmentPath(j: Journal, seq: number): string {
-  return join(j.journalDir, segmentName(seq))
+function segmentPath(j: Journal, segment: string): string {
+  if (parseSegmentIndex(segment) === null) {
+    fail('EVIDENCE_CORRUPT', `invalid segment name ${segment}`)
+  }
+  return join(j.journalDir, segment)
 }
 
 function journalIoError(operation: string, error: unknown): Error {
@@ -243,6 +246,9 @@ function validatedJournalSnapshot(j: Journal): Readonly<Journal> {
     throw new Error('journal: configured journalDir is invalid')
   }
   if (!isProtocolText(runId)) throw new Error('journal: configured runId is invalid')
+  if (!Number.isSafeInteger(segmentMaxBytes) || segmentMaxBytes <= 0) {
+    throw new Error('journal: segmentMaxBytes must be a positive safe integer')
+  }
   return Object.freeze({ journalDir, runId, segmentMaxBytes })
 }
 
@@ -339,6 +345,32 @@ async function writeHead(j: Journal, head: JournalHead): Promise<void> {
   }
 }
 
+async function selectAppendSegment(
+  j: Readonly<Journal>,
+  head: JournalHead | null,
+  lineBytes: number,
+): Promise<string> {
+  if (head === null) return formatSegment(1)
+  const currentIndex = parseSegmentIndex(head.segment)
+  if (currentIndex === null) fail('EVIDENCE_CORRUPT', 'HEAD has an invalid segment name')
+  let current: Awaited<ReturnType<typeof lstat>>
+  try {
+    current = await lstat(segmentPath(j, head.segment), { bigint: true })
+  } catch (error) {
+    throw journalIoError(`cannot inspect active segment ${head.segment}`, error)
+  }
+  if (!current.isFile()) {
+    throw new Error(`EVIDENCE_CORRUPT: HEAD segment is not a regular file: ${head.segment}`)
+  }
+  if (current.size === 0n) {
+    throw new Error(`EVIDENCE_CORRUPT: HEAD segment is empty: ${head.segment}`)
+  }
+  if (current.size + BigInt(lineBytes) > BigInt(j.segmentMaxBytes)) {
+    return formatSegment(currentIndex + 1)
+  }
+  return head.segment
+}
+
 /**
  * Append an event to the journal, computing its hash from the current HEAD.
  * Returns the committed event (with seq + eventHash filled in).
@@ -400,7 +432,23 @@ export async function append<P>(
   const eventHash = computeEventHash(eventWithoutHash)
   const event: JournalEvent<P> = { ...eventWithoutHash, eventHash }
   const line = canonicalJson(event) + '\n'
-  const segmentFile = await open(segmentPath(frozenJournal, seq), 'a', 0o600)
+  const segment = await selectAppendSegment(frozenJournal, head, Buffer.byteLength(line, 'utf8'))
+  const createsSegment = head === null || segment !== head.segment
+  let segmentFile: Awaited<ReturnType<typeof open>>
+  try {
+    // New segments are evidence identities. Exclusive creation prevents a
+    // restart or lock failure from appending over an orphan/crash residue.
+    segmentFile = await open(
+      segmentPath(frozenJournal, segment),
+      createsSegment ? 'ax' : 'a',
+      0o600,
+    )
+  } catch (error) {
+    throw journalIoError(
+      `${createsSegment ? 'cannot create' : 'cannot open'} segment ${segment}`,
+      error,
+    )
+  }
   try {
     await segmentFile.writeFile(line, { encoding: 'utf8' })
     // The chain event must reach durable storage before HEAD can point at it.
@@ -413,7 +461,7 @@ export async function append<P>(
     runId: frozenJournal.runId,
     seq,
     eventHash,
-    segment: segmentName(seq),
+    segment,
   })
   return event
 }
