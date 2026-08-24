@@ -138,7 +138,7 @@ describe('mechanism outcome trial pairing', () => {
     expect(first.idempotencyKey).not.toBe(second.idempotencyKey)
   })
 
-  it('keeps invalid duplicate evidence deterministic and schema-valid under permutation', async () => {
+  it('keeps duplicate evidence deterministic and schema-valid', async () => {
     const trials = [
       trial('3', 'target-baseline', 'fail'),
       trial('3', 'target-child', 'pass'),
