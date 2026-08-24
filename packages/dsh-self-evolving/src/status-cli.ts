@@ -1,17 +1,7 @@
 #!/usr/bin/env node
+import { parseStatusCliArguments } from './cli-args.js'
 import { readControllerStatus } from './status.js'
 
-function valueAfter(flag: string): string {
-  const index = process.argv.indexOf(flag)
-  const value = index === -1 ? undefined : process.argv[index + 1]
-  if (value === undefined || value.length === 0) {
-    throw new Error(`missing required ${flag}`)
-  }
-  return value
-}
-
-const status = await readControllerStatus({
-  stateDir: valueAfter('--state-dir'),
-  runId: valueAfter('--run-id'),
-})
+const input = parseStatusCliArguments(process.argv.slice(2))
+const status = await readControllerStatus(input)
 process.stdout.write(JSON.stringify(status) + '\n')
