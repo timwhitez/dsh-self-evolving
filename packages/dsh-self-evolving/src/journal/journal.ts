@@ -14,7 +14,7 @@
  * A second writer fails fast rather than corrupting the chain.
  */
 import { createHash } from 'node:crypto'
-import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 export interface JournalEvent<P = Record<string, unknown>> {
@@ -83,11 +83,57 @@ function segmentPath(j: Journal, seq: number): string {
   return join(j.journalDir, segmentName(seq))
 }
 
+function journalIoError(operation: string, error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error)
+  const wrapped = new Error(`journal: ${operation}: ${detail}`, { cause: error }) as Error & {
+    code?: string
+  }
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  if (typeof code === 'string') wrapped.code = code
+  return wrapped
+}
+
+async function assertNoDurableJournalWithoutHead(j: Journal): Promise<void> {
+  let names: string[]
+  try {
+    names = await readdir(j.journalDir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      try {
+        await lstat(j.journalDir)
+      } catch (pathError) {
+        if ((pathError as NodeJS.ErrnoException).code === 'ENOENT') return
+        throw journalIoError('cannot inspect journal directory after missing HEAD', pathError)
+      }
+      throw journalIoError(
+        'journal directory exists but cannot be enumerated after missing HEAD',
+        error,
+      )
+    }
+    throw journalIoError('cannot inspect journal after missing HEAD', error)
+  }
+  if (names.some((name) => name === 'HEAD' || name === 'HEAD.tmp' || name.startsWith('events-'))) {
+    throw new Error('EVIDENCE_CORRUPT: journal contains durable artifacts but HEAD is missing')
+  }
+}
+
 export async function readHead(j: Journal): Promise<JournalHead | null> {
   const headPath = join(j.journalDir, 'HEAD')
-  const raw = await readFile(headPath, 'utf8').catch(() => null)
-  if (raw === null) return null
-  return JSON.parse(raw) as JournalHead
+  let raw: string
+  try {
+    raw = await readFile(headPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw journalIoError('cannot read HEAD', error)
+    }
+    await assertNoDurableJournalWithoutHead(j)
+    return null
+  }
+  try {
+    return JSON.parse(raw) as JournalHead
+  } catch (error) {
+    throw new Error('EVIDENCE_CORRUPT: journal HEAD is not valid JSON', { cause: error })
+  }
 }
 
 async function writeHead(j: Journal, head: JournalHead): Promise<void> {
@@ -166,14 +212,13 @@ export async function readAll(j: Journal): Promise<JournalEvent[]> {
   const head = await readHead(j)
   if (head === null) return events
   // Walk segments in order.
-  const { readdir } = await import('node:fs/promises')
   let segmentFiles: string[]
   try {
     segmentFiles = (await readdir(j.journalDir))
       .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'))
       .sort()
-  } catch {
-    return events
+  } catch (error) {
+    throw journalIoError('cannot enumerate segments after reading HEAD', error)
   }
   let expectedPrev: string | null = null
   let expectedSeq = 1
