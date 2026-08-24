@@ -111,6 +111,30 @@ interface FailurePool {
 }
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/
+const USD_MICRO_SCALE = 1_000_000
+const USD_UNIT_TOLERANCE = 1e-6
+
+/**
+ * Split the run's hard USD cap into deterministic fixed-precision
+ * reservations. Rounding down is intentional: multiplying the result by the
+ * trial bound must never oversell the cap.
+ */
+export function evaluationReserveUsd(budgetUsd: number, trialLimit: number): number {
+  const scaledBudget = budgetUsd * USD_MICRO_SCALE
+  const budgetMicros = Math.round(scaledBudget)
+  if (
+    !Number.isFinite(budgetUsd) ||
+    budgetUsd < 0 ||
+    Object.is(budgetUsd, -0) ||
+    !Number.isSafeInteger(budgetMicros) ||
+    Math.abs(scaledBudget - budgetMicros) > USD_UNIT_TOLERANCE ||
+    !Number.isSafeInteger(trialLimit) ||
+    trialLimit <= 0
+  ) {
+    throw new Error('stable engine: invalid USD budget allocation')
+  }
+  return Math.floor(budgetMicros / trialLimit) / USD_MICRO_SCALE
+}
 
 function assertCandidate(candidate: BuiltCandidate): void {
   if (candidate.candidateId !== 'baseline' && !DIGEST.test(candidate.candidateId)) {
@@ -226,7 +250,9 @@ async function evaluate(
   caps: StableDemoCapabilities,
   spec: StableEvaluationSpec,
 ): Promise<void> {
-  const reserveUsd = caps.reserveUsd?.(spec) ?? config.limits.budgetUsd / 15
+  const reserveUsd =
+    caps.reserveUsd?.(spec) ??
+    evaluationReserveUsd(config.limits.budgetUsd, config.limits.solverTrialsMax)
   await recoverEvaluationAction(
     service,
     {

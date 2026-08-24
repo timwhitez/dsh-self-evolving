@@ -4,16 +4,41 @@
   "title": "Candidate manifest",
   "description": "Behavior/provenance manifest authored by the proposer and frozen by the trusted builder (spec 02 §6).",
   "type": "object",
-  "required": ["schemaVersion", "candidateId", "canonicalParent", "donorCandidates", "proposal", "runtime", "tests"],
+  "required": [
+    "schemaVersion",
+    "candidateId",
+    "canonicalParent",
+    "donorCandidates",
+    "proposal",
+    "runtime",
+    "tests"
+  ],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "type": "integer", "minimum": 1 },
-    "candidateId": { "description": "Builder-materialized canonical id 'c_' + base32(sha256(canonical_source_tar))[0:26]; 'baseline' for the root parent.", "type": "string" },
-    "canonicalParent": { "description": "sha256:hex of the canonical parent source tar, or null for the baseline root.", "type": ["string", "null"], "pattern": "^(sha256:[0-9a-f]{64}|null)$" },
-    "donorCandidates": { "type": "array", "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
+    "candidateId": {
+      "description": "Builder-materialized canonical id 'c_' + base32(sha256(canonical_source_tar))[0:26]; 'baseline' for the root parent.",
+      "type": "string"
+    },
+    "canonicalParent": {
+      "description": "sha256:hex of the canonical parent source tar, or null for the baseline root.",
+      "type": ["string", "null"],
+      "pattern": "^(sha256:[0-9a-f]{64}|null)$"
+    },
+    "donorCandidates": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    },
     "proposal": {
       "type": "object",
-      "required": ["hypothesis", "evidenceRefs", "targetFailureModes", "expectedBehaviorChange", "regressionRisks", "touchedSurfaces"],
+      "required": [
+        "hypothesis",
+        "evidenceRefs",
+        "targetFailureModes",
+        "expectedBehaviorChange",
+        "regressionRisks",
+        "touchedSurfaces"
+      ],
       "additionalProperties": false,
       "properties": {
         "hypothesis": { "type": "string", "minLength": 1 },
@@ -21,7 +46,20 @@
         "targetFailureModes": { "type": "array", "items": { "type": "string" } },
         "expectedBehaviorChange": { "type": "string" },
         "regressionRisks": { "type": "array", "items": { "type": "string" } },
-        "touchedSurfaces": { "type": "array", "items": { "type": "string", "enum": ["system-prompt", "tools", "tools-result-middleware", "agent-events", "session-events", "subagent-seam"] } }
+        "touchedSurfaces": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "system-prompt",
+              "tools",
+              "tools-result-middleware",
+              "agent-events",
+              "session-events",
+              "subagent-seam"
+            ]
+          }
+        }
       }
     },
     "runtime": {
@@ -32,7 +70,11 @@
         "requiredServices": { "type": "array", "items": { "type": "string" } },
         "optionalServices": { "type": "array", "items": { "type": "string" } },
         "newToolNames": { "type": "array", "items": { "type": "string" } },
-        "supportsModes": { "type": "array", "items": { "type": "string", "enum": ["solve", "propose"] }, "minItems": 1 }
+        "supportsModes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["solve", "propose"] },
+          "minItems": 1
+        }
       }
     },
     "tests": {

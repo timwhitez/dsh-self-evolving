@@ -4,15 +4,67 @@
   "title": "v0.1.1 trajectory analysis",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "failureClusters", "ancestorReconciliations", "selectedCluster", "falsifiableHypothesis", "expectedBehaviorChange", "preservationRequirements", "regressionRisks"],
+  "required": [
+    "schemaVersion",
+    "failureClusters",
+    "ancestorReconciliations",
+    "selectedCluster",
+    "falsifiableHypothesis",
+    "expectedBehaviorChange",
+    "preservationRequirements",
+    "regressionRisks"
+  ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "failureClusters": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "object", "additionalProperties": false, "required": ["slug", "mechanism", "citations"], "properties": { "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80 }, "mechanism": { "type": "string", "minLength": 1, "maxLength": 4096 }, "citations": { "type": "array", "minItems": 2, "maxItems": 32, "items": { "$ref": "v011.evidence-citation.schema.json" } } } } },
-    "ancestorReconciliations": { "type": "array", "maxItems": 16, "items": { "type": "object", "additionalProperties": false, "required": ["clusterSlug", "analysisCitation", "outcomeCitation", "position"], "properties": { "clusterSlug": { "type": "string", "minLength": 1, "maxLength": 80 }, "analysisCitation": { "$ref": "v011.evidence-citation.schema.json" }, "outcomeCitation": { "$ref": "v011.evidence-citation.schema.json" }, "position": { "enum": ["CONFIRMED_INSUFFICIENT", "SUPERSEDED", "DISTINCT_RETRY"] } } } },
+    "failureClusters": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slug", "mechanism", "citations"],
+        "properties": {
+          "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80 },
+          "mechanism": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "citations": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 32,
+            "items": { "$ref": "v011.evidence-citation.schema.json" }
+          }
+        }
+      }
+    },
+    "ancestorReconciliations": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["clusterSlug", "analysisCitation", "outcomeCitation", "position"],
+        "properties": {
+          "clusterSlug": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "analysisCitation": { "$ref": "v011.evidence-citation.schema.json" },
+          "outcomeCitation": { "$ref": "v011.evidence-citation.schema.json" },
+          "position": { "enum": ["CONFIRMED_INSUFFICIENT", "SUPERSEDED", "DISTINCT_RETRY"] }
+        }
+      }
+    },
     "selectedCluster": { "type": "string", "minLength": 1, "maxLength": 80 },
     "falsifiableHypothesis": { "type": "string", "minLength": 20, "maxLength": 4096 },
     "expectedBehaviorChange": { "type": "string", "minLength": 1, "maxLength": 4096 },
-    "preservationRequirements": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } },
-    "regressionRisks": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } }
+    "preservationRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+    },
+    "regressionRisks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+    }
   }
 }

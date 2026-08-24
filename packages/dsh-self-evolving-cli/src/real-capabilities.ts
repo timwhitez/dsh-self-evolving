@@ -31,6 +31,7 @@ import type {
   StableProposal,
   StableProposalInput,
 } from './engine.js'
+import { evaluationReserveUsd } from './engine.js'
 import { loadTrustedRoute } from './trusted-route.js'
 
 const SOURCE_FILES = [
@@ -569,6 +570,6 @@ export async function createRealCapabilities(
     propose: (input) => realProposal(config, input),
     build: (input) => realBuild(config, input),
     evaluationProvider: (spec) => createRealEvaluationProvider(config, spec),
-    reserveUsd: () => config.limits.budgetUsd / 15,
+    reserveUsd: () => evaluationReserveUsd(config.limits.budgetUsd, config.limits.solverTrialsMax),
   }
 }
