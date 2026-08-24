@@ -13,7 +13,9 @@
  * A hard-limit denial produces an event; increasing the budget requires
  * terminating the run and creating a new signed manifest.
  */
-import { mkdir, open, readFile, rm } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { constants as fsConstants } from 'node:fs'
+import { lstat, mkdir, open, readFile, type FileHandle } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createHash } from 'node:crypto'
 
@@ -64,6 +66,15 @@ export interface BudgetTotals {
 export interface BudgetLedger {
   ledgerPath: string
   limits: BudgetLimits
+}
+
+interface BudgetFileLock {
+  file: FileHandle
+}
+
+interface LegacyBudgetLockRecord {
+  pid: number
+  processStartTicks: string
 }
 
 const mutationQueues = new Map<string, Promise<void>>()
@@ -146,6 +157,147 @@ export async function computeTotals(ledger: BudgetLedger): Promise<{
   return { totals, headHash, nextSeq, entries }
 }
 
+async function syncDirectory(path: string): Promise<void> {
+  const directory = await open(path, 'r')
+  try {
+    await directory.sync()
+  } catch {
+    // Directory fsync is best-effort on filesystems that do not support it.
+  } finally {
+    await directory.close()
+  }
+}
+
+async function processStartTicks(pid: number): Promise<string | null> {
+  try {
+    const raw = await readFile(`/proc/${pid}/stat`, 'utf8')
+    const close = raw.lastIndexOf(') ')
+    if (close === -1) throw new Error(`budget: malformed /proc/${pid}/stat`)
+    const start = raw
+      .slice(close + 2)
+      .trim()
+      .split(/\s+/)[19]
+    if (start === undefined || !/^\d+$/.test(start)) {
+      throw new Error(`budget: missing process start identity for pid ${pid}`)
+    }
+    return start
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+async function rejectLiveLegacyOwner(raw: string): Promise<void> {
+  // The kernel-lock protocol uses a permanent empty inode. Non-empty content
+  // can only be a pre-migration ownership record.
+  if (raw === '') return
+  let pid: number
+  let recordedStart: string | null
+  if (/^\d+\s*$/.test(raw)) {
+    pid = Number(raw.trim())
+    recordedStart = null
+  } else {
+    let parsed: Partial<LegacyBudgetLockRecord>
+    try {
+      parsed = JSON.parse(raw) as Partial<LegacyBudgetLockRecord>
+    } catch (error) {
+      throw new Error('budget: existing lock has no verifiable owner identity', { cause: error })
+    }
+    if (
+      typeof parsed.pid !== 'number' ||
+      !Number.isSafeInteger(parsed.pid) ||
+      parsed.pid <= 0 ||
+      typeof parsed.processStartTicks !== 'string' ||
+      !/^\d+$/.test(parsed.processStartTicks)
+    ) {
+      throw new Error('budget: existing lock has no verifiable owner identity')
+    }
+    pid = parsed.pid
+    recordedStart = parsed.processStartTicks
+  }
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error('budget: existing lock has no verifiable owner identity')
+  }
+  const currentStart = await processStartTicks(pid)
+  if (recordedStart === null ? currentStart !== null : currentStart === recordedStart) {
+    throw new Error(`budget: mutation ledger is already locked by legacy pid ${pid}`)
+  }
+}
+
+function acquireKernelLock(file: FileHandle): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let stderr = ''
+    const child = spawn('/usr/bin/flock', ['--exclusive', '--nonblock', '3'], {
+      // fd 3 is a dup of the parent's open file description. flock(2) binds
+      // ownership to that shared description, so the lock remains held by the
+      // parent FileHandle after this short helper exits.
+      stdio: ['ignore', 'ignore', 'pipe', file.fd],
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.once('error', (error) => {
+      reject(new Error('budget: failed to start the OS lock helper', { cause: error }))
+    })
+    child.once('close', (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolve()
+        return
+      }
+      if (code === 1 && signal === null) {
+        reject(new Error('budget: mutation ledger is already locked'))
+      } else {
+        const detail = stderr.trim() || `code=${String(code)} signal=${String(signal)}`
+        reject(new Error(`budget: OS lock helper failed during acquisition: ${detail}`))
+      }
+    })
+  })
+}
+
+async function verifyCanonicalLockPath(lockPath: string, file: FileHandle): Promise<void> {
+  const [held, canonical] = await Promise.all([file.stat(), lstat(lockPath)])
+  if (
+    !held.isFile() ||
+    !canonical.isFile() ||
+    held.dev !== canonical.dev ||
+    held.ino !== canonical.ino
+  ) {
+    throw new Error('budget: lock path changed or is not a regular file')
+  }
+}
+
+async function acquireBudgetFileLock(lockPath: string): Promise<BudgetFileLock> {
+  const directory = dirname(lockPath)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const lockFile = await open(
+    lockPath,
+    fsConstants.O_CREAT | fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW,
+    0o600,
+  )
+  try {
+    await verifyCanonicalLockPath(lockPath, lockFile)
+    await lockFile.chmod(0o600)
+    await lockFile.sync()
+    await syncDirectory(directory)
+    await rejectLiveLegacyOwner(await lockFile.readFile('utf8'))
+    await acquireKernelLock(lockFile)
+    // Convert a dead legacy record only after this process owns the kernel
+    // lock. Empty is the complete new-format state, so a crash around truncate
+    // cannot leave a partial marker. The path is never unlinked.
+    await lockFile.truncate(0)
+    await lockFile.sync()
+    await verifyCanonicalLockPath(lockPath, lockFile)
+  } catch (error) {
+    await lockFile.close().catch(() => undefined)
+    throw error
+  }
+  return { file: lockFile }
+}
+
+async function releaseBudgetFileLock(lock: BudgetFileLock): Promise<void> {
+  await lock.file.close()
+}
+
 async function withMutationLock<T>(ledger: BudgetLedger, operation: () => Promise<T>): Promise<T> {
   const key = ledger.ledgerPath
   const previous = mutationQueues.get(key) ?? Promise.resolve()
@@ -158,29 +310,24 @@ async function withMutationLock<T>(ledger: BudgetLedger, operation: () => Promis
   await previous
 
   const lockPath = `${ledger.ledgerPath}.lock`
-  await mkdir(dirname(ledger.ledgerPath), { recursive: true })
-  let lockFile
+  let lock: BudgetFileLock
   try {
-    lockFile = await open(lockPath, 'wx', 0o600)
-    await lockFile.writeFile(`${process.pid}\n`)
-    await lockFile.sync()
-    await lockFile.close()
+    lock = await acquireBudgetFileLock(lockPath)
   } catch (error) {
-    await lockFile?.close().catch(() => {})
     releaseQueue()
     if (mutationQueues.get(key) === tail) mutationQueues.delete(key)
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error('budget: mutation ledger is already locked', { cause: error })
-    }
     throw error
   }
 
   try {
     return await operation()
   } finally {
-    await rm(lockPath, { force: true })
-    releaseQueue()
-    if (mutationQueues.get(key) === tail) mutationQueues.delete(key)
+    try {
+      await releaseBudgetFileLock(lock)
+    } finally {
+      releaseQueue()
+      if (mutationQueues.get(key) === tail) mutationQueues.delete(key)
+    }
   }
 }
 
