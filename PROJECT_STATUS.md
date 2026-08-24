@@ -284,8 +284,9 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
   registry entry + idempotency metadata，确定性序列化。
 - **per-trial normalizer**（`src/normalizer.ts`）：读取 Harbor 真实 trial 结构
   （`verifier_result.rewards.reward` + 控制器写的 `attribution.json` + trajectory），fail-closed：
-  缺 result/reward/trajectory/candidate mismatch → INVALID，不从分母消失；infra 分类才可重试；
-  重解析同 hash。
+  缺 result/reward/trajectory 或 candidate/task/attempt mismatch → INVALID；reward 仅接受 exact 0/1，
+  不从分母消失；只有 attribution 完整、无正常 reward、无损坏/歧义 evidence 且 artifact phase 与精确
+  预注册类别一致时才可 infra retry；重解析同 hash。
 - **idempotency store**（`src/idempotency.ts`）：append-only ledger，同 key 二次 submit 拒绝，
   不产生第二个付费 trial。
 - **cost reconciliation**（`src/reconcile.ts`）：harbor/acp/dsh 三源 token+USD 对账，差异即 null，
@@ -296,7 +297,7 @@ artifact-backed，可机器验证，无付费 benchmark 运行。
 - **真实 Harbor job smoke**（`harbor-smoke.e2e.ts`，3 绿）：跑通 docker build → agent → verifier →
   reward 全链路。golden（oracle 正确解）→ reward 1.0 → normalizer PASS；nop（nop agent）→
   reward 0.0 → FAIL；broken（oracle 崩溃解）→ reward 0.0 → FAIL。满足 spec 07 §4 nop/broken/golden。
-- normalizer/cost/idempotency 单元测试（`normalizer.test.ts` 9 绿、`provider.test.ts` 8 绿、
+- normalizer/cost/idempotency 单元测试（`normalizer.test.ts` 24 绿、`normalizer-infra-retry.test.ts` 22 绿、`provider.test.ts` 8 绿、
   `reconcile.test.ts` 5 绿）。
 
 ## 已完成 — Gate 3（持久化 controller 核心）

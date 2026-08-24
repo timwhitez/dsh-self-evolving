@@ -234,7 +234,8 @@ describe.skipIf(
       const trialDir = await findSingleTrial(join(jobsDir, jobName))
       await writeFile(
         join(trialDir, 'attribution.json'),
-        JSON.stringify({ candidate_id: receipt.candidateId, attempt_index: 0 }) + '\n',
+        JSON.stringify({ candidate_id: receipt.candidateId, task_id: 'smoke', attempt_index: 0 }) +
+          '\n',
       )
       const summary = JSON.parse(
         await readFile(join(trialDir, 'agent', 'acp-summary.json'), 'utf8'),
@@ -248,6 +249,7 @@ describe.skipIf(
         trialDir,
         expectedCandidateId: receipt.candidateId,
         taskId: 'smoke',
+        expectedAttemptIndex: 0,
         requireAcpEvidence: true,
       })
       expect(normalized.status).toBe('fail')
@@ -260,6 +262,7 @@ describe.skipIf(
           trialDir,
           expectedCandidateId: receipt.candidateId,
           taskId: 'smoke',
+          expectedAttemptIndex: 0,
           requireAcpEvidence: true,
         }),
       ).toEqual(normalized)

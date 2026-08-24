@@ -135,8 +135,9 @@ task/attempt 随机交错；scheduler 不读取中间 reward。
 - `INFRA_RETRYABLE`：只由 trusted classifier 按预注册、reward-blind signals 判定；
 - `PROTOCOL_INVALID`：TCB/identity/integrity 不变量破坏，整个 affected evaluation 无效。
 
-TB primary reward 的具体 key 在 preflight 从真实 task result 验证并冻结。不得取 reward map 最大值、
-只取成功 trial 或对 missing trial 改分母。
+TB primary reward 的具体 key 在 preflight 从真实 task result 验证并冻结。Terminal-Bench adapter
+只接受 finite exact `0` 或 `1`；负数、fractional、超出范围、指数溢出或非 numeric reward 均为
+protocol-invalid。不得取 reward map 最大值、只取成功 trial 或对 missing trial 改分母。
 
 Mechanism outcome 只能由 canonical paired trials 推导。每个 baseline/child arm 必须带相同的实际
 `task handle + attempt index`，且每个 domain/key 恰好各有一个 baseline 和一个 child；缺失、重复、
@@ -152,9 +153,18 @@ hash 下载失败且 agent 未运行。以下不是 infrastructure retry：agent
 网络失败、package download 失败、verifier assertion 或 candidate crash；这些都是 harness 在真实环境
 中的表现，计 FAIL。
 
-Classifier MUST 在 verifier reward 被读取前使用 phase timestamps/error class 判定。一次 allowlisted
-infra trial 最多重试 2 次，使用同一 idempotency lineage；所有尝试都保留。重试耗时计 wall-clock，
-provider 若不收费可不计 model cost，但须明确。
+Classifier MUST 在 verifier reward 被读取前使用 phase timestamps/error class 判定。Normalizer
+先解析异常 metadata，再独立决定 retry eligibility；allowlist 字符串本身不是授权。计划中的
+candidate/task/attempt 必须与 closed-schema controller attribution 精确一致，result/trajectory/ACP 文件
+必须是单一、稳定、非 symlink 的 regular file，任何 present-but-malformed、别名歧义或 identity mismatch
+均优先判为 protocol/integrity failure，`retryEligible=false`。`classification` 字段存在时优先于
+`type`；两个不同的已注册类别同时出现则拒绝。正常 numeric reward 与 exception metadata 同时出现视为
+stale/contradictory metadata，不得 retry。`docker-build-error` 与 `network-pull-error` 只允许在 reward
+和全部 agent evidence 都尚未产生时重试；`oom-crash` 可保留已验证的 partial agent evidence，但仍必须
+没有 reward。
+
+一次 allowlisted infra trial 最多重试 2 次，使用同一 idempotency lineage；所有尝试都保留。重试耗时计
+wall-clock，provider 若不收费可不计 model cost，但须明确。
 
 ## 7. Search-stage evaluation
 
