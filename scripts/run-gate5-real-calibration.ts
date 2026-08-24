@@ -1,9 +1,21 @@
 #!/usr/bin/env tsx
 /** Gate 5 real Harbor/ACP runner. Defaults to one observed-task smoke. */
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:https'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -347,13 +359,69 @@ async function buildBaselineRuntime(workDir: string) {
   return { receipt, packed }
 }
 
+interface RunIntent {
+  schemaVersion: 1
+  runId: string
+  candidateId: string
+  capsuleSha256: string
+  plannedTrials: number
+}
+
+async function writeRunIntent(runDir: string, intent: RunIntent): Promise<void> {
+  const target = join(runDir, 'run-intent.json')
+  const temporary = join(runDir, '.run-intent.json.tmp')
+  const handle = await open(temporary, 'wx', 0o600)
+  try {
+    await handle.writeFile(JSON.stringify(intent, null, 2) + '\n')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await rename(temporary, target)
+  const directory = await open(runDir, 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
+  }
+}
+
+async function readRunIntent(
+  runDir: string,
+  expectedRunId: string,
+  expectedPlannedTrials: number,
+): Promise<RunIntent> {
+  const parsed = JSON.parse(await readFile(join(runDir, 'run-intent.json'), 'utf8')) as unknown
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('reconcile: trusted run intent is not an object')
+  }
+  const record = parsed as Record<string, unknown>
+  const expectedKeys = ['candidateId', 'capsuleSha256', 'plannedTrials', 'runId', 'schemaVersion']
+  if (JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys)) {
+    throw new Error('reconcile: trusted run intent schema mismatch')
+  }
+  if (
+    record['schemaVersion'] !== 1 ||
+    record['runId'] !== expectedRunId ||
+    typeof record['candidateId'] !== 'string' ||
+    record['candidateId'].length === 0 ||
+    typeof record['capsuleSha256'] !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(record['capsuleSha256']) ||
+    record['plannedTrials'] !== expectedPlannedTrials
+  ) {
+    throw new Error('reconcile: trusted run intent identity mismatch')
+  }
+  return record as unknown as RunIntent
+}
+
 async function collectRun(input: {
   runDir: string
   runId: string
   plannedTrials: number
-  candidateIdHint?: string
-  capsuleSha256?: string
+  candidateIdHint: string
+  capsuleSha256: string
   wallSec: number | null
+  reconciledFromTerminalRaw: boolean
 }) {
   const jobDir = join(input.runDir, 'jobs', input.runId)
   const entries = await readdir(jobDir, { withFileTypes: true })
@@ -365,7 +433,6 @@ async function collectRun(input: {
     throw new Error(`reconcile: trial matrix incomplete ${trialDirs.length}/${input.plannedTrials}`)
   }
   const normalized = []
-  const candidateIds = new Set<string>()
   const attemptsByTask = new Map<string, number>()
   for (const trialDir of trialDirs) {
     const result = await stat(join(trialDir, 'result.json')).catch(() => null)
@@ -380,25 +447,19 @@ async function collectRun(input: {
     const attributionPath = join(trialDir, 'attribution.json')
     let attribution = await readFile(attributionPath, 'utf8').catch(() => null)
     if (attribution === null) {
-      if (input.candidateIdHint === undefined) {
-        throw new Error(`reconcile: attribution missing: ${trialDir}`)
-      }
       attribution =
-        JSON.stringify({ candidate_id: input.candidateIdHint, attempt_index: attemptIndex }) + '\n'
+        JSON.stringify({
+          candidate_id: input.candidateIdHint,
+          task_id: taskId,
+          attempt_index: attemptIndex,
+        }) + '\n'
       await writeFile(attributionPath, attribution, { flag: 'wx' })
     }
-    const parsed = JSON.parse(attribution) as {
-      candidate_id?: unknown
-      attempt_index?: unknown
-    }
-    if (typeof parsed.candidate_id !== 'string' || !Number.isSafeInteger(parsed.attempt_index)) {
-      throw new Error(`reconcile: attribution invalid: ${trialDir}`)
-    }
-    candidateIds.add(parsed.candidate_id)
     const record = await normalizeTrial({
       trialDir,
-      expectedCandidateId: parsed.candidate_id,
+      expectedCandidateId: input.candidateIdHint,
       taskId,
+      expectedAttemptIndex: attemptIndex,
       requireAcpEvidence: true,
     })
     const usage = await readDshUsage(trialDir).catch(() => null)
@@ -409,14 +470,13 @@ async function collectRun(input: {
       priced: usage !== null,
     })
   }
-  if (candidateIds.size !== 1) throw new Error('reconcile: candidate attribution is not unique')
-  const candidateId = [...candidateIds][0]!
+  const candidateId = input.candidateIdHint
   const summary = {
     schemaVersion: 1,
     runId: input.runId,
     capabilityMode: 'real-official-responses-harbor-acp',
     candidateId,
-    capsuleSha256: input.capsuleSha256 ?? null,
+    capsuleSha256: input.capsuleSha256,
     route: {
       requestedModel: targetModel,
       effectiveModel,
@@ -429,7 +489,7 @@ async function collectRun(input: {
     plannedTrials: input.plannedTrials,
     collectedTrials: normalized.length,
     wallSec: input.wallSec,
-    reconciledFromTerminalRaw: input.candidateIdHint === undefined,
+    reconciledFromTerminalRaw: input.reconciledFromTerminalRaw,
     normalized,
   }
   const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
@@ -488,20 +548,57 @@ async function main(): Promise<void> {
   await mkdir(controllerRoot, { recursive: true, mode: 0o700 })
   await chmod(controllerRoot, 0o700)
   const runDir = join(controllerRoot, runId)
-  if ((await stat(runDir).catch(() => null)) !== null) {
+  const existingRunDir = await lstat(runDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (existingRunDir !== null) {
+    if (!existingRunDir.isDirectory() || existingRunDir.isSymbolicLink()) {
+      throw new Error('gate5 runner: existing run path is not a real directory')
+    }
     const summaryPath = join(runDir, 'summary.json')
     const existing = await readFile(summaryPath, 'utf8').catch(() => null)
     if (existing !== null) {
       process.stdout.write(existing)
       return
     }
-    await collectRun({ runDir, runId, plannedTrials: taskIds.length * attempts, wallSec: null })
+    const plannedTrials = taskIds.length * attempts
+    const intent = await readRunIntent(runDir, runId, plannedTrials)
+    await collectRun({
+      runDir,
+      runId,
+      plannedTrials,
+      candidateIdHint: intent.candidateId,
+      capsuleSha256: intent.capsuleSha256,
+      wallSec: null,
+      reconciledFromTerminalRaw: true,
+    })
     return
   }
   const route = await loadTrustedRoute()
-  await mkdir(runDir, { recursive: false, mode: 0o700 })
   const workDir = await mkdtemp(join(tmpdir(), `${runId}-`))
   const { receipt, packed } = await buildBaselineRuntime(workDir)
+  const stagingRunDir = `${runDir}.staging-${process.pid}-${randomUUID()}`
+  await mkdir(stagingRunDir, { recursive: false, mode: 0o700 })
+  try {
+    await writeRunIntent(stagingRunDir, {
+      schemaVersion: 1,
+      runId,
+      candidateId: receipt.candidateId,
+      capsuleSha256: packed.sha256,
+      plannedTrials: taskIds.length * attempts,
+    })
+    await rename(stagingRunDir, runDir)
+    const controllerDirectory = await open(controllerRoot, 'r')
+    try {
+      await controllerDirectory.sync()
+    } finally {
+      await controllerDirectory.close()
+    }
+  } catch (error) {
+    await rm(stagingRunDir, { recursive: true, force: true })
+    throw error
+  }
   const artifact = await startArtifactServer(packed.archivePath, runDir)
   const secretDir = await mkdtemp('/run/dsh-self-evolving-gate5-secret-')
   await chmod(secretDir, 0o700)
@@ -566,6 +663,7 @@ async function main(): Promise<void> {
       candidateIdHint: receipt.candidateId,
       capsuleSha256: packed.sha256,
       wallSec,
+      reconciledFromTerminalRaw: false,
     })
   } finally {
     await new Promise<void>((done, reject) =>

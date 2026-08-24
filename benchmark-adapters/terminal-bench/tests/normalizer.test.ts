@@ -4,13 +4,13 @@
  * Uses Harbor's ACTUAL trial result.json structure:
  *   verifier_result.rewards.reward  — numeric reward
  *   exception_info                  — Harbor exception classification
- * plus a controller-written attribution.json sidecar (candidate_id + attempt_index).
+ * plus a controller-written attribution.json sidecar (candidate_id + task_id + attempt_index).
  * Trajectory = trajectory.json (or acp-events.jsonl fallback).
  *
  * The normalizer must classify golden→pass, nop→fail, broken→invalid, and
  * INVALID records NEVER drop from the denominator. Re-parse → same record hash.
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -39,8 +39,8 @@ async function makeTrial(name: string, files: Record<string, string>): Promise<s
 }
 
 const CANDIDATE = 'c_baseline0001'
-const attribution = (candidateId = CANDIDATE, attemptIndex = 0) =>
-  JSON.stringify({ candidate_id: candidateId, attempt_index: attemptIndex })
+const attribution = (candidateId = CANDIDATE, attemptIndex = 0, taskId = 'smoke') =>
+  JSON.stringify({ candidate_id: candidateId, task_id: taskId, attempt_index: attemptIndex })
 
 function harborResult(
   reward: number | null,
@@ -63,6 +63,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('pass')
     expect(rec.reward).toBe(1.0)
@@ -80,6 +81,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('fail')
     expect(rec.reward).toBe(0.0)
@@ -94,6 +96,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('invalid')
     expect(rec.reason).toMatch(/result\.json missing/)
@@ -109,6 +112,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('invalid')
     expect(rec.reason).toMatch(/reward/)
@@ -123,6 +127,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('invalid')
     expect(rec.reason).toMatch(/trajectory/)
@@ -138,6 +143,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('invalid')
     expect(rec.reason).toMatch(/candidate_id mismatch/)
@@ -153,6 +159,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('pass')
     expect(rec.trajectoryHash).not.toBeNull()
@@ -170,6 +177,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
       requireAcpEvidence: true,
     })
     expect(rec.status).toBe('fail')
@@ -178,7 +186,7 @@ describe('normalizer — nop/broken/golden fixtures', () => {
     expect(rec.acpSummaryHash).not.toBeNull()
   })
 
-  it('infra-classified exception is retry-eligible (reward-independent)', async () => {
+  it('does not retry a completed fail carrying stale infrastructure metadata', async () => {
     const dir = await makeTrial('infra-oom', {
       'result.json': harborResult(0.0, { type: 'EnvironmentError', classification: 'oom-crash' }),
       'attribution.json': attribution(),
@@ -188,10 +196,124 @@ describe('normalizer — nop/broken/golden fixtures', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.status).toBe('fail')
-    expect(rec.retryEligible).toBe(true)
-    expect(rec.infraClass).toBe('oom-crash')
+    expect(rec.retryEligible).toBe(false)
+    expect(rec.infraClass).toBeNull()
+  })
+})
+
+describe('normalizer — attribution and reward integrity', () => {
+  it.each([
+    ['missing', JSON.stringify({ candidate_id: CANDIDATE, task_id: 'smoke' })],
+    ['string', JSON.stringify({ candidate_id: CANDIDATE, task_id: 'smoke', attempt_index: '0' })],
+    ['negative', JSON.stringify({ candidate_id: CANDIDATE, task_id: 'smoke', attempt_index: -1 })],
+    [
+      'fractional',
+      JSON.stringify({ candidate_id: CANDIDATE, task_id: 'smoke', attempt_index: 0.5 }),
+    ],
+    ['non-finite', '{"candidate_id":"c_baseline0001","task_id":"smoke","attempt_index":1e400}'],
+  ])('rejects a %s attempt index', async (_name, rawAttribution) => {
+    const dir = await makeTrial('invalid-attempt-' + _name, {
+      'result.json': harborResult(1),
+      'attribution.json': rawAttribution,
+      'trajectory.json': JSON.stringify({ steps: [] }),
+    })
+    const rec = await normalizeTrial({
+      trialDir: dir,
+      expectedCandidateId: CANDIDATE,
+      taskId: 'smoke',
+      expectedAttemptIndex: 0,
+    })
+    expect(rec.status).toBe('invalid')
+    expect(rec.reason).toMatch(/attribution\.json has an invalid or extended schema/)
+  })
+
+  it.each([
+    ['negative', '-1'],
+    ['fractional', '0.5'],
+    ['greater-than-one', '2'],
+    ['exponent overflow', '1e400'],
+    ['non-numeric', '"1"'],
+  ])('rejects a %s reward', async (_name, rawReward) => {
+    const dir = await makeTrial('invalid-reward-' + _name, {
+      'result.json':
+        '{"verifier_result":{"rewards":{"reward":' + rawReward + '}},"exception_info":null}',
+      'attribution.json': attribution(),
+      'trajectory.json': JSON.stringify({ steps: [] }),
+    })
+    const rec = await normalizeTrial({
+      trialDir: dir,
+      expectedCandidateId: CANDIDATE,
+      taskId: 'smoke',
+      expectedAttemptIndex: 0,
+    })
+    expect(rec.status).toBe('invalid')
+    expect(rec.reason).toMatch(/expected exactly 0 or 1/)
+    expect(rec.retryEligible).toBe(false)
+  })
+})
+
+describe('normalizer — ACP artifact identity', () => {
+  async function normalizeAcp(dir: string) {
+    return normalizeTrial({
+      trialDir: dir,
+      expectedCandidateId: CANDIDATE,
+      taskId: 'smoke',
+      expectedAttemptIndex: 0,
+      requireAcpEvidence: true,
+    })
+  }
+
+  it('rejects an invalid preferred summary even when a valid fallback exists', async () => {
+    const dir = await makeTrial('invalid-preferred-summary', {
+      'result.json': harborResult(1),
+      'attribution.json': attribution(),
+      'agent/acp-events.jsonl': '{}\n',
+      'agent/acp-summary.json': '{broken',
+      'acp-summary.json': '{}',
+    })
+    const rec = await normalizeAcp(dir)
+    expect(rec.status).toBe('invalid')
+    expect(rec.reason).toMatch(/ACP summary is ambiguous/)
+  })
+
+  it('rejects two conflicting summary aliases', async () => {
+    const dir = await makeTrial('conflicting-summaries', {
+      'result.json': harborResult(1),
+      'attribution.json': attribution(),
+      'agent/acp-events.jsonl': '{}\n',
+      'agent/acp-summary.json': '{"source":"agent"}',
+      'acp-summary.json': '{"source":"root"}',
+    })
+    const rec = await normalizeAcp(dir)
+    expect(rec.status).toBe('invalid')
+    expect(rec.reason).toMatch(/ACP summary is ambiguous/)
+  })
+
+  it('does not follow an unreadable preferred summary symlink', async () => {
+    const dir = await makeTrial('linked-preferred-summary', {
+      'result.json': harborResult(1),
+      'attribution.json': attribution(),
+      'agent/acp-events.jsonl': '{}\n',
+      'acp-summary.json': '{}',
+    })
+    await symlink('../acp-summary.json', join(dir, 'agent', 'acp-summary.json'))
+    const rec = await normalizeAcp(dir)
+    expect(rec.status).toBe('invalid')
+    expect(rec.reason).toMatch(/ACP summary is not readable/)
+  })
+
+  it('rejects missing ACP summaries', async () => {
+    const dir = await makeTrial('missing-summary', {
+      'result.json': harborResult(1),
+      'attribution.json': attribution(),
+      'agent/acp-events.jsonl': '{}\n',
+    })
+    const rec = await normalizeAcp(dir)
+    expect(rec.status).toBe('invalid')
+    expect(rec.reason).toMatch(/ACP summary missing/)
   })
 })
 
@@ -206,11 +328,13 @@ describe('normalizer — reproducibility', () => {
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 2,
     })
     const rec2 = await normalizeTrial({
       trialDir: dir,
       expectedCandidateId: CANDIDATE,
       taskId: 'smoke',
+      expectedAttemptIndex: 2,
     })
     expect(rec1.recordHash).toBe(rec2.recordHash)
     expect(rec1.recordHash).toMatch(/^[0-9a-f]{64}$/)

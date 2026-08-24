@@ -151,7 +151,7 @@ describe.skipIf(
       // Write the attribution sidecar the TCB controller would write.
       await writeFile(
         join(trialDir, 'attribution.json'),
-        JSON.stringify({ candidate_id: 'c_baseline', attempt_index: 0 }),
+        JSON.stringify({ candidate_id: 'c_baseline', task_id: 'smoke', attempt_index: 0 }),
       )
       // Copy the verifier reward as a trajectory stand-in (the smoke task is script-based;
       // a real ACP trial writes acp-events.jsonl).
@@ -160,6 +160,7 @@ describe.skipIf(
         trialDir,
         expectedCandidateId: 'c_baseline',
         taskId: 'smoke',
+        expectedAttemptIndex: 0,
       })
       expect(rec.reward).toBe(1.0)
       expect(rec.status).toBe('pass')
@@ -171,13 +172,14 @@ describe.skipIf(
     const trialDir = await runHarborJob('nop', 'nop', join(fixturesDir, 'smoke-task'))
     await writeFile(
       join(trialDir, 'attribution.json'),
-      JSON.stringify({ candidate_id: 'c_baseline', attempt_index: 0 }),
+      JSON.stringify({ candidate_id: 'c_baseline', task_id: 'smoke', attempt_index: 0 }),
     )
     await writeFile(join(trialDir, 'trajectory.json'), JSON.stringify({ source: 'nop' }))
     const rec = await normalizeTrial({
       trialDir,
       expectedCandidateId: 'c_baseline',
       taskId: 'smoke',
+      expectedAttemptIndex: 0,
     })
     expect(rec.reward).toBe(0.0)
     expect(rec.status).toBe('fail')
@@ -195,13 +197,14 @@ describe.skipIf(
       )
       await writeFile(
         join(trialDir, 'attribution.json'),
-        JSON.stringify({ candidate_id: 'c_baseline', attempt_index: 0 }),
+        JSON.stringify({ candidate_id: 'c_baseline', task_id: 'smoke', attempt_index: 0 }),
       )
       await writeFile(join(trialDir, 'trajectory.json'), JSON.stringify({ source: 'broken' }))
       const rec = await normalizeTrial({
         trialDir,
         expectedCandidateId: 'c_baseline',
         taskId: 'smoke',
+        expectedAttemptIndex: 0,
       })
       expect(rec.reward).toBe(0.0)
       expect(rec.status).toBe('fail')
