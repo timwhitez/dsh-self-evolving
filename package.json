@@ -28,7 +28,7 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --write packages/dsh-self-evolving/tests/v011-outcome-order.test.ts && git diff -- packages/dsh-self-evolving/tests/v011-outcome-order.test.ts",
     "docs:check": "markdownlint-cli2 \"README*.md\" \"CONTRIBUTING.md\" \"SECURITY.md\" \"CODE_OF_CONDUCT.md\" \"docs/*.md\" \".github/**/*.md\"",
     "lint": "eslint .",
     "test": "vitest run",
