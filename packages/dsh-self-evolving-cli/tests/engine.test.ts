@@ -7,6 +7,7 @@ import type { EvaluationProvider } from '@dsh-self-evolving/core'
 import {
   createStableDemoConfig,
   createV011DemoConfig,
+  evaluationReserveUsd,
   initializeState,
   runStableDemo,
   type BuiltCandidate,
@@ -124,6 +125,14 @@ async function fixture(v011 = false) {
 }
 
 describe('stable-demo engine', () => {
+  it('allocates fixed-precision reservations without overselling the run budget', () => {
+    expect(evaluationReserveUsd(5, 15)).toBe(0.333333)
+    expect(evaluationReserveUsd(5, 15) * 15).toBeLessThanOrEqual(5)
+    expect(evaluationReserveUsd(1.000001, 3)).toBe(0.333333)
+    expect(() => evaluationReserveUsd(0.0000001, 15)).toThrow(/invalid USD budget allocation/)
+    expect(() => evaluationReserveUsd(Number.NaN, 15)).toThrow(/invalid USD budget allocation/)
+  })
+
   it('freezes a batch-discovered failure then creates three children at lineage depth >=2', async () => {
     const { config, counters, capabilities } = await fixture()
     const result = await runStableDemo(config, capabilities)

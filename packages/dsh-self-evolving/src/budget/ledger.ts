@@ -79,30 +79,241 @@ interface LegacyBudgetLockRecord {
 
 const mutationQueues = new Map<string, Promise<void>>()
 
+const BUDGET_DIMENSIONS = [
+  'usd',
+  'solverTokens',
+  'proposerTokens',
+  'taskTrials',
+  'proposalCalls',
+  'wallClockSec',
+  'concurrencySlots',
+  'storageBytes',
+] as const satisfies readonly BudgetDimension[]
+const ENTRY_KINDS = [
+  'reserve',
+  'spend',
+  'release',
+  'refund',
+] as const satisfies readonly EntryKind[]
+const ENTRY_KEYS = [
+  'actionId',
+  'amount',
+  'at',
+  'dimension',
+  'entryHash',
+  'kind',
+  'previousHash',
+  'seq',
+] as const
+const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
+const USD_MICRO_SCALE = 1_000_000
+const USD_UNIT_TOLERANCE = 1e-6
+
+type BudgetUnitRecord = Record<BudgetDimension, number>
+
+function isBudgetDimension(value: unknown): value is BudgetDimension {
+  return typeof value === 'string' && BUDGET_DIMENSIONS.includes(value as BudgetDimension)
+}
+
+function isEntryKind(value: unknown): value is EntryKind {
+  return typeof value === 'string' && ENTRY_KINDS.includes(value as EntryKind)
+}
+
+function isActionId(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.length > 0 && value === value.trim() && !value.includes('\0')
+  )
+}
+
+function amountToUnits(amount: unknown, dimension: BudgetDimension): number {
+  if (
+    typeof amount !== 'number' ||
+    !Number.isFinite(amount) ||
+    amount < 0 ||
+    Object.is(amount, -0)
+  ) {
+    throw new Error('must be a finite non-negative number and not negative zero')
+  }
+  if (dimension === 'usd') {
+    const scaled = amount * USD_MICRO_SCALE
+    const rounded = Math.round(scaled)
+    if (!Number.isSafeInteger(rounded) || Math.abs(scaled - rounded) > USD_UNIT_TOLERANCE) {
+      throw new Error('must use safe integer USD micros (at most six decimal places)')
+    }
+    return rounded
+  }
+  if (!Number.isSafeInteger(amount)) {
+    throw new Error('must be a non-negative safe integer')
+  }
+  return amount
+}
+
+function amountFromUnits(units: number, dimension: BudgetDimension): number {
+  return dimension === 'usd' ? units / USD_MICRO_SCALE : units
+}
+
+function zeroUnitRecord(): BudgetUnitRecord {
+  return Object.fromEntries(
+    BUDGET_DIMENSIONS.map((dimension) => [dimension, 0]),
+  ) as BudgetUnitRecord
+}
+
 function zeroTotals(): BudgetTotals {
-  const dims: BudgetDimension[] = [
-    'usd',
-    'solverTokens',
-    'proposerTokens',
-    'taskTrials',
-    'proposalCalls',
-    'wallClockSec',
-    'concurrencySlots',
-    'storageBytes',
-  ]
   const reserved = {} as Record<BudgetDimension, number>
   const spent = {} as Record<BudgetDimension, number>
-  for (const d of dims) {
-    reserved[d] = 0
-    spent[d] = 0
+  for (const dimension of BUDGET_DIMENSIONS) {
+    reserved[dimension] = 0
+    spent[dimension] = 0
   }
   return { reserved, spent, unpricedUsage: false }
+}
+
+function totalsFromUnits(
+  reservedUnits: BudgetUnitRecord,
+  spentUnits: BudgetUnitRecord,
+  unpricedUsage: boolean,
+): BudgetTotals {
+  const totals = zeroTotals()
+  totals.unpricedUsage = unpricedUsage
+  for (const dimension of BUDGET_DIMENSIONS) {
+    totals.reserved[dimension] = amountFromUnits(reservedUnits[dimension], dimension)
+    totals.spent[dimension] = amountFromUnits(spentUnits[dimension], dimension)
+  }
+  return totals
 }
 
 function canonicalEntry(e: Omit<BudgetEntry, 'entryHash'>): string {
   const { entryHash: _omit, ...rest } = e as BudgetEntry
   void _omit
   return JSON.stringify(rest, Object.keys(rest).sort())
+}
+
+function assertValidLimits(limits: unknown): asserts limits is BudgetLimits {
+  if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) {
+    throw new Error('budget: limits must be a complete budget-limit object')
+  }
+  const keys = Object.keys(limits).sort()
+  const expectedKeys = [...BUDGET_DIMENSIONS].sort()
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error('budget: limits must contain exactly the protocol budget dimensions')
+  }
+  for (const dimension of BUDGET_DIMENSIONS) {
+    try {
+      amountToUnits((limits as Record<string, unknown>)[dimension], dimension)
+    } catch (error) {
+      throw new Error(`budget: invalid limit for ${dimension}: ${(error as Error).message}`, {
+        cause: error,
+      })
+    }
+  }
+}
+
+function validatedLedgerSnapshot(ledger: BudgetLedger): BudgetLedger {
+  if (
+    typeof ledger !== 'object' ||
+    ledger === null ||
+    typeof ledger.ledgerPath !== 'string' ||
+    ledger.ledgerPath.length === 0
+  ) {
+    throw new Error('budget: ledgerPath must be a non-empty string')
+  }
+  assertValidLimits(ledger.limits)
+  const limits = {} as BudgetLimits
+  for (const dimension of BUDGET_DIMENSIONS) {
+    limits[dimension] = amountFromUnits(
+      amountToUnits(ledger.limits[dimension], dimension),
+      dimension,
+    )
+  }
+  return Object.freeze({
+    ledgerPath: ledger.ledgerPath,
+    limits: Object.freeze(limits),
+  }) as BudgetLedger
+}
+
+function assertValidMutationInput(
+  ledger: BudgetLedger,
+  kind: EntryKind,
+  actionId: unknown,
+  dimension: unknown,
+  amount: unknown,
+): asserts actionId is string {
+  validatedLedgerSnapshot(ledger)
+  if (!isActionId(actionId)) throw new Error(`budget: ${kind} actionId is invalid`)
+  if (!isBudgetDimension(dimension)) throw new Error(`budget: ${kind} dimension is invalid`)
+  try {
+    amountToUnits(amount, dimension)
+  } catch (error) {
+    throw new Error(`budget: ${kind} amount for ${dimension} ${(error as Error).message}`, {
+      cause: error,
+    })
+  }
+}
+
+function corrupt(message: string, cause?: unknown): never {
+  throw new Error(`EVIDENCE_CORRUPT: ${message}`, cause === undefined ? undefined : { cause })
+}
+
+function safeAddUnits(left: number, right: number, context: string): number {
+  const result = left + right
+  if (!Number.isSafeInteger(result) || result < 0)
+    corrupt(`budget arithmetic overflow at ${context}`)
+  return result
+}
+
+function safeSubtractUnits(left: number, right: number, context: string): number {
+  if (right > left) corrupt(`budget ${context} exceeds its durable balance`)
+  return left - right
+}
+
+function parseEntry(value: unknown, expectedSeq: number): { entry: BudgetEntry; units: number } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    corrupt(`budget entry ${expectedSeq} is not an object`)
+  }
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  if (keys.length !== ENTRY_KEYS.length || keys.some((key, index) => key !== ENTRY_KEYS[index])) {
+    corrupt(`budget entry ${expectedSeq} has an invalid schema`)
+  }
+  if (
+    !Number.isSafeInteger(record['seq']) ||
+    (record['seq'] as number) <= 0 ||
+    (record['seq'] as number) >= Number.MAX_SAFE_INTEGER ||
+    record['seq'] !== expectedSeq
+  ) {
+    corrupt(`budget seq ${String(record['seq'])} != expected ${expectedSeq}`)
+  }
+  if (!isEntryKind(record['kind'])) corrupt(`budget entry ${expectedSeq} has invalid kind`)
+  if (!isBudgetDimension(record['dimension'])) {
+    corrupt(`budget entry ${expectedSeq} has invalid dimension`)
+  }
+  if (!isActionId(record['actionId'])) corrupt(`budget entry ${expectedSeq} has invalid actionId`)
+  if (
+    typeof record['at'] !== 'string' ||
+    !Number.isFinite(Date.parse(record['at'])) ||
+    new Date(record['at']).toISOString() !== record['at']
+  ) {
+    corrupt(`budget entry ${expectedSeq} has invalid timestamp`)
+  }
+  if (typeof record['entryHash'] !== 'string' || !HASH_PATTERN.test(record['entryHash'])) {
+    corrupt(`budget entry ${expectedSeq} has invalid entryHash`)
+  }
+  if (
+    record['previousHash'] !== null &&
+    (typeof record['previousHash'] !== 'string' || !HASH_PATTERN.test(record['previousHash']))
+  ) {
+    corrupt(`budget entry ${expectedSeq} has invalid previousHash`)
+  }
+  let units: number
+  try {
+    units = amountToUnits(record['amount'], record['dimension'])
+  } catch (error) {
+    corrupt(`budget entry ${expectedSeq} has invalid amount: ${(error as Error).message}`, error)
+  }
+  return { entry: record as unknown as BudgetEntry, units }
 }
 
 /**
@@ -115,37 +326,122 @@ export async function computeTotals(ledger: BudgetLedger): Promise<{
   nextSeq: number
   entries: BudgetEntry[]
 }> {
-  const totals = zeroTotals()
+  const frozenLedger = validatedLedgerSnapshot(ledger)
+  const reservedUnits = zeroUnitRecord()
+  const spentUnits = zeroUnitRecord()
+  const limitUnits = Object.fromEntries(
+    BUDGET_DIMENSIONS.map((dimension) => [
+      dimension,
+      amountToUnits(frozenLedger.limits[dimension], dimension),
+    ]),
+  ) as BudgetUnitRecord
+  const actionReserved = new Map<string, number>()
+  const actionSpent = new Map<string, number>()
+  const seenMutations = new Set<string>()
   const entries: BudgetEntry[] = []
   let headHash: string | null = null
   let nextSeq = 1
+  let unpricedUsage = false
   try {
-    const raw = await readFile(ledger.ledgerPath, 'utf8')
+    const raw = await readFile(frozenLedger.ledgerPath, 'utf8')
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue
-      const e = JSON.parse(line) as BudgetEntry
-      if (e.seq !== nextSeq) {
-        throw new Error(`EVIDENCE_CORRUPT: budget seq ${e.seq} != expected ${nextSeq}`)
+      let decoded: unknown
+      try {
+        decoded = JSON.parse(line) as unknown
+      } catch (error) {
+        corrupt(`budget entry ${nextSeq} is not valid JSON`, error)
       }
+      if (JSON.stringify(decoded) !== line) {
+        corrupt(`budget entry ${nextSeq} does not use canonical JSON encoding`)
+      }
+      const { entry, units } = parseEntry(decoded, nextSeq)
       // Verify hash chain (fail-closed on corruption).
-      const recomputed = 'sha256:' + createHash('sha256').update(canonicalEntry(e)).digest('hex')
-      if (recomputed !== e.entryHash) {
-        throw new Error(`EVIDENCE_CORRUPT: budget entry ${e.seq} hash mismatch`)
+      const recomputed =
+        'sha256:' + createHash('sha256').update(canonicalEntry(entry)).digest('hex')
+      if (recomputed !== entry.entryHash) {
+        corrupt(`budget entry ${entry.seq} hash mismatch`)
       }
-      if (e.previousHash !== headHash) {
-        throw new Error(`EVIDENCE_CORRUPT: budget chain break at ${e.seq}`)
+      if (entry.previousHash !== headHash) {
+        corrupt(`budget chain break at ${entry.seq}`)
       }
-      if (e.kind === 'reserve') totals.reserved[e.dimension] += e.amount
-      else if (e.kind === 'spend') {
-        totals.spent[e.dimension] += e.amount
-        totals.reserved[e.dimension] -= e.amount
-        if (e.amount === 0 && e.dimension === 'usd') totals.unpricedUsage = true
-      } else if (e.kind === 'release' || e.kind === 'refund') {
-        totals.reserved[e.dimension] -= e.amount
+      const mutationKey = JSON.stringify([entry.kind, entry.actionId, entry.dimension])
+      if (seenMutations.has(mutationKey)) {
+        corrupt(`duplicate ${entry.kind} mutation for ${entry.actionId}/${entry.dimension}`)
       }
-      headHash = e.entryHash
-      nextSeq = e.seq + 1
-      entries.push(e)
+      seenMutations.add(mutationKey)
+
+      const actionKey = JSON.stringify([entry.actionId, entry.dimension])
+      const reservedForAction = actionReserved.get(actionKey) ?? 0
+      const spentForAction = actionSpent.get(actionKey) ?? 0
+      if (entry.kind === 'reserve') {
+        actionReserved.set(
+          actionKey,
+          safeAddUnits(reservedForAction, units, `action reserve ${entry.seq}`),
+        )
+        reservedUnits[entry.dimension] = safeAddUnits(
+          reservedUnits[entry.dimension],
+          units,
+          `reserve ${entry.seq}`,
+        )
+      } else if (entry.kind === 'spend') {
+        actionReserved.set(
+          actionKey,
+          safeSubtractUnits(reservedForAction, units, `spend at entry ${entry.seq}`),
+        )
+        actionSpent.set(actionKey, safeAddUnits(spentForAction, units, `action spend ${entry.seq}`))
+        reservedUnits[entry.dimension] = safeSubtractUnits(
+          reservedUnits[entry.dimension],
+          units,
+          `spend at entry ${entry.seq}`,
+        )
+        spentUnits[entry.dimension] = safeAddUnits(
+          spentUnits[entry.dimension],
+          units,
+          `spend ${entry.seq}`,
+        )
+        if (units === 0 && entry.dimension === 'usd') unpricedUsage = true
+      } else if (entry.kind === 'release') {
+        actionReserved.set(
+          actionKey,
+          safeSubtractUnits(reservedForAction, units, `release at entry ${entry.seq}`),
+        )
+        reservedUnits[entry.dimension] = safeSubtractUnits(
+          reservedUnits[entry.dimension],
+          units,
+          `release at entry ${entry.seq}`,
+        )
+      } else {
+        actionSpent.set(
+          actionKey,
+          safeSubtractUnits(spentForAction, units, `refund at entry ${entry.seq}`),
+        )
+        actionReserved.set(
+          actionKey,
+          safeAddUnits(reservedForAction, units, `action refund ${entry.seq}`),
+        )
+        spentUnits[entry.dimension] = safeSubtractUnits(
+          spentUnits[entry.dimension],
+          units,
+          `refund at entry ${entry.seq}`,
+        )
+        reservedUnits[entry.dimension] = safeAddUnits(
+          reservedUnits[entry.dimension],
+          units,
+          `refund ${entry.seq}`,
+        )
+      }
+      const committed = safeAddUnits(
+        reservedUnits[entry.dimension],
+        spentUnits[entry.dimension],
+        `committed total ${entry.seq}`,
+      )
+      if (committed > limitUnits[entry.dimension]) {
+        corrupt(`budget entry ${entry.seq} exceeds the frozen ${entry.dimension} limit`)
+      }
+      headHash = entry.entryHash
+      nextSeq = entry.seq + 1
+      entries.push(entry)
     }
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -154,6 +450,7 @@ export async function computeTotals(ledger: BudgetLedger): Promise<{
       throw e
     }
   }
+  const totals = totalsFromUnits(reservedUnits, spentUnits, unpricedUsage)
   return { totals, headHash, nextSeq, entries }
 }
 
@@ -342,7 +639,7 @@ function existingMutation(
     (entry) => entry.kind === kind && entry.actionId === actionId && entry.dimension === dimension,
   )
   if (existing === undefined) return null
-  if (existing.amount !== amount) {
+  if (amountToUnits(existing.amount, dimension) !== amountToUnits(amount, dimension)) {
     throw new Error(
       `budget: conflicting ${kind} replay for ${actionId}/${dimension}: ${amount} != ${existing.amount}`,
     )
@@ -350,7 +647,7 @@ function existingMutation(
   return existing
 }
 
-function actionReservationBalance(
+function actionReservationUnits(
   entries: BudgetEntry[],
   actionId: string,
   dimension: BudgetDimension,
@@ -358,8 +655,11 @@ function actionReservationBalance(
   return entries
     .filter((entry) => entry.actionId === actionId && entry.dimension === dimension)
     .reduce((balance, entry) => {
-      if (entry.kind === 'reserve' || entry.kind === 'refund') return balance + entry.amount
-      return balance - entry.amount
+      const units = amountToUnits(entry.amount, dimension)
+      if (entry.kind === 'reserve' || entry.kind === 'refund') {
+        return safeAddUnits(balance, units, `action balance ${actionId}/${dimension}`)
+      }
+      return safeSubtractUnits(balance, units, `action balance ${actionId}/${dimension}`)
     }, 0)
 }
 
@@ -369,8 +669,19 @@ function actionReservationBalance(
  */
 export function worstCaseCommitted(totals: BudgetTotals): Record<BudgetDimension, number> {
   const out = {} as Record<BudgetDimension, number>
-  for (const d of Object.keys(totals.reserved) as BudgetDimension[]) {
-    out[d] = totals.spent[d] + totals.reserved[d]
+  for (const dimension of BUDGET_DIMENSIONS) {
+    let reserved: number
+    let spent: number
+    try {
+      reserved = amountToUnits(totals.reserved[dimension], dimension)
+      spent = amountToUnits(totals.spent[dimension], dimension)
+    } catch (error) {
+      throw new Error(`budget: invalid totals for ${dimension}`, { cause: error })
+    }
+    out[dimension] = amountFromUnits(
+      safeAddUnits(reserved, spent, `worst-case ${dimension}`),
+      dimension,
+    )
   }
   return out
 }
@@ -385,18 +696,22 @@ export async function reserve(
   dimension: BudgetDimension,
   amount: number,
 ): Promise<BudgetEntry> {
-  if (amount < 0) throw new Error(`budget: negative reserve for ${dimension}`)
-  return withMutationLock(ledger, async () => {
-    const { totals, headHash, nextSeq, entries } = await computeTotals(ledger)
+  const frozenLedger = validatedLedgerSnapshot(ledger)
+  assertValidMutationInput(frozenLedger, 'reserve', actionId, dimension, amount)
+  return withMutationLock(frozenLedger, async () => {
+    const { totals, headHash, nextSeq, entries } = await computeTotals(frozenLedger)
     const existing = existingMutation(entries, 'reserve', actionId, dimension, amount)
     if (existing !== null) return existing
     const worst = worstCaseCommitted(totals)
-    if (worst[dimension] + amount > ledger.limits[dimension]) {
+    const committedUnits = amountToUnits(worst[dimension], dimension)
+    const requestedUnits = amountToUnits(amount, dimension)
+    const limitUnits = amountToUnits(frozenLedger.limits[dimension], dimension)
+    if (requestedUnits > limitUnits - committedUnits) {
       throw new Error(
-        `budget: hard limit exceeded for ${dimension}: ${worst[dimension] + amount} > ${ledger.limits[dimension]}`,
+        `budget: hard limit exceeded for ${dimension}: committed ${worst[dimension]}, requested ${amount} > ${frozenLedger.limits[dimension]}`,
       )
     }
-    return appendEntry(ledger, nextSeq, headHash, 'reserve', dimension, actionId, amount)
+    return appendEntry(frozenLedger, nextSeq, headHash, 'reserve', dimension, actionId, amount)
   })
 }
 
@@ -407,14 +722,16 @@ export async function spend(
   dimension: BudgetDimension,
   amount: number,
 ): Promise<BudgetEntry> {
-  return withMutationLock(ledger, async () => {
-    const { headHash, nextSeq, entries } = await computeTotals(ledger)
+  const frozenLedger = validatedLedgerSnapshot(ledger)
+  assertValidMutationInput(frozenLedger, 'spend', actionId, dimension, amount)
+  return withMutationLock(frozenLedger, async () => {
+    const { headHash, nextSeq, entries } = await computeTotals(frozenLedger)
     const existing = existingMutation(entries, 'spend', actionId, dimension, amount)
     if (existing !== null) return existing
-    if (amount > actionReservationBalance(entries, actionId, dimension)) {
+    if (amountToUnits(amount, dimension) > actionReservationUnits(entries, actionId, dimension)) {
       throw new Error(`budget: spend exceeds reservation for ${actionId}/${dimension}`)
     }
-    return appendEntry(ledger, nextSeq, headHash, 'spend', dimension, actionId, amount)
+    return appendEntry(frozenLedger, nextSeq, headHash, 'spend', dimension, actionId, amount)
   })
 }
 
@@ -425,14 +742,16 @@ export async function release(
   dimension: BudgetDimension,
   amount: number,
 ): Promise<BudgetEntry> {
-  return withMutationLock(ledger, async () => {
-    const { headHash, nextSeq, entries } = await computeTotals(ledger)
+  const frozenLedger = validatedLedgerSnapshot(ledger)
+  assertValidMutationInput(frozenLedger, 'release', actionId, dimension, amount)
+  return withMutationLock(frozenLedger, async () => {
+    const { headHash, nextSeq, entries } = await computeTotals(frozenLedger)
     const existing = existingMutation(entries, 'release', actionId, dimension, amount)
     if (existing !== null) return existing
-    if (amount > actionReservationBalance(entries, actionId, dimension)) {
+    if (amountToUnits(amount, dimension) > actionReservationUnits(entries, actionId, dimension)) {
       throw new Error(`budget: release exceeds reservation for ${actionId}/${dimension}`)
     }
-    return appendEntry(ledger, nextSeq, headHash, 'release', dimension, actionId, amount)
+    return appendEntry(frozenLedger, nextSeq, headHash, 'release', dimension, actionId, amount)
   })
 }
 
@@ -445,13 +764,21 @@ async function appendEntry(
   actionId: string,
   amount: number,
 ): Promise<BudgetEntry> {
+  assertValidMutationInput(ledger, kind, actionId, dimension, amount)
+  if (!Number.isSafeInteger(seq) || seq <= 0 || seq >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('budget: append sequence is invalid')
+  }
+  if (previousHash !== null && !HASH_PATTERN.test(previousHash)) {
+    throw new Error('budget: append previous hash is invalid')
+  }
   await mkdir(dirname(ledger.ledgerPath), { recursive: true })
+  const canonicalAmount = amountFromUnits(amountToUnits(amount, dimension), dimension)
   const withoutHash: Omit<BudgetEntry, 'entryHash'> = {
     seq,
     kind,
     dimension,
     actionId,
-    amount,
+    amount: canonicalAmount,
     at: new Date().toISOString(),
     previousHash,
   }

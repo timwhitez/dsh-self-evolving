@@ -52,6 +52,7 @@ import type {
   StableProposal,
   StableProposalInput,
 } from './engine.js'
+import { evaluationReserveUsd } from './engine.js'
 import { runDoctor } from './doctor.js'
 import { loadTrustedRoute } from './trusted-route.js'
 import {
@@ -995,7 +996,7 @@ export async function createV011RealCapabilities(
     propose: (input) => realV011Proposal(config, catalog, input),
     build: (input) => realV011Build(config, catalog, route.baseUrl, input),
     evaluationProvider: (spec) => createRealEvaluationProvider(config as never, spec),
-    reserveUsd: () => config.limits.budgetUsd / 15,
+    reserveUsd: () => evaluationReserveUsd(config.limits.budgetUsd, config.limits.solverTrialsMax),
     async afterCandidateEvaluation(input) {
       if (
         input.child.proposalDigest === undefined ||
