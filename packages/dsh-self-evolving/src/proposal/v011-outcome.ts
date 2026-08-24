@@ -1,4 +1,6 @@
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
+import { link, lstat, mkdir, open, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { assertV011, canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 
@@ -30,6 +32,30 @@ export interface MechanismOutcomeRecord {
   status: MechanismOutcomeStatus
   singleTrialObservable: boolean
   label: 'DEV_OBSERVED'
+}
+
+async function readRegularTextFile(path: string): Promise<string | null> {
+  const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    },
+  )
+  if (file === null) return null
+  try {
+    const [held, canonical] = await Promise.all([file.stat(), lstat(path)])
+    if (
+      !held.isFile() ||
+      !canonical.isFile() ||
+      held.dev !== canonical.dev ||
+      held.ino !== canonical.ino
+    ) {
+      throw new Error('v0.1.1 outcome: artifact path is not one stable regular file')
+    }
+    return await file.readFile('utf8')
+  } finally {
+    await file.close()
+  }
 }
 
 export async function deriveMechanismOutcome(input: {
@@ -87,20 +113,40 @@ export async function publishMechanismOutcomeOnce(
   path: string,
   record: MechanismOutcomeRecord,
 ): Promise<'CREATED' | 'REUSED'> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const parent = dirname(path)
+  await mkdir(parent, { recursive: true, mode: 0o700 })
   const bytes = canonicalV011(record) + '\n'
-  const file = await open(path, 'wx', 0o600).catch(async (error: NodeJS.ErrnoException) => {
-    if (error.code !== 'EEXIST') throw error
-    const existing = await readFile(path, 'utf8')
-    if (existing !== bytes) throw new Error('v0.1.1 outcome: conflicting exactly-once derivation')
-    return null
-  })
-  if (file === null) return 'REUSED'
+  const stagingPath = `${path}.staging-${process.pid}-${randomUUID()}`
+  const file = await open(stagingPath, 'wx', 0o600)
   try {
     await file.writeFile(bytes)
     await file.sync()
   } finally {
     await file.close()
   }
-  return 'CREATED'
+  let status: 'CREATED' | 'REUSED' = 'CREATED'
+  try {
+    try {
+      await link(stagingPath, path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const existing = await readRegularTextFile(path)
+      if (existing === null) {
+        throw new Error('v0.1.1 outcome: published artifact disappeared', { cause: error })
+      }
+      if (existing !== bytes) {
+        throw new Error('v0.1.1 outcome: conflicting exactly-once derivation', { cause: error })
+      }
+      status = 'REUSED'
+    }
+    const directory = await open(parent, 'r')
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
+    return status
+  } finally {
+    await rm(stagingPath, { force: true })
+  }
 }

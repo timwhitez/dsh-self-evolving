@@ -109,6 +109,14 @@ payload，以及严格的 SHA-256 previous/event hash。持久化 event 必须�
 segment；恰好等于上限时不得提前 rotate。单条 record 自身超过上限时不得拆分，它独占一个 segment，下一条
 append 再 rotate。已有的目标 segment、空或非 regular 的 active segment 均视为损坏并 fail closed。
 
+Journal v1 的 commit point 是经原子发布的 `HEAD`，不是 segment fsync。Reader 只验证并 replay 到 `HEAD`
+精确指定的 `(seq, eventHash, segment)`；同一 segment 中该 record 之后的 bytes、后续 canonical segment，
+以及没有 `HEAD` 时的 segment/`HEAD.tmp` 都是 uncommitted crash residue，绝不能隐式 roll forward。Writer 在
+下一次 append 前先把 residue 以 content hash 身份写入 `crash-residue/` 并 fsync，再截断 active suffix 或移走
+后续文件；已提交 prefix 的任一 byte 不匹配则 fail closed。新 segment 的 directory entry 必须在 HEAD
+发布前 fsync。这样在 segment write/file-fsync/directory-fsync、HEAD staging write/fsync、HEAD rename 或
+directory fsync 任一边界中断，重启只会得到旧 prefix 或完整的新 tail。
+
 Wall-clock timestamp 只用于审计，不决定排序或策略；`seq` 是 commit order，external occurrence
 作为 payload fact。
 
@@ -161,6 +169,14 @@ reveal   = H(run, candidate-lock-hash, split-commitment, reveal-protocol)
 
 External provider 必须保存/返回 key。Resume 发现 `RESERVED/LAUNCHING/RUNNING/COLLECTING` 时先 inspect
 existing external job；只有 provider 证明 never launched 或 terminal infra retry 才能重新 submit。
+
+文件发布与 controller acknowledgement 是两个 durable phase。Proposal/mechanism-outcome 先以同目录
+staging file 写入并 fsync，再用 no-clobber 原子发布并 fsync parent directory；无论结果是 `CREATED` 还是
+`REUSED`，都必须完整验证 artifact 后调用 reconciliation。Reconciliation identity 固定包含 artifact kind、
+action/idempotency key、精确 artifact byte digest，以及 domain-separated reconciliation ID。Controller 以该
+reconciliation ID 作为 immutable journal `eventId` 执行 `recordOnce`：相同 ID/相同 canonical event 返回
+`REUSED`，相同 ID/不同内容 fail closed。回调入口、回调执行中或 event commit 后崩溃，resume 都必须收敛为
+一个 semantic event；不得因 artifact 已存在而跳过 reconciliation，也不得重复 model/provider action。
 
 ## 8. Budget ledger
 

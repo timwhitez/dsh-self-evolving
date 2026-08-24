@@ -5,7 +5,7 @@ import {
   mkdtemp,
   open,
   readFile,
-  rename,
+  readdir,
   rm,
   symlink,
   writeFile,
@@ -69,28 +69,30 @@ describe('journal I/O error propagation', () => {
     await expect(readAll(journal(notDirectory))).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
 
-  it('propagates EIO while reading an existing HEAD path', async () => {
+  it('rejects an existing HEAD symlink without following its target', async () => {
     const j = journal()
     await mkdir(j.journalDir)
     await symlink('/proc/self/mem', join(j.journalDir, 'HEAD'))
 
-    await expect(readHead(j)).rejects.toMatchObject({ code: 'EIO' })
-    await expect(readAll(j)).rejects.toMatchObject({ code: 'EIO' })
+    await expect(readHead(j)).rejects.toMatchObject({ code: 'ELOOP' })
+    await expect(readAll(j)).rejects.toMatchObject({ code: 'ELOOP' })
   })
 
-  it('rejects durable segments and interrupted HEAD publication when HEAD is absent', async () => {
-    for (const orphanName of ['events-000001.jsonl', 'HEAD.tmp', 'HEAD']) {
+  it('treats segments and HEAD staging without HEAD as uncommitted residue', async () => {
+    for (const orphanName of ['events-000001.jsonl', 'HEAD.tmp']) {
       const j = journal(join(root!, orphanName.replace('.', '-')))
       await mkdir(j.journalDir)
-      if (orphanName === 'HEAD') {
-        await symlink('missing-head-target', join(j.journalDir, orphanName))
-      } else {
-        await writeFile(join(j.journalDir, orphanName), 'durable bytes\n')
-      }
+      await writeFile(join(j.journalDir, orphanName), 'durable bytes\n')
 
-      await expect(readHead(j), orphanName).rejects.toThrow(/EVIDENCE_CORRUPT.*HEAD is missing/)
-      await expect(readAll(j), orphanName).rejects.toThrow(/EVIDENCE_CORRUPT.*HEAD is missing/)
+      expect(await readHead(j), orphanName).toBeNull()
+      expect(await readAll(j), orphanName).toEqual([])
     }
+
+    const dangling = journal(join(root!, 'dangling-head'))
+    await mkdir(dangling.journalDir)
+    await symlink('missing-head-target', join(dangling.journalDir, 'HEAD'))
+    await expect(readHead(dangling)).rejects.toMatchObject({ code: 'ELOOP' })
+    await expect(readAll(dangling)).rejects.toMatchObject({ code: 'ELOOP' })
   })
 
   it('does not treat a dangling journal-directory symlink as an absent journal', async () => {
@@ -105,17 +107,23 @@ describe('journal I/O error propagation', () => {
     )
   })
 
-  it('does not append a new genesis event over an orphan durable segment', async () => {
+  it('quarantines an orphan segment before committing a new genesis event', async () => {
     const j = journal()
     await mkdir(j.journalDir)
     const segmentPath = join(j.journalDir, 'events-000001.jsonl')
     await writeFile(segmentPath, 'orphan durable event\n')
 
-    await expect(appendFixture(j)).rejects.toThrow(/EVIDENCE_CORRUPT.*HEAD is missing/)
-    expect(await readFile(segmentPath, 'utf8')).toBe('orphan durable event\n')
+    const event = await appendFixture(j)
+    expect(event.seq).toBe(1)
+    expect(await readAll(j)).toHaveLength(1)
+    const residues = await readdir(join(j.journalDir, 'crash-residue'))
+    expect(residues).toHaveLength(1)
+    expect(await readFile(join(j.journalDir, 'crash-residue', residues[0]!), 'utf8')).toBe(
+      'orphan durable event\n',
+    )
   })
 
-  it('propagates ENOENT when the journal directory disappears after HEAD is read', async () => {
+  it('fails closed when HEAD is replaced by a non-regular path during read', async () => {
     const live = journal()
     await appendFixture(live)
     const headPath = join(live.journalDir, 'HEAD')
@@ -127,16 +135,15 @@ describe('journal I/O error propagation', () => {
       )
     })
 
-    const reading = readAll(live)
+    const reading = expect(readAll(live)).rejects.toThrow(/not one stable regular file/)
     const writer = await open(headPath, 'w')
     try {
       await writer.writeFile(headBytes)
-      await rename(live.journalDir, join(root!, 'disappeared'))
     } finally {
       await writer.close()
     }
 
-    await expect(reading).rejects.toMatchObject({ code: 'ENOENT' })
+    await reading
   })
 
   it('classifies malformed HEAD JSON as corruption rather than empty state', async () => {

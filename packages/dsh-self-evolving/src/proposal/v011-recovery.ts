@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto'
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
+import { link, lstat, mkdir, open, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { digestV011 } from '@dsh-self-evolving/candidate-sdk'
+import { assertV011, canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import {
   deriveMechanismOutcome,
   publishMechanismOutcomeOnce,
@@ -15,46 +16,160 @@ export interface RecoveredProposalArtifact {
   bytes: Uint8Array
 }
 
+export interface DurablePublishIdentity {
+  schemaVersion: 1
+  artifactKind: 'proposal' | 'mechanism-outcome'
+  actionId: string
+  artifactDigest: `sha256:${string}`
+  reconciliationId: `sha256:${string}`
+}
+
+type DurablePublishHook = (identity: Readonly<DurablePublishIdentity>) => void | Promise<void>
+
+function durablePublishIdentity(
+  artifactKind: DurablePublishIdentity['artifactKind'],
+  actionId: string,
+  artifactDigest: `sha256:${string}`,
+): Readonly<DurablePublishIdentity> {
+  const identity: DurablePublishIdentity = {
+    schemaVersion: 1,
+    artifactKind,
+    actionId,
+    artifactDigest,
+    reconciliationId: digestV011({
+      schemaVersion: 1,
+      domain: 'dsh-self-evolving:durable-publish-reconciliation:v1',
+      artifactKind,
+      actionId,
+      artifactDigest,
+    }),
+  }
+  return Object.freeze(identity)
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const directory = await open(path, 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
+  }
+}
+
+async function readRegularFile(path: string): Promise<Buffer | null> {
+  const file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    },
+  )
+  if (file === null) return null
+  try {
+    const [held, canonical] = await Promise.all([file.stat(), lstat(path)])
+    if (
+      !held.isFile() ||
+      !canonical.isFile() ||
+      held.dev !== canonical.dev ||
+      held.ino !== canonical.ino
+    ) {
+      throw new Error('v0.1.1 recovery: artifact path is not one stable regular file')
+    }
+    return await file.readFile()
+  } finally {
+    await file.close()
+  }
+}
+
+async function validateProposalArtifact(
+  bytes: Uint8Array,
+  expectedProposalId: string,
+): Promise<void> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(Buffer.from(bytes).toString('utf8')) as unknown
+  } catch (error) {
+    throw new Error('v0.1.1 recovery: published proposal is not valid JSON', { cause: error })
+  }
+  await assertV011('proposal', parsed)
+  if ((parsed as { proposalId?: unknown }).proposalId !== expectedProposalId) {
+    throw new Error('v0.1.1 recovery: published proposal conflicts with reservation')
+  }
+}
+
+async function reconcileProposal(
+  bytes: Uint8Array,
+  proposalId: string,
+  hook: DurablePublishHook | undefined,
+): Promise<`sha256:${string}`> {
+  const digest = digestV011(bytes)
+  await hook?.(durablePublishIdentity('proposal', proposalId, digest))
+  return digest
+}
+
 export async function recoverV011ProposalPublication(input: {
   path: string
   expectedProposalId: string
   produce: () => Promise<Uint8Array>
-  afterDurablePublish?: () => void | Promise<void>
+  afterDurablePublish?: DurablePublishHook
 }): Promise<RecoveredProposalArtifact> {
-  const existing = await readFile(input.path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return null
-    throw error
-  })
+  const existing = await readRegularFile(input.path)
   if (existing !== null) {
-    const parsed = JSON.parse(existing.toString('utf8')) as { proposalId?: unknown }
-    if (parsed.proposalId !== input.expectedProposalId) {
-      throw new Error('v0.1.1 recovery: published proposal conflicts with reservation')
-    }
+    await validateProposalArtifact(existing, input.expectedProposalId)
+    const digest = await reconcileProposal(
+      existing,
+      input.expectedProposalId,
+      input.afterDurablePublish,
+    )
     return {
       status: 'REUSED',
-      digest: `sha256:${createHash('sha256').update(existing).digest('hex')}`,
+      digest,
       bytes: existing,
     }
   }
-  const bytes = await input.produce()
-  const parsed = JSON.parse(Buffer.from(bytes).toString('utf8')) as { proposalId?: unknown }
-  if (parsed.proposalId !== input.expectedProposalId) {
-    throw new Error('v0.1.1 recovery: producer returned wrong reserved proposal')
-  }
-  await mkdir(dirname(input.path), { recursive: true, mode: 0o700 })
-  const file = await open(input.path, 'wx', 0o600)
+  const bytes = Buffer.from(await input.produce())
+  await validateProposalArtifact(bytes, input.expectedProposalId)
+  const parent = dirname(input.path)
+  await mkdir(parent, { recursive: true, mode: 0o700 })
+  const stagingPath = `${input.path}.staging-${process.pid}-${randomUUID()}`
+  const file = await open(stagingPath, 'wx', 0o600)
   try {
     await file.writeFile(bytes)
     await file.sync()
   } finally {
     await file.close()
   }
-  await input.afterDurablePublish?.()
-  return {
-    status: 'CREATED',
-    digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
-    bytes,
+  let status: RecoveredProposalArtifact['status'] = 'CREATED'
+  let committedBytes: Uint8Array = bytes
+  try {
+    try {
+      await link(stagingPath, input.path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      status = 'REUSED'
+      const winner = await readRegularFile(input.path)
+      if (winner === null) {
+        throw new Error('v0.1.1 recovery: concurrent proposal publication disappeared', {
+          cause: error,
+        })
+      }
+      committedBytes = winner
+      await validateProposalArtifact(committedBytes, input.expectedProposalId)
+      if (digestV011(committedBytes) !== digestV011(bytes)) {
+        throw new Error('v0.1.1 recovery: concurrent proposal publication conflicts', {
+          cause: error,
+        })
+      }
+    }
+    await syncDirectory(parent)
+  } finally {
+    await rm(stagingPath, { force: true })
   }
+  const digest = await reconcileProposal(
+    committedBytes,
+    input.expectedProposalId,
+    input.afterDurablePublish,
+  )
+  return { status, digest, bytes: committedBytes }
 }
 
 export async function recoverV011OutcomeDerivation(input: {
@@ -65,11 +180,14 @@ export async function recoverV011OutcomeDerivation(input: {
   targetClusterSlug: string
   targetTaskHandle: string
   trials: OutcomeTrial[]
-  afterDurablePublish?: () => void | Promise<void>
+  afterDurablePublish?: DurablePublishHook
 }): Promise<{ status: 'CREATED' | 'REUSED'; record: MechanismOutcomeRecord }> {
   const record = await deriveMechanismOutcome(input)
   const status = await publishMechanismOutcomeOnce(input.path, record)
-  if (status === 'CREATED') await input.afterDurablePublish?.()
+  const bytes = Buffer.from(canonicalV011(record) + '\n')
+  await input.afterDurablePublish?.(
+    durablePublishIdentity('mechanism-outcome', record.idempotencyKey, digestV011(bytes)),
+  )
   return { status, record }
 }
 

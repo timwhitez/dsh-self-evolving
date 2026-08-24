@@ -231,12 +231,14 @@ describe('journal run and complete envelope binding', () => {
     await expect(readAll(j)).rejects.toThrow(/not valid JSON|not canonically encoded/)
   })
 
-  it('rejects blank records, empty segments, and malformed segment names', async () => {
+  it('ignores uncommitted suffixes but rejects committed damage and malformed names', async () => {
     const blank = journal('run-a', 'blank')
     await appendFixture(blank)
     const blankPath = join(blank.journalDir, 'events-000001.jsonl')
     await writeFile(blankPath, (await readFile(blankPath, 'utf8')) + '\n')
-    await expect(readAll(blank)).rejects.toThrow(/blank record/)
+    expect(await readAll(blank)).toHaveLength(1)
+    await append(blank, appendInput({ eventId: 'event-2' }))
+    expect(await readAll(blank)).toHaveLength(2)
 
     const empty = journal('run-a', 'empty')
     const emptyEvent = await appendFixture(empty)
@@ -261,7 +263,7 @@ describe('journal run and complete envelope binding', () => {
     await appendFixture(unterminated)
     const unterminatedPath = join(unterminated.journalDir, 'events-000001.jsonl')
     await writeFile(unterminatedPath, (await readFile(unterminatedPath, 'utf8')).trimEnd())
-    await expect(readAll(unterminated)).rejects.toThrow(/missing its record terminator/)
+    await expect(readAll(unterminated)).rejects.toThrow(/missing a committed record terminator/)
   })
 
   const malformedHeads: Array<{
