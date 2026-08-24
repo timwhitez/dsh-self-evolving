@@ -100,4 +100,28 @@ describe('capability request ledger canonical ordering', () => {
       `sha256:${'3'.repeat(64)}`,
     ])
   })
+
+  it('totally orders distinct strings whose UTF-8 replacement bytes collide', () => {
+    const first = {
+      proposalDigest: `sha256:${'1'.repeat(64)}` as const,
+      requests: [request('shared-capability', 'T1', '\ud800')],
+    }
+    const second = {
+      proposalDigest: `sha256:${'2'.repeat(64)}` as const,
+      requests: [request('shared-capability', 'T1', '\ud801')],
+    }
+
+    const forward = aggregateCapabilityRequests({
+      currentCatalog,
+      proposals: [first, second],
+    })
+    const reverse = aggregateCapabilityRequests({
+      currentCatalog,
+      proposals: [second, first],
+    })
+
+    expect(forward).toEqual(reverse)
+    expect(forward.ledgerDigest).toBe(reverse.ledgerDigest)
+    expect(forward.entries[0]?.motivations).toEqual(['\ud800', '\ud801'])
+  })
 })

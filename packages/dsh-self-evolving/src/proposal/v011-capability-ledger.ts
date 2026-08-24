@@ -23,7 +23,13 @@ export interface CapabilityRequestLedger {
 
 /** Canonical protocol order: unsigned UTF-8 bytes, independent of ICU/locale. */
 function compareUtf8(left: string, right: string): number {
-  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+  const byteOrder = Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+  if (byteOrder !== 0 || left === right) return byteOrder
+
+  // Node replaces every unpaired UTF-16 surrogate with the same U+FFFD bytes.
+  // Break those byte collisions by code-unit order so the comparator remains
+  // total even when a caller bypasses the proposal schema boundary.
+  return left < right ? -1 : 1
 }
 
 export function aggregateCapabilityRequests(input: {
