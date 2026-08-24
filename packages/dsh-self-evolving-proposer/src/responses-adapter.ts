@@ -290,9 +290,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
 
       const responseStatus = typeof body.status === 'string' ? body.status : null
       const incompleteReason =
-        typeof body.incomplete_details?.reason === 'string'
-          ? body.incomplete_details.reason
-          : null
+        typeof body.incomplete_details?.reason === 'string' ? body.incomplete_details.reason : null
       const reasoningItems = output.filter((item) => item.type === 'reasoning')
       if (responseStatus === 'incomplete') {
         if (text || hasFunctionCallOutput) {
@@ -300,9 +298,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
             `responses adapter: provider returned incomplete visible output (${JSON.stringify({
               turn: turn + 1,
               incompleteReason,
-              outputTypes: output.map((item) =>
-                typeof item.type === 'string' ? item.type : null,
-              ),
+              outputTypes: output.map((item) => (typeof item.type === 'string' ? item.type : null)),
             })})`,
           )
         }
@@ -327,9 +323,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
               turn: turn + 1,
               status: responseStatus,
               incompleteReason,
-              outputTypes: output.map((item) =>
-                typeof item.type === 'string' ? item.type : null,
-              ),
+              outputTypes: output.map((item) => (typeof item.type === 'string' ? item.type : null)),
               inputTokens: finiteCount(body.usage?.input_tokens) ?? null,
               outputTokens: finiteCount(body.usage?.output_tokens) ?? null,
               reasoningTokens:

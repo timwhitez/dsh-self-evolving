@@ -3,11 +3,13 @@ import { DEFAULT_PARAMS } from '@dsh-self-evolving/search'
 import { runPilotLoop, type PilotCapabilities, type PilotConfig } from '../src/index.js'
 
 const config: PilotConfig = {
+  protocolVersion: 1,
   K: 3,
   B_eval: 100,
   params: DEFAULT_PARAMS,
   devTaskIds: ['task-a', 'task-b', 'task-c'],
   masterSeed: 42n,
+  maxConsecutiveExpansionFailures: 3,
 }
 
 describe('pilot candidate identity', () => {
@@ -28,11 +30,12 @@ describe('pilot candidate identity', () => {
           },
         ]
       },
-      async build() {
+      async build(child) {
         buildCount += 1
         return {
           candidateId: `candidate-${buildCount}`,
           digest: `sha256:content-${buildCount}`,
+          source: `baseline source\n${child.sourceDiff}`,
         }
       },
       async evaluate(candidateId) {

@@ -47,7 +47,11 @@ function deterministicCaps(seed: number): { caps: PilotCapabilities; counter: { 
           .split('')
           .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
           .join('')
-      return { candidateId: digest, digest }
+      return {
+        candidateId: digest,
+        digest,
+        source: `export function apply() {}\n${child.sourceDiff}`,
+      }
     },
     async evaluate() {
       return { reward: (next() < 0.6 ? 1 : 0) as 0 | 1, costUsd: 0.002, wallSec: 50 }
@@ -80,11 +84,13 @@ describe('pilot crash/resume determinism', () => {
       baselineSource,
       baselineDigest,
       {
+        protocolVersion: 1,
         K: 5,
         B_eval: 30,
         params: DEFAULT_PARAMS,
         devTaskIds,
         masterSeed: 99n,
+        maxConsecutiveExpansionFailures: 3,
       },
       capsFull,
     )
@@ -95,11 +101,13 @@ describe('pilot crash/resume determinism', () => {
       baselineSource,
       baselineDigest,
       {
+        protocolVersion: 1,
         K: 5,
         B_eval: 30,
         params: DEFAULT_PARAMS,
         devTaskIds,
         masterSeed: 99n,
+        maxConsecutiveExpansionFailures: 3,
       },
       capsResume,
     )

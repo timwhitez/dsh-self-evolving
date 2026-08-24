@@ -8,7 +8,29 @@
   "properties": {
     "objectDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "mediaType": { "type": "string", "minLength": 1, "maxLength": 200 },
-    "locator": { "oneOf": [{ "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "json-pointer" }, "value": { "type": "string", "pattern": "^(|/.*)$", "maxLength": 2048 } } }, { "type": "object", "additionalProperties": false, "required": ["kind", "startLine", "endLine"], "properties": { "kind": { "const": "jsonl-lines" }, "startLine": { "type": "integer", "minimum": 1 }, "endLine": { "type": "integer", "minimum": 1 } } }] },
+    "locator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "json-pointer" },
+            "value": { "type": "string", "pattern": "^(|/.*)$", "maxLength": 2048 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "startLine", "endLine"],
+          "properties": {
+            "kind": { "const": "jsonl-lines" },
+            "startLine": { "type": "integer", "minimum": 1 },
+            "endLine": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
     "observation": { "type": "string", "minLength": 1, "maxLength": 4096 }
   }
 }
