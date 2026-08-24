@@ -21,21 +21,28 @@ export interface TaskMeta {
   allowInternet: boolean
 }
 
-/** A task stratum = a unique (category, difficulty) cell. */
+/** A task stratum = a unique (category, difficulty, allowInternet) cell. */
 export interface TaskStratum {
   key: string
   category: string
   difficulty: string
+  allowInternet: boolean
   taskIds: string[]
 }
 
-/** Partition tasks into (category, difficulty) strata. */
+/** Partition tasks into (category, difficulty, allowInternet) strata. */
 export function stratify(tasks: TaskMeta[]): TaskStratum[] {
   const map = new Map<string, TaskStratum>()
   for (const t of tasks) {
-    const key = `${t.category}|${t.difficulty}`
+    const key = `${t.category}|${t.difficulty}|${String(t.allowInternet)}`
     if (!map.has(key)) {
-      map.set(key, { key, category: t.category, difficulty: t.difficulty, taskIds: [] })
+      map.set(key, {
+        key,
+        category: t.category,
+        difficulty: t.difficulty,
+        allowInternet: t.allowInternet,
+        taskIds: [],
+      })
     }
     map.get(key)!.taskIds.push(t.taskId)
   }
@@ -100,8 +107,9 @@ export function deterministicSplit(
 
 /**
  * Sample a representative calibration stratum: pick `perStratum` tasks from
- * each (category, difficulty) stratum, up to `maxTasks` total. Used by the
- * calibration pilot to measure cost/wall WITHOUT running the whole dev set.
+ * each (category, difficulty, allowInternet) stratum, up to `maxTasks` total.
+ * Used by the calibration pilot to measure cost/wall WITHOUT running the whole
+ * dev set.
  */
 export function sampleCalibrationStratum(
   tasks: TaskMeta[],
