@@ -95,18 +95,13 @@ describe('crash/replay fault-injection', () => {
 
     // Resume: append the observation exactly once.
     await append(j, {
-      schemaVersion: 1,
-      runId: j.runId,
-      seq: 0,
-      eventId: '',
+      eventId: 'act2:evaluation.observed',
       occurredAt: '2026-08-14T00:00:00.000Z',
       type: 'evaluation.observed',
       causationId: 'act2',
       correlationId: null,
       actor: 'tb-provider',
       payload: { candidateId: 'c_x', taskId: 't1', attemptIndex: 0, status: 'pass', reward: 1.0 },
-      previousHash: null,
-      eventHash: '',
     })
     await append(j, mk('action.committed', { actionId: 'act2' }))
     const finalState = replay(await readAll(j))
