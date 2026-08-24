@@ -21,6 +21,11 @@ export interface CapabilityRequestLedger {
   ledgerDigest: `sha256:${string}`
 }
 
+/** Canonical protocol order: unsigned UTF-8 bytes, independent of ICU/locale. */
+function compareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+}
+
 export function aggregateCapabilityRequests(input: {
   currentCatalog: FrozenCapabilityCatalog
   proposals: Array<{ proposalDigest: `sha256:${string}`; requests: CapabilityRequest[] }>
@@ -38,20 +43,26 @@ export function aggregateCapabilityRequests(input: {
         disposition: 'PENDING' as const,
       }
       entry.count += 1
-      if (!entry.motivations.includes(request.motivation))
+      if (!entry.motivations.includes(request.motivation)) {
         entry.motivations.push(request.motivation)
-      if (!entry.proposalDigests.includes(proposal.proposalDigest))
+      }
+      if (!entry.proposalDigests.includes(proposal.proposalDigest)) {
         entry.proposalDigests.push(proposal.proposalDigest)
+      }
       groups.set(key, entry)
     }
   }
   const entries = [...groups.values()]
     .map((entry) => ({
       ...entry,
-      motivations: entry.motivations.sort(),
-      proposalDigests: entry.proposalDigests.sort(),
+      motivations: [...entry.motivations].sort(compareUtf8),
+      proposalDigests: [...entry.proposalDigests].sort(compareUtf8),
     }))
-    .sort((left, right) => left.capability.localeCompare(right.capability))
+    .sort(
+      (left, right) =>
+        compareUtf8(left.capability, right.capability) ||
+        compareUtf8(left.requestedTier, right.requestedTier),
+    )
   const body = {
     schemaVersion: 1 as const,
     currentCatalogDigest: input.currentCatalog.digest,
