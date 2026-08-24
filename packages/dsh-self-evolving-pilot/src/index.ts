@@ -1,6 +1,7 @@
 export {
   runPilotLoop,
   initialPilotState,
+  validateDevTaskIds,
   type PilotCapabilities,
   type ProposedChild,
   type PilotConfig,
