@@ -19,6 +19,7 @@ import {
   type SearchParams,
   ucbAirDecision,
   selectParentByCladeThompson,
+  selectNodeByThompson,
   needsColdStart,
   RngStream,
   attributeObservation,
@@ -84,6 +85,8 @@ export interface PilotState {
   admittedCount: number
   N: number
   B_evalRemaining: number
+  /** Persisted counter for the deterministic scheduler RNG stream. */
+  schedulerRngCounter: number
   duplicateEdges: number
   buildRejects: number
   evalFailures: number
@@ -111,6 +114,7 @@ export function initialPilotState(
     admittedCount: 1, // baseline counts as admitted
     N: 0,
     B_evalRemaining: config.B_eval,
+    schedulerRngCounter: 0,
     duplicateEdges: 0,
     buildRejects: 0,
     evalFailures: 0,
@@ -162,6 +166,19 @@ function resolveParent(archive: PilotArchive, candidateId: string): PilotNode {
   return parent
 }
 
+function nextUntestedDevTask(
+  archive: PilotArchive,
+  candidateId: string,
+  devTaskIds: readonly string[],
+): string | null {
+  const tested = new Set(
+    archive.observations
+      .filter((observation) => observation.candidateId === candidateId)
+      .map((observation) => observation.taskId),
+  )
+  return devTaskIds.find((taskId) => !tested.has(taskId)) ?? null
+}
+
 /**
  * Run the pilot loop to terminal state. Pure except for the injected
  * capabilities (which perform the real model/Harbor work). Each iteration:
@@ -182,11 +199,19 @@ export async function runPilotLoop(
   // PilotConfig predates SearchParams.K. Treat the explicit pilot K as the
   // single source of truth so a profile default cannot terminate a custom run.
   const params: SearchParams = { ...config.params, K: config.K }
-  const rng = new RngStream(config.masterSeed, 'pilot-scheduler')
-  let taskIdCursor = 0
   // Hard iteration cap as a liveness guard; a healthy run terminates via K or
   // B_eval. This prevents an infinite loop if the scheduler/deps misbehave.
   const MAX_ITERATIONS = config.K * 50 + config.B_eval + 100
+  const maxRngCounter = MAX_ITERATIONS * Math.max(config.K, state.archive.nodes.length, 1)
+  if (
+    !Number.isSafeInteger(state.schedulerRngCounter) ||
+    state.schedulerRngCounter < 0 ||
+    state.schedulerRngCounter > maxRngCounter
+  ) {
+    throw new Error('pilot: invalid scheduler RNG counter')
+  }
+  const rng = new RngStream(config.masterSeed, 'pilot-scheduler')
+  for (let counter = 0; counter < state.schedulerRngCounter; counter += 1) rng.nextU64()
   let iterations = 0
   while (!state.terminal) {
     iterations += 1
@@ -222,6 +247,7 @@ export async function runPilotLoop(
         params,
         rng,
       )
+      state.schedulerRngCounter = rng.currentCounter()
       if (parentId === null) {
         state.terminal = true
         state.reason = 'NO_ELIGIBLE_PARENT'
@@ -261,12 +287,32 @@ export async function runPilotLoop(
         if (state.admittedCount >= config.K) break
       }
     } else {
-      // Evaluate: pick a node needing cold-start (q0), else the first node.
-      const evalNode =
-        state.archive.nodes.find((n) => needsColdStart(n, params)) ?? state.archive.nodes[0]
-      if (!evalNode) continue
-      const taskId = config.devTaskIds[taskIdCursor % config.devTaskIds.length]!
-      taskIdCursor += 1
+      // This pilot dispatches evaluations serially, so every node is below the
+      // per-node pending cap at each decision. A node is otherwise eligible
+      // only while the frozen development inventory has an untested task.
+      const eligible = state.archive.nodes.flatMap((node) => {
+        const taskId = nextUntestedDevTask(state.archive, node.candidateId, config.devTaskIds)
+        return taskId === null ? [] : [{ node, taskId }]
+      })
+      const coldStartNode = eligible.find(({ node }) => needsColdStart(node, params))
+      const selectedNodeId =
+        coldStartNode?.node.candidateId ??
+        selectNodeByThompson(
+          toArchiveView(state.archive),
+          eligible.map(({ node }) => node.candidateId),
+          rng,
+        )
+      state.schedulerRngCounter = rng.currentCounter()
+      const selection =
+        selectedNodeId === null
+          ? undefined
+          : eligible.find(({ node }) => node.candidateId === selectedNodeId)
+      if (selection === undefined) {
+        state.terminal = true
+        state.reason = 'NO_ELIGIBLE_EVALUATION_NODE'
+        break
+      }
+      const { node: evalNode, taskId } = selection
       const attempt = evalNode.s + evalNode.f
       try {
         const result = await caps.evaluate(evalNode.candidateId, taskId, attempt)
