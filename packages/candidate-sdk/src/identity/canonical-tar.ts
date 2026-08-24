@@ -53,8 +53,8 @@ export interface CanonicalArchive {
   totalBytes: number
 }
 
-/** base32 (RFC 4648, no padding, lowercase) of a sha256, first 26 chars. */
-function base32Sha256Prefix(bytes: Uint8Array, len = 26): string {
+/** base32 (RFC 4648, no padding, lowercase), truncated to the requested length. */
+function base32Prefix(bytes: Uint8Array, len = 26): string {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz234567'
   let bits = 0
   let value = 0
@@ -71,6 +71,14 @@ function base32Sha256Prefix(bytes: Uint8Array, len = 26): string {
     out += alphabet![(value << (5 - bits)) & 0x1f]
   }
   return out.slice(0, len)
+}
+
+function identityFromArchive(bytes: Uint8Array): { hash: string; candidateId: string } {
+  const digest = createHash('sha256').update(bytes).digest()
+  return {
+    hash: digest.toString('hex'),
+    candidateId: 'c_' + base32Prefix(digest),
+  }
 }
 
 /**
@@ -172,11 +180,11 @@ export async function buildCanonicalArchive(
   // Two zero blocks terminate the archive (fixed).
   for (let i = 0; i < 1024; i++) out.push(0)
   const bytes = new Uint8Array(out)
-  const hash = createHash('sha256').update(bytes).digest('hex')
+  const identity = identityFromArchive(bytes)
   return {
     bytes,
-    hash,
-    candidateId: 'c_' + base32Sha256Prefix(bytes.subarray()),
+    hash: identity.hash,
+    candidateId: identity.candidateId,
     fileCount: sorted.length,
     totalBytes,
   }
@@ -188,8 +196,7 @@ export async function buildCanonicalArchive(
  * stored hash to detect tampering.
  */
 export function candidateIdFromArchive(bytes: Uint8Array): { hash: string; candidateId: string } {
-  const hash = createHash('sha256').update(bytes).digest('hex')
-  return { hash, candidateId: 'c_' + base32Sha256Prefix(bytes.subarray()) }
+  return identityFromArchive(bytes)
 }
 
 /**
