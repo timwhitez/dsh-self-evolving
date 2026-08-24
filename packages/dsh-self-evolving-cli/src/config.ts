@@ -1,4 +1,5 @@
-import { chmod, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 export const CONFIG_SCHEMA_VERSION = 12 as const
@@ -186,21 +187,52 @@ export function validateV011DemoConfig(value: unknown): V011DemoConfig {
 }
 
 export async function initializeState(config: ProjectConfig): Promise<string> {
-  const path = configPath(config.stateDir)
-  await mkdir(config.stateDir, { recursive: true, mode: 0o700 })
-  await chmod(config.stateDir, 0o700)
-  const handle = await open(path, 'wx', 0o600)
-  try {
-    await handle.writeFile(JSON.stringify(config, null, 2) + '\n')
-    await handle.sync()
-  } finally {
-    await handle.close()
+  if (process.platform !== 'linux') {
+    throw new Error('config: secure initialization requires Linux directory descriptors')
   }
-  const parent = await open(dirname(path), 'r')
+
+  const stateDir = resolve(config.stateDir)
+  const path = configPath(stateDir)
+  await mkdir(dirname(stateDir), { recursive: true, mode: 0o700 })
+
+  // The final component is the ownership claim. A non-recursive mkdir is
+  // atomic: every existing directory, file, or symlink fails with EEXIST and
+  // is left untouched.
+  await mkdir(stateDir, { mode: 0o700 })
+
+  const directory = await open(
+    stateDir,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  )
   try {
-    await parent.sync()
+    const claimed = await directory.stat({ bigint: true })
+    if (!claimed.isDirectory() || (claimed.mode & 0o077n) !== 0n) {
+      throw new Error('config: claimed stateDir is not a private directory')
+    }
+
+    // Address the file through the already-open directory. If the pathname is
+    // renamed or replaced, initialization never follows the replacement.
+    const descriptorPath = `/proc/self/fd/${directory.fd}/config.json`
+    const handle = await open(descriptorPath, 'wx', 0o600)
+    try {
+      await handle.writeFile(JSON.stringify(config, null, 2) + '\n')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await directory.sync()
+
+    const published = await lstat(stateDir, { bigint: true })
+    if (
+      !published.isDirectory() ||
+      published.isSymbolicLink() ||
+      published.dev !== claimed.dev ||
+      published.ino !== claimed.ino
+    ) {
+      throw new Error('config: stateDir identity changed during initialization')
+    }
   } finally {
-    await parent.close()
+    await directory.close()
   }
   return path
 }
