@@ -95,12 +95,22 @@ export interface HarborJobConfig {
   metadata: Record<string, unknown>
 }
 
+function requirePositiveSafeInteger(field: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`job config: ${field} must be a positive safe integer`)
+  }
+}
+
 /**
  * Build the Harbor JobConfig object for a candidate-on-TB run.
  */
 export function buildJobConfig(input: JobConfigInput): HarborJobConfig {
   if (input.tasks.length === 0) throw new Error('job config: no tasks specified')
   if (!input.idempotencyKey) throw new Error('job config: idempotency key required')
+  requirePositiveSafeInteger('nAttempts', input.nAttempts)
+  requirePositiveSafeInteger('nConcurrentTrials', input.nConcurrentTrials)
+  requirePositiveSafeInteger('verifier.timeoutSec', input.verifier.timeoutSec)
+  requirePositiveSafeInteger('verifier.agentTimeoutSec', input.verifier.agentTimeoutSec)
   for (const [key, value] of Object.entries(input.agentEnv ?? {})) {
     if (sensitiveEnvKey.test(key)) {
       throw new Error(
