@@ -44,7 +44,10 @@ describe('snapshot ordering and filename binding', () => {
 
   it('rejects a valid record renamed to a false hash suffix', async () => {
     const original = await writeSnapshot(root!, stateAt(7))
-    const renamed = join(root!, basename(original).replace(/[0-9a-f]{16}\.json$/, '0'.repeat(16) + '.json'))
+    const renamed = join(
+      root!,
+      basename(original).replace(/[0-9a-f]{16}\.json$/, '0'.repeat(16) + '.json'),
+    )
     await rename(original, renamed)
 
     expect(await loadLatestSnapshot(root!)).toBeNull()
