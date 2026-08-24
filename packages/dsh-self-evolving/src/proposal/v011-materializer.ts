@@ -103,11 +103,26 @@ export function assertV011AutonomousChildShape(operations: TreeOperation[]): voi
   }
 }
 
-function uniqueCitations(rows: EvidenceCitation[]): EvidenceCitation[] {
-  const byKey = new Map(
-    rows.map((row) => [`${row.objectDigest}:${JSON.stringify(row.locator)}`, row]),
-  )
-  return [...byKey.values()]
+/**
+ * Collapse only byte-identical duplicate citation claims. Two claims that name
+ * the same immutable object location but disagree about media type,
+ * observation, or any other field are contradictory evidence and must fail
+ * closed instead of depending on input order.
+ */
+export function deduplicateEvidenceCitations(rows: EvidenceCitation[]): EvidenceCitation[] {
+  const byLocation = new Map<string, EvidenceCitation>()
+  for (const row of rows) {
+    const key = `${row.objectDigest}:${canonicalV011(row.locator)}`
+    const existing = byLocation.get(key)
+    if (existing === undefined) {
+      byLocation.set(key, row)
+      continue
+    }
+    if (canonicalV011(existing) !== canonicalV011(row)) {
+      throw new Error(`v0.1.1 materializer: conflicting evidence citation at ${key}`)
+    }
+  }
+  return [...byLocation.values()]
 }
 
 function assertTrajectoryGrounding(analysis: V011Analysis): void {
@@ -222,7 +237,7 @@ export async function validateV011ProposalSemantics(input: {
   const diff = await deriveV011Operations(parent, child)
   assertDeclaredOperations(diff.operations, input.proposal.declaredOperations)
   assertV011AutonomousChildShape(diff.operations)
-  const citations = uniqueCitations([
+  const citations = deduplicateEvidenceCitations([
     ...input.proposal.evidenceCitations,
     ...input.analysis.failureClusters.flatMap((cluster) => cluster.citations),
     ...input.analysis.ancestorReconciliations.flatMap((row) => [
