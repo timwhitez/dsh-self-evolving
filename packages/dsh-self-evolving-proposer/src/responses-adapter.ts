@@ -276,7 +276,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
         .filter((content) => content.type === 'output_text' && typeof content.text === 'string')
         .map((content) => content.text as string)
         .join('')
-      functionCalls = functionCallsOf(output)
+      const hasFunctionCallOutput = output.some((item) => item.type === 'function_call')
       const inputTotal = finiteCount(body.usage?.input_tokens) ?? 0
       const cacheRead = finiteCount(body.usage?.input_tokens_details?.cached_tokens) ?? 0
       usage.inputTokens += Math.max(0, inputTotal - cacheRead)
@@ -287,21 +287,49 @@ export class TrustedResponsesAdapter extends LlmAdapter {
         usage.reasoningTokens += reasoningTokens
         sawReasoningUsage = true
       }
-      if (text || functionCalls.length > 0) break
-      const incomplete =
-        body.status === 'incomplete' && body.incomplete_details?.reason === 'max_output_tokens'
+
+      const responseStatus = typeof body.status === 'string' ? body.status : null
+      const incompleteReason =
+        typeof body.incomplete_details?.reason === 'string'
+          ? body.incomplete_details.reason
+          : null
       const reasoningItems = output.filter((item) => item.type === 'reasoning')
-      if (!incomplete || reasoningItems.length === 0 || turn === maxTurns) {
+      if (responseStatus === 'incomplete') {
+        if (text || hasFunctionCallOutput) {
+          throw new Error(
+            `responses adapter: provider returned incomplete visible output (${JSON.stringify({
+              turn: turn + 1,
+              incompleteReason,
+              outputTypes: output.map((item) =>
+                typeof item.type === 'string' ? item.type : null,
+              ),
+            })})`,
+          )
+        }
+        if (
+          incompleteReason === 'max_output_tokens' &&
+          reasoningItems.length > 0 &&
+          turn < maxTurns
+        ) {
+          input = [
+            ...(reasoningItems as Array<Record<string, unknown>>),
+            {
+              role: 'user',
+              content:
+                'Continue from the completed reasoning and emit the requested answer or tool call.',
+            },
+          ]
+          continue
+        }
         throw new Error(
           `responses adapter: provider response has no output text or function call (${JSON.stringify(
             {
               turn: turn + 1,
-              status: typeof body.status === 'string' ? body.status : null,
-              incompleteReason:
-                typeof body.incomplete_details?.reason === 'string'
-                  ? body.incomplete_details.reason
-                  : null,
-              outputTypes: output.map((item) => (typeof item.type === 'string' ? item.type : null)),
+              status: responseStatus,
+              incompleteReason,
+              outputTypes: output.map((item) =>
+                typeof item.type === 'string' ? item.type : null,
+              ),
               inputTokens: finiteCount(body.usage?.input_tokens) ?? null,
               outputTokens: finiteCount(body.usage?.output_tokens) ?? null,
               reasoningTokens:
@@ -310,14 +338,30 @@ export class TrustedResponsesAdapter extends LlmAdapter {
           )})`,
         )
       }
-      input = [
-        ...(reasoningItems as Array<Record<string, unknown>>),
-        {
-          role: 'user',
-          content:
-            'Continue from the completed reasoning and emit the requested answer or tool call.',
-        },
-      ]
+      if (responseStatus !== 'completed') {
+        throw new Error(
+          `responses adapter: provider returned non-completed status ${JSON.stringify(
+            responseStatus,
+          )}`,
+        )
+      }
+
+      functionCalls = functionCallsOf(output)
+      if (text || functionCalls.length > 0) break
+      throw new Error(
+        `responses adapter: provider response has no output text or function call (${JSON.stringify(
+          {
+            turn: turn + 1,
+            status: responseStatus,
+            incompleteReason,
+            outputTypes: output.map((item) => (typeof item.type === 'string' ? item.type : null)),
+            inputTokens: finiteCount(body.usage?.input_tokens) ?? null,
+            outputTokens: finiteCount(body.usage?.output_tokens) ?? null,
+            reasoningTokens:
+              finiteCount(body.usage?.output_tokens_details?.reasoning_tokens) ?? null,
+          },
+        )})`,
+      )
     }
 
     const reasoningItems = (body?.output ?? []).filter((item) => item.type === 'reasoning')
