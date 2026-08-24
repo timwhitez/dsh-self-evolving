@@ -104,6 +104,26 @@ export function initialPilotState(baselineId: string, config: PilotConfig): Pilo
   }
 }
 
+/** Validate the frozen development task inventory before any external action. */
+export function validateDevTaskIds(taskIds: unknown): asserts taskIds is string[] {
+  if (!Array.isArray(taskIds) || taskIds.length === 0) {
+    throw new Error('pilot: devTaskIds must be a non-empty array')
+  }
+  const seen = new Set<string>()
+  for (const [index, taskId] of taskIds.entries()) {
+    if (
+      typeof taskId !== 'string' ||
+      taskId.length === 0 ||
+      taskId !== taskId.trim() ||
+      taskId.includes('\0')
+    ) {
+      throw new Error(`pilot: devTaskIds[${index}] is not a valid non-empty task id`)
+    }
+    if (seen.has(taskId)) throw new Error(`pilot: duplicate development task id ${taskId}`)
+    seen.add(taskId)
+  }
+}
+
 /** Project the pilot archive into the search package's ArchiveView shape. */
 function toArchiveView(archive: PilotArchive): ArchiveView {
   return {
@@ -132,6 +152,7 @@ export async function runPilotLoop(
   caps: PilotCapabilities,
   state: PilotState = initialPilotState(baselineId, config),
 ): Promise<PilotState> {
+  validateDevTaskIds(config.devTaskIds)
   // PilotConfig predates SearchParams.K. Treat the explicit pilot K as the
   // single source of truth so a profile default cannot terminate a custom run.
   const params: SearchParams = { ...config.params, K: config.K }
