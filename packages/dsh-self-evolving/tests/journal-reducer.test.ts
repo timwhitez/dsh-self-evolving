@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   append,
+  canonicalJson,
   readAll,
   readHead,
   acquireLock,
@@ -126,7 +127,9 @@ describe('journal hash chain', () => {
     await appendEvent(j, 'run.preflight', {})
     await writeFile(
       join(j.journalDir, 'HEAD'),
-      JSON.stringify({
+      canonicalJson({
+        schemaVersion: 1,
+        runId: j.runId,
         seq: 2,
         eventHash: `sha256:${'0'.repeat(64)}`,
         segment: 'events-000001.jsonl',

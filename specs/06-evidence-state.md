@@ -97,6 +97,13 @@ Runtime MUST 使用新 run directory；不得覆盖旧 run。`objects` 可跨 ru
 Canonicalization 使用 RFC 8785/JCS 或项目固定等价实现；`eventHash` 对去掉自身字段后的 canonical
 event bytes 计算。Segment close 时写 size/Merkle root，HEAD 原子更新并 fsync directory。
 
+Journal protocol v1 在 append 与 replay 边界都验证完整、无扩展字段的 envelope。每个 event 必须包含
+固定 `schemaVersion: 1`、与 journal 配置相同的非空 `runId`、正 safe-integer `seq`、非空
+`eventId/type/actor`、canonical ISO timestamp、nullable 但非空的 causation/correlation ID、JSON object
+payload，以及严格的 SHA-256 previous/event hash。持久化 event 必须是单行 canonical JSON；重复 key、空行、
+未知字段、非 canonical number 或非法 segment 文件名均 fail closed。HEAD 本身使用同一 protocol/run binding，
+完整字段为 `schemaVersion/runId/seq/eventHash/segment`，并通过 seq/hash/segment 精确引用已验证的 tail event。
+
 Wall-clock timestamp 只用于审计，不决定排序或策略；`seq` 是 commit order，external occurrence
 作为 payload fact。
 
