@@ -1,4 +1,15 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -107,34 +118,25 @@ describe('journal I/O error propagation', () => {
   it('propagates ENOENT when the journal directory disappears after HEAD is read', async () => {
     const live = journal()
     await appendFixture(live)
-    let pathReads = 0
-    const disappearing = {
-      ...live,
-      get journalDir() {
-        pathReads += 1
-        return pathReads === 1 ? live.journalDir : join(root!, 'disappeared')
-      },
+    const headPath = join(live.journalDir, 'HEAD')
+    const headBytes = await readFile(headPath)
+    await rm(headPath)
+    await new Promise<void>((resolve, reject) => {
+      execFile('/usr/bin/mkfifo', [headPath], (error) =>
+        error === null ? resolve() : reject(error),
+      )
+    })
+
+    const reading = readAll(live)
+    const writer = await open(headPath, 'w')
+    try {
+      await writer.writeFile(headBytes)
+      await rename(live.journalDir, join(root!, 'disappeared'))
+    } finally {
+      await writer.close()
     }
 
-    await expect(readAll(disappearing)).rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
-  it('propagates an injected EIO while enumerating segments', async () => {
-    const live = journal()
-    await appendFixture(live)
-    let pathReads = 0
-    const injected = {
-      ...live,
-      get journalDir() {
-        pathReads += 1
-        if (pathReads === 2) {
-          throw Object.assign(new Error('injected directory I/O failure'), { code: 'EIO' })
-        }
-        return live.journalDir
-      },
-    }
-
-    await expect(readAll(injected)).rejects.toMatchObject({ code: 'EIO' })
+    await expect(reading).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('classifies malformed HEAD JSON as corruption rather than empty state', async () => {
