@@ -254,11 +254,13 @@ export async function readBytes(store: ObjectStore, digest: string): Promise<Uin
   let metadata: StoredObjectMetadata
   try {
     metadata = await readMetadata(store, digest)
-  } catch (error) {
+  } catch {
     if ((await stat(metadataPath(store.root, digest)).catch(() => null)) === null) {
       throw new IncompleteObjectPublishError(digest)
     }
-    throw error
+    // Metadata may have been atomically linked between the failed read
+    // and the existence probe. Retry the complete immutable record.
+    metadata = await readMetadata(store, digest)
   }
   const actual = createHash('sha256').update(data).digest('hex')
   if (actual !== digest) {
@@ -273,11 +275,14 @@ export async function readBytes(store: ObjectStore, digest: string): Promise<Uin
 /** Read bytes and verify the caller's full immutable reference metadata. */
 export async function readRefBytes(store: ObjectStore, ref: ObjectRef): Promise<Uint8Array> {
   if (ref.algorithm !== 'sha256') throw new Error('object-store: unsupported reference algorithm')
+  // Read the completed object first so a bytes-only crash state is
+  // classified as retryable rather than as missing metadata corruption.
+  const bytes = await readBytes(store, ref.digest)
   const metadata = await readMetadata(store, ref.digest)
   if (JSON.stringify(metadata) !== JSON.stringify(createMetadata(ref))) {
     throw new Error(`EVIDENCE_CORRUPT: reference metadata mismatch for object ${ref.digest}`)
   }
-  return readBytes(store, ref.digest)
+  return bytes
 }
 
 /**

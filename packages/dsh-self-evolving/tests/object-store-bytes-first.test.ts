@@ -7,6 +7,7 @@ import {
   exists,
   publishBytes,
   readBytes,
+  readRefBytes,
   scrub,
   type DataLabel,
   type ObjectStore,
@@ -77,6 +78,16 @@ describe('bytes-first object publication', () => {
       code: 'OBJECT_PUBLISH_INCOMPLETE',
       digest,
     })
+
+    await expect(
+      readRefBytes(store(), {
+        algorithm: 'sha256',
+        digest,
+        size: bytes.byteLength,
+        mediaType: 'text/plain',
+        label: 'DEV_OBSERVED',
+      }),
+    ).rejects.toMatchObject({ code: 'OBJECT_PUBLISH_INCOMPLETE', digest })
 
     const ref = await publishBytes(store(), bytes, 'text/plain', 'DEV_OBSERVED')
     expect(ref.digest).toBe(digest)
