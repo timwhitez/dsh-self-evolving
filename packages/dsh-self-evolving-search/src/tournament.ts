@@ -44,10 +44,7 @@ export function buildShortlist(view: ArchiveView, params: SearchParams): Shortli
   return shortlist
 }
 
-/**
- * Lock the unique development champion: the rank-1 entry. If the shortlist is
- * empty, returns NO_DEVELOPMENT_IMPROVEMEMT (reported honestly, not invented).
- */
+/** Return the observed baseline success rate used by the frozen improvement gate. */
 export function baselineNodeCmp(view: ArchiveView): number | undefined {
   const baseline = view.nodes.find((node) => node.canonicalParent === null)
   if (baseline === undefined) return undefined
@@ -55,12 +52,16 @@ export function baselineNodeCmp(view: ArchiveView): number | undefined {
   return observations === 0 ? undefined : baseline.s / observations
 }
 
+/**
+ * Lock the unique development champion only when the rank-1 successor has a
+ * defined CMP that strictly exceeds the observed baseline CMP.
+ */
 export function lockChampion(
   shortlist: ShortlistEntry[],
   baselineCmp: number | undefined,
 ): {
   championId: string | null
-  outcome: 'DEVELOPMENT_CHAMPION' | 'NO_DEVELOPMENT_IMPROVEMEMT'
+  outcome: 'DEVELOPMENT_CHAMPION' | 'NO_DEVELOPMENT_IMPROVEMENT'
 } {
   const best = shortlist[0]
   if (
@@ -69,7 +70,7 @@ export function lockChampion(
     baselineCmp === undefined ||
     best.cmp <= baselineCmp
   ) {
-    return { championId: null, outcome: 'NO_DEVELOPMENT_IMPROVEMEMT' }
+    return { championId: null, outcome: 'NO_DEVELOPMENT_IMPROVEMENT' }
   }
   return { championId: best.candidateId, outcome: 'DEVELOPMENT_CHAMPION' }
 }
