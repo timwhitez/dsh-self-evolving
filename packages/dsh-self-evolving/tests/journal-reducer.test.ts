@@ -244,64 +244,72 @@ describe('reducer + snapshot', () => {
   })
 
   it('separates exact completion order from order-independent logical facts', () => {
-  const candidateEvent: JournalEvent = {
-    schemaVersion: 1,
-    runId: 'r',
-    seq: 1,
-    eventId: 'admit',
-    occurredAt: '2026-08-14T00:00:00.000Z',
-    type: 'candidate.admitted',
-    causationId: null,
-    correlationId: 'wave',
-    actor: 'test',
-    payload: { candidateId: 'c_a', canonicalParent: null, donorCandidates: [] },
-    previousHash: null,
-    eventHash: `sha256:${'1'.repeat(64)}`,
-  }
-  const observations: JournalEvent[] = [
-    {
-      ...candidateEvent,
-      seq: 2,
-      eventId: 'observation-a',
-      type: 'evaluation.observed',
-      payload: {
-        candidateId: 'c_a',
-        taskId: 't2',
-        attemptIndex: 0,
-        status: 'pass',
-        reward: 1,
+    const candidateEvent: JournalEvent = {
+      schemaVersion: 1,
+      runId: 'r',
+      seq: 1,
+      eventId: 'admit',
+      occurredAt: '2026-08-14T00:00:00.000Z',
+      type: 'candidate.admitted',
+      causationId: null,
+      correlationId: 'wave',
+      actor: 'test',
+      payload: { candidateId: 'c_a', canonicalParent: null, donorCandidates: [] },
+      previousHash: null,
+      eventHash: `sha256:${'1'.repeat(64)}`,
+    }
+    const observations: JournalEvent[] = [
+      {
+        ...candidateEvent,
+        seq: 2,
+        eventId: 'observation-a',
+        type: 'evaluation.observed',
+        payload: {
+          candidateId: 'c_a',
+          taskId: 't2',
+          attemptIndex: 0,
+          status: 'pass',
+          reward: 1,
+        },
+        previousHash: candidateEvent.eventHash,
+        eventHash: `sha256:${'2'.repeat(64)}`,
       },
-      previousHash: candidateEvent.eventHash,
-      eventHash: `sha256:${'2'.repeat(64)}`,
-    },
-    {
-      ...candidateEvent,
-      seq: 2,
-      eventId: 'observation-b',
-      type: 'evaluation.observed',
-      payload: {
-        candidateId: 'c_a',
-        taskId: 't1',
-        attemptIndex: 0,
-        status: 'fail',
-        reward: 0,
+      {
+        ...candidateEvent,
+        seq: 2,
+        eventId: 'observation-b',
+        type: 'evaluation.observed',
+        payload: {
+          candidateId: 'c_a',
+          taskId: 't1',
+          attemptIndex: 0,
+          status: 'fail',
+          reward: 0,
+        },
+        previousHash: candidateEvent.eventHash,
+        eventHash: `sha256:${'3'.repeat(64)}`,
       },
-      previousHash: candidateEvent.eventHash,
-      eventHash: `sha256:${'3'.repeat(64)}`,
-    },
-  ]
+    ]
 
-  let stateA = reduce(genesisState(), candidateEvent)
-  stateA = reduce(stateA, observations[0]!)
-  stateA = reduce(stateA, { ...observations[1]!, seq: 3, previousHash: stateA.lastEventHash })
+    let stateA = reduce(genesisState(), candidateEvent)
+    stateA = reduce(stateA, observations[0]!)
+    stateA = reduce(stateA, {
+      ...observations[1]!,
+      seq: 3,
+      previousHash: stateA.lastEventHash,
+    })
 
-  let stateB = reduce(genesisState(), candidateEvent)
-  stateB = reduce(stateB, observations[1]!)
-  stateB = reduce(stateB, { ...observations[0]!, seq: 3, previousHash: stateB.lastEventHash })
+    let stateB = reduce(genesisState(), candidateEvent)
+    stateB = reduce(stateB, observations[1]!)
+    stateB = reduce(stateB, {
+      ...observations[0]!,
+      seq: 3,
+      previousHash: stateB.lastEventHash,
+    })
 
-  expect(stateHash(stateA)).not.toBe(stateHash(stateB))
-  expect(logicalStateHash(stateA)).toBe(logicalStateHash(stateB))
-})
+    expect(stateHash(stateA)).not.toBe(stateHash(stateB))
+    expect(logicalStateHash(stateA)).toBe(logicalStateHash(stateB))
+  })
 })
 
 describe('computeEventHash canonicalization', () => {
