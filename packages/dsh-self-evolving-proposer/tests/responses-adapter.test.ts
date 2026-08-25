@@ -98,6 +98,68 @@ describe('trusted Responses proposal adapter', () => {
     expect(JSON.stringify(chunks)).not.toContain('authorization')
   })
 
+  it('honors a lower per-request output cap and rejects invalid caps', async () => {
+    process.env['DEEPSEEK_API_KEY'] = 'x'
+    const wireCaps: number[] = []
+    const adapter = new TrustedResponsesAdapter({
+      route,
+      contextWindow: 1_048_576,
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      async fetchImpl(_input, init) {
+        const body = JSON.parse(String(init?.body)) as { max_output_tokens: number }
+        wireCaps.push(body.max_output_tokens)
+        return Response.json({
+          id: 'response-lower-cap',
+          model: route.model,
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        })
+      },
+    })
+
+    for await (const _chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      maxTokens: 100,
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: 'bounded' }],
+          source: { kind: 'user' },
+        }),
+      ],
+    })) {
+      // consume
+    }
+    expect(wireCaps).toEqual([100])
+
+    for (const maxTokens of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      route.maxTokens + 1,
+    ]) {
+      const consume = async () => {
+        for await (const _chunk of adapter.stream({
+          provider: route.provider,
+          model: route.model,
+          maxTokens,
+          messages: [
+            createUserMessage({
+              content: [{ type: 'text', text: 'invalid' }],
+              source: { kind: 'user' },
+            }),
+          ],
+        })) {
+          // consume
+        }
+      }
+      await expect(consume()).rejects.toThrow(/locked route/)
+    }
+  })
+
   it('translates stateless tool calls without exposing reasoning', async () => {
     process.env['DEEPSEEK_API_KEY'] = 'x'
     const wireBodies: Array<Record<string, unknown>> = []

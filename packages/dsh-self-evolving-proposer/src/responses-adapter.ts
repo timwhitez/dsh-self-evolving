@@ -216,12 +216,15 @@ export class TrustedResponsesAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const route = this.config.route
+    const effectiveMaxTokens = options.maxTokens ?? route.maxTokens
     if (
       options.provider !== route.provider ||
       options.model !== route.model ||
       (options.reasoningEffort !== undefined &&
         options.reasoningEffort !== route.reasoningEffort) ||
-      (options.maxTokens !== undefined && options.maxTokens > route.maxTokens)
+      !Number.isSafeInteger(effectiveMaxTokens) ||
+      effectiveMaxTokens <= 0 ||
+      effectiveMaxTokens > route.maxTokens
     ) {
       throw new Error('responses adapter: request does not match locked route')
     }
@@ -249,7 +252,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
           input,
           ...(options.system === undefined ? {} : { instructions: options.system }),
           reasoning: { effort: route.reasoningEffort },
-          max_output_tokens: route.maxTokens,
+          max_output_tokens: effectiveMaxTokens,
           store: false,
           ...(options.tools === undefined || options.tools.length === 0
             ? {}
