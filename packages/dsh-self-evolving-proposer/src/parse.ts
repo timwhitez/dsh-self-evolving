@@ -57,7 +57,7 @@ function parseChildren(text: string): {
     const proposalId = object['proposalId']
     if (typeof proposalId !== 'string' || proposalId.trim().length === 0) {
       rejected.push({
-        proposalId: `invalid_${createHash('sha256').update(canonicalObject(object)).digest('hex').slice(0, 16)}`,
+        proposalId: `invalid_${createHash('sha256').update(canonicalObject(object)).digest('hex')}`,
         reason: 'proposalId is required and must be a non-empty string',
       })
       continue
