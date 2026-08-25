@@ -12,7 +12,7 @@ jobs:
   format:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,10 +25,12 @@ jobs:
         with:
           node-version: 22.19.0
           cache: pnpm
-      - name: Format final reducer identity diff
+      - name: Bootstrap and format final reducer identity diff
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/bootstrap-upstreams.mjs
+          node scripts/bootstrap-references.mjs
           pnpm setup:source
           pnpm exec prettier --write \
             packages/dsh-self-evolving/src/reducer/reducer.ts \
