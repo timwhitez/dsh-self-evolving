@@ -32,6 +32,7 @@ export {
   type SplitCommitment,
 } from './split.js'
 export {
+  MAX_BOOTSTRAP_RESAMPLES,
   pairedBootstrapCi,
   classifyPromotion,
   type PairedTrial,
