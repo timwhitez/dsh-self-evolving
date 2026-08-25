@@ -1,0 +1,147 @@
+name: apply-issue-92
+
+on:
+  push:
+    branches:
+      - fix/issue-92-canonical-sandbox-command
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-92-canonical-sandbox-command
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Apply component-aware command allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/dsh-self-evolving/src/proposal/process-sandbox.ts')
+          text = path.read_text()
+          text = text.replace(
+              "import { isAbsolute, join, resolve, sep } from 'node:path'",
+              "import { join, posix, resolve, sep } from 'node:path'",
+              1,
+          )
+          old = """function validateCommand(command: string): void {
+            if (!isAbsolute(command)) throw new Error('proposal sandbox: command must be absolute')
+            const allowed = new Set(['/usr/bin/node', '/bin/sh', '/usr/bin/env'])
+            if (
+              !allowed.has(command) &&
+              !command.startsWith('/input/contracts/') &&
+              !command.startsWith('/runtime/')
+            ) {
+              throw new Error(`proposal sandbox: command is outside the executable allowlist: ${command}`)
+            }
+          }
+          """
+          new = """function isStrictDescendant(root: string, candidate: string): boolean {
+            return candidate.startsWith(`${root}/`) && candidate.length > root.length + 1
+          }
+
+          /** Validate an executable path in the Linux namespace before spawning Bubblewrap. */
+          export function validateProposalSandboxCommand(command: string): void {
+            if (command.includes('\\0')) {
+              throw new Error('proposal sandbox: command contains a NUL byte')
+            }
+            if (!posix.isAbsolute(command)) {
+              throw new Error('proposal sandbox: command must be an absolute POSIX path')
+            }
+            const canonical = posix.normalize(command)
+            if (canonical !== command) {
+              throw new Error(`proposal sandbox: command path is not canonical: ${command}`)
+            }
+
+            const fixedExecutables = new Set(['/usr/bin/node', '/bin/sh', '/usr/bin/env'])
+            const allowed =
+              fixedExecutables.has(command) ||
+              isStrictDescendant('/input/contracts', command) ||
+              isStrictDescendant('/runtime', command)
+            if (!allowed) {
+              throw new Error(`proposal sandbox: command is outside the executable allowlist: ${command}`)
+            }
+          }
+          """
+          if old not in text:
+              raise SystemExit('validateCommand anchor missing')
+          text = text.replace(old, new, 1)
+          text = text.replace('  validateCommand(input.command)', '  validateProposalSandboxCommand(input.command)', 1)
+          path.write_text(text)
+
+          index_path = Path('packages/dsh-self-evolving/src/proposal/index.ts')
+          index = index_path.read_text()
+          index = index.replace(
+              '  runProposalSandbox,\n',
+              '  runProposalSandbox,\n  validateProposalSandboxCommand,\n',
+              1,
+          )
+          index_path.write_text(index)
+          PY
+
+          cat > packages/dsh-self-evolving/tests/proposal-command-path.test.ts <<'TS'
+          import { describe, expect, it } from 'vitest'
+          import { validateProposalSandboxCommand } from '../src/index.js'
+
+          describe('proposal sandbox command allowlist', () => {
+            it.each([
+              '/usr/bin/node',
+              '/bin/sh',
+              '/usr/bin/env',
+              '/input/contracts/runner',
+              '/input/contracts/tools/runner',
+              '/runtime/bin/node',
+            ])('accepts canonical allowlisted command %s', (command) => {
+              expect(() => validateProposalSandboxCommand(command)).not.toThrow()
+            })
+
+            it.each([
+              'usr/bin/node',
+              '/usr/bin/python3',
+              '/input/contracts/',
+              '/runtime/',
+              '/input/contracts/../../../usr/bin/python3',
+              '/runtime/../usr/bin/python3',
+              '/input/contracts/./runner',
+              '/runtime/bin/../python3',
+              '/input/contracts//runner',
+              '//input/contracts/runner',
+              '/input/contracts/runner\0suffix',
+            ])('rejects non-canonical or out-of-policy command %s', (command) => {
+              expect(() => validateProposalSandboxCommand(command)).toThrow(/proposal sandbox: command/)
+            })
+          })
+          TS
+
+          rm .github/workflows/apply-issue-92.yml
+          node scripts/bootstrap-upstreams.mjs
+          node scripts/bootstrap-references.mjs
+          pnpm setup:source
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving/src/proposal/process-sandbox.ts \
+            packages/dsh-self-evolving/src/proposal/index.ts \
+            packages/dsh-self-evolving/tests/proposal-command-path.test.ts
+          pnpm typecheck
+          pnpm exec vitest run packages/dsh-self-evolving/tests/proposal-command-path.test.ts
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(core): canonicalize sandbox executable paths'
+          git push origin HEAD:fix/issue-92-canonical-sandbox-command
