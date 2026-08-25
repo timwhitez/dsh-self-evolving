@@ -250,9 +250,7 @@ export function logicalStateProjection(state: ControllerState): LogicalControlle
 export function logicalStateHash(state: ControllerState): string {
   return (
     'sha256:' +
-    createHash('sha256')
-      .update(canonicalJson(logicalStateProjection(state)))
-      .digest('hex')
+    createHash('sha256').update(canonicalJson(logicalStateProjection(state))).digest('hex')
   )
 }
 
