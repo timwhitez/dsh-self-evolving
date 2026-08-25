@@ -54,6 +54,23 @@ describe('parse + validate', () => {
     expect(res.rejected[0]!.reason).toMatch(/no-change/)
   })
 
+  it('rejects a missing or empty proposal id deterministically', () => {
+    const missing = JSON.parse(childJson()) as Record<string, unknown>
+    delete missing['proposalId']
+    const first = parseAndValidate(JSON.stringify(missing), PARENT, 3)
+    const second = parseAndValidate(JSON.stringify(missing), PARENT, 3)
+    expect(first.accepted).toEqual([])
+    expect(first.rejected).toHaveLength(1)
+    expect(first.rejected[0]?.proposalId).toMatch(/^invalid_[0-9a-f]{16}$/)
+    expect(first.rejected[0]?.reason).toMatch(/proposalId is required/)
+    expect(second).toEqual(first)
+
+    const empty = parseAndValidate(childJson({ proposalId: '' }), PARENT, 3)
+    expect(empty.accepted).toEqual([])
+    expect(empty.rejected).toHaveLength(1)
+    expect(empty.rejected[0]?.reason).toMatch(/proposalId is required/)
+  })
+
   it('rejects a parent-digest mismatch', () => {
     const res = parseAndValidate(
       childJson({ canonicalParentDigest: 'sha256:' + 'b'.repeat(64) }),
