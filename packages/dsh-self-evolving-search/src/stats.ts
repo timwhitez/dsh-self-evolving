@@ -13,6 +13,8 @@
  */
 import { RngStream } from './rng.js'
 
+export const MAX_BOOTSTRAP_RESAMPLES = 1_000_000
+
 export interface PairedTrial {
   taskId: string
   /** Baseline reward on this task (mean of k attempts, or the single attempt). */
@@ -46,6 +48,11 @@ export function pairedBootstrapCi(
   const nResamples = opts.nResamples ?? 10_000
   const masterSeed = opts.masterSeed ?? 0x5eed1234n
   const minLift = opts.minLift ?? 0.05
+  if (!Number.isSafeInteger(nResamples) || nResamples < 1 || nResamples > MAX_BOOTSTRAP_RESAMPLES) {
+    throw new Error(
+      `bootstrap: nResamples must be a safe integer from 1 through ${MAX_BOOTSTRAP_RESAMPLES}`,
+    )
+  }
   if (trials.length === 0) {
     return { delta: 0, stderr: 0, ci95: [0, 0], nResamples, promoted: false }
   }

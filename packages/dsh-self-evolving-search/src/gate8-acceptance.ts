@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
-import { classifyPromotion, pairedBootstrapCi, type PromotionState } from './stats.js'
+import {
+  MAX_BOOTSTRAP_RESAMPLES,
+  classifyPromotion,
+  pairedBootstrapCi,
+  type PromotionState,
+} from './stats.js'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 
@@ -200,7 +205,9 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     !validDigest(plan.randomInterleaveReceiptHash) ||
     !validDigest(plan.bootstrapSeedCommitment) ||
     plan.bootstrapSeedCommitment !== bootstrapSeedCommitment(plan.bootstrapSeed) ||
+    !Number.isSafeInteger(plan.bootstrapResamples) ||
     plan.bootstrapResamples < 100_000 ||
+    plan.bootstrapResamples > MAX_BOOTSTRAP_RESAMPLES ||
     plan.minLift !== 0.05 ||
     !plan.noIntermediateFeedback
   ) {

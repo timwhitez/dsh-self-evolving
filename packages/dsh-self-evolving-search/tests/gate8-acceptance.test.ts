@@ -168,6 +168,30 @@ describe('Gate 8 sealed/full/release evidence', () => {
     }
   })
 
+  it('rejects non-finite, fractional, underpowered, and excessive bootstrap counts', () => {
+    for (const bootstrapResamples of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      100_000.5,
+      0,
+      99_999,
+      1_000_001,
+    ]) {
+      const input = complete()
+      input.sealedPlan!.bootstrapResamples = bootstrapResamples
+      input.reportedPromotionState = 'PROTOCOL_INVALID'
+      input.fullSet = null
+      input.release = null
+      const verdict = verifyGate8Evidence(input)
+      expect(verdict.protocolValid).toBe(false)
+      expect(verdict.reasons.join('\n')).toMatch(/underpowered/)
+    }
+
+    const exactMinimum = complete()
+    exactMinimum.sealedPlan!.bootstrapResamples = 100_000
+    expect(verifyGate8Evidence(exactMinimum).protocolValid).toBe(true)
+  })
+
   it('marks an incomplete paired matrix protocol-invalid and ineligible for full set', () => {
     const input = complete()
     input.sealedTrials.pop()

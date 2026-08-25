@@ -222,6 +222,13 @@ describe('paired cluster-bootstrap CI (spec 04 §5)', () => {
     expect(classifyPromotion(res)).toBe('SEALED_REJECTED')
   })
 
+  it('rejects invalid bootstrap loop bounds independently of Gate 8', () => {
+    const trials = [{ taskId: 'task', baselineReward: 0, candidateReward: 1 }]
+    for (const nResamples of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 1.5, 1_000_001]) {
+      expect(() => pairedBootstrapCi(trials, { nResamples })).toThrow(/safe integer/)
+    }
+  })
+
   it('is deterministic for a fixed seed', () => {
     const trials = Array.from({ length: 29 }, (_, i) => ({
       taskId: `s${i}`,
