@@ -11,38 +11,41 @@ jobs:
   patch:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/issue-44-bind-lock-protocol
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.7.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.19.0
-          cache: pnpm
+
       - name: Apply audited protocol binding patch
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           source_path = Path('packages/dsh-self-evolving-sealed-service/src/service.ts')
           source = source_path.read_text()
-          pattern = r"(    await prepareDirs\(state\.privateDir, state\.publicDir\)\n)(    if \(state\.candidateLock !== null\) \{)"
-          replacement = (
-              r"\1"
-              "    if (request.identity.protocolHash !== state.protocolHash) {\n"
-              "      throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')\n"
-              "    }\n"
-              r"\2"
-          )
-          source, count = re.subn(pattern, replacement, source, count=1)
-          if count != 1:
-              raise SystemExit(f'expected one lockCandidate insertion point; got {count}')
-          source_path.write_text(source)
+          needle = """    if (
+            resolve(request.privateDir) !== state.privateDir ||
+            resolve(request.publicDir) !== state.publicDir
+          ) {
+            throw new Error('INVALID_LAYOUT: lock request does not match ceremony layout')
+          }
+          await prepareDirs(state.privateDir, state.publicDir)
+          """
+          replacement = """    if (
+            resolve(request.privateDir) !== state.privateDir ||
+            resolve(request.publicDir) !== state.publicDir
+          ) {
+            throw new Error('INVALID_LAYOUT: lock request does not match ceremony layout')
+          }
+          if (request.identity.protocolHash !== state.protocolHash) {
+            throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')
+          }
+          await prepareDirs(state.privateDir, state.publicDir)
+          """
+          if source.count(needle) != 1:
+              raise SystemExit(f'expected one lockCandidate insertion point; got {source.count(needle)}')
+          source_path.write_text(source.replace(needle, replacement))
 
           test_path = Path('packages/dsh-self-evolving-sealed-service/tests/service.test.ts')
           tests = test_path.read_text()
@@ -50,6 +53,9 @@ jobs:
           regression = """  it('binds the candidate lock to the protocol sealed by the ceremony', async () => {
             const f = await fixture()
             await handleServiceRequest(f.request)
+            const statePath = join(f.privateDir, 'ceremony-state.json')
+            const receiptPath = join(f.publicDir, 'candidate-lock.json')
+            const stateBefore = await readFile(statePath, 'utf8')
             const foreignProtocolIdentity = {
               ...lockIdentity(),
               protocolHash: digest('foreign-protocol'),
@@ -64,6 +70,8 @@ jobs:
               }),
             ).rejects.toThrow(/protocolHash does not match sealed ceremony/)
 
+            await expect(readFile(statePath, 'utf8')).resolves.toBe(stateBefore)
+            await expect(readFile(receiptPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
             await expect(
               handleServiceRequest({
                 operation: 'lock',
@@ -79,19 +87,13 @@ jobs:
               raise SystemExit('expected one service regression insertion point')
           test_path.write_text(tests.replace(marker, regression + marker))
           PY
-          pnpm exec prettier --write \
-            packages/dsh-self-evolving-sealed-service/src/service.ts \
-            packages/dsh-self-evolving-sealed-service/tests/service.test.ts
-      - name: Verify focused regression and types
-        run: |
-          pnpm setup:source
-          pnpm exec vitest run packages/dsh-self-evolving-sealed-service/tests/service.test.ts
-          pnpm typecheck
+
       - name: Publish final branch without helper workflow
         run: |
           rm .github/workflows/apply-issue-44.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
+          git diff --cached --check
           git commit -m 'fix(sealed-service): bind candidate lock to ceremony protocol'
           git push origin HEAD:fix/issue-44-bind-lock-protocol
