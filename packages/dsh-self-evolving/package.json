@@ -65,11 +65,15 @@
     "clean": "rm -rf lib .tsbuildinfo"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
-    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
     "@dsh-self-evolving/candidate-sdk": "workspace:*"
   },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0 <5",
+    "@deepseek-ai/schemastery": ">=3.18.0 <4"
+  },
   "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
     "@types/node": "^22.10.0",
     "fastify": "^5.0.0",
     "typescript": "^5.7.0",
