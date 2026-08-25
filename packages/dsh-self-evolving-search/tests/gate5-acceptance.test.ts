@@ -112,6 +112,24 @@ describe('Gate 5 fail-closed acceptance', () => {
     expect(verdict.reasons.join('\n')).toMatch(/split assignment/)
   })
 
+  it('rejects fractional and otherwise invalid attempt identities even at the expected cardinality', () => {
+    const input = completeInput()
+    input.baselineTrials = input.developmentTaskIds.flatMap((taskId) => [
+      trial('baseline', taskId, 0.1),
+      trial('baseline', taskId, 1.1),
+    ])
+    const fractional = verifyGate5Acceptance(input)
+    expect(fractional.accepted).toBe(false)
+    expect(fractional.reasons.join('\n')).toMatch(/integer range/)
+    expect(fractional.reasons.join('\n')).toMatch(/baseline trial missing: task-0\/0/)
+
+    for (const invalid of [Number.NaN, Number.POSITIVE_INFINITY, -1, -0, 1.5]) {
+      const invalidInput = completeInput()
+      invalidInput.baselineTrials[0] = { ...invalidInput.baselineTrials[0]!, attemptIndex: invalid }
+      expect(verifyGate5Acceptance(invalidInput).accepted).toBe(false)
+    }
+  })
+
   it('requires separate-principal ceremony and fail-closed lock/info-flow receipts', () => {
     const input = completeInput()
     input.splitCeremony.principalSeparated = false
