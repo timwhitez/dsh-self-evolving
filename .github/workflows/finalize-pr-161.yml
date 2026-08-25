@@ -1,0 +1,136 @@
+name: finalize-pr-161
+
+on:
+  push:
+    branches:
+      - fix/issue-69-bind-split-commitment
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-69-bind-split-commitment
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Validate persisted v2 commitments during idempotent recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          service_path = Path('packages/dsh-self-evolving-sealed-service/src/service.ts')
+          service = service_path.read_text()
+          service = service.replace(
+              "  commitSplit,\n  type SplitAssignment,",
+              "  commitSplit,\n  verifySplit,\n  type SplitAssignment,",
+              1,
+          )
+          old = """      const state = await readState(request.privateDir)
+                const same =
+          """
+          new = """      const state = await readState(request.privateDir)
+                if (!/^[0-9a-f]{64}$/.test(state.seedHex)) {
+                  throw new Error('EVIDENCE_CORRUPT: invalid ceremony seed')
+                }
+                const expectedSeedCommitment = sha256(
+                  Buffer.concat([
+                    Buffer.from(state.seedHex, 'hex'),
+                    Buffer.from(state.datasetDigest),
+                    Buffer.from(state.protocolHash),
+                  ]),
+                )
+                if (
+                  state.controllerView.commitment.seedCommitment !== expectedSeedCommitment ||
+                  !verifySplit(
+                    state.controllerView.commitment,
+                    state.assignment,
+                    tasks.map((task) => task.taskId),
+                  )
+                ) {
+                  throw new Error('EVIDENCE_CORRUPT: split commitment does not bind ceremony state')
+                }
+                const same =
+          """
+          if old not in service:
+              raise SystemExit('ceremony recovery anchor missing')
+          service_path.write_text(service.replace(old, new, 1))
+
+          test_path = Path('packages/dsh-self-evolving-sealed-service/tests/service.test.ts')
+          test = test_path.read_text()
+          digest_anchor = """const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`
+          """
+          canonical = """
+
+          function canonical(value: unknown): string {
+            if (value === undefined) return 'null'
+            if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+            if (value !== null && typeof value === 'object') {
+              const record = value as Record<string, unknown>
+              return `{${Object.keys(record)
+                .sort()
+                .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+                .join(',')}}`
+            }
+            return JSON.stringify(value)
+          }
+          """
+          if canonical.strip() not in test:
+              test = test.replace(digest_anchor, digest_anchor + canonical, 1)
+
+          test_anchor = """  it('recovers a missing public receipt but never overwrites conflicting public bytes', async () => {
+          """
+          regression = """  it('rejects a self-consistent legacy split commitment during recovery', async () => {
+            const f = await fixture()
+            await handleServiceRequest(f.request)
+            const statePath = join(f.privateDir, 'ceremony-state.json')
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown> & {
+              controllerView: { commitment: Record<string, unknown> }
+              stateHash: string
+            }
+            delete state.controllerView.commitment['schemaVersion']
+            delete state.controllerView.commitment['taskInventoryDigest']
+            const { stateHash: _oldHash, ...body } = state
+            state.stateHash = digest(canonical(body))
+            await writeFile(statePath, canonical(state) + '\\n')
+
+            await expect(handleServiceRequest(f.request)).rejects.toThrow(
+              /split commitment does not bind ceremony state/,
+            )
+          })
+
+          """
+          if test_anchor not in test:
+              raise SystemExit('service regression anchor missing')
+          test_path.write_text(test.replace(test_anchor, regression + test_anchor, 1))
+          PY
+
+          rm .github/workflows/finalize-pr-161.yml
+          pnpm setup:source
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving-sealed-service/src/service.ts \
+            packages/dsh-self-evolving-sealed-service/tests/service.test.ts
+          pnpm typecheck
+          pnpm exec vitest run packages/dsh-self-evolving-sealed-service/tests/service.test.ts
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(sealed-service): verify split commitment on recovery'
+          git push origin HEAD:fix/issue-69-bind-split-commitment
