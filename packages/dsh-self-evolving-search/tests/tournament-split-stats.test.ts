@@ -2,6 +2,7 @@
  * Tournament + split ceremony + sealed info-flow + bootstrap stats tests
  * (spec 03 §11, spec 04 §3/§5, spec 05 §4).
  */
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   baselineNodeCmp,
@@ -18,6 +19,11 @@ import {
   type NodeUtility,
   type SplitAssignment,
 } from '../src/index.js'
+
+const splitSeed = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`
+
+const inventoryOf = (assignment: readonly SplitAssignment[]) =>
+  assignment.map((entry) => entry.taskId)
 
 function view(nodes: NodeUtility[]): ArchiveView {
   return { nodes, observations: [] }
@@ -128,36 +134,101 @@ describe('split ceremony (spec 04 §3)', () => {
     return tasks
   }
 
-  it('commits a 48/12/29 split with a Merkle root', () => {
-    const commitment = commitSplit(makeAssignment(), 'sha256:seed-commitment')
+  it('commits a 48/12/29 split, seed, sizes, and exact inventory', () => {
+    const assignment = makeAssignment()
+    const commitment = commitSplit(
+      assignment,
+      splitSeed('seed-commitment'),
+      inventoryOf(assignment),
+    )
+    expect(commitment.schemaVersion).toBe(2)
     expect(commitment.sizes.devObserved).toBe(48)
     expect(commitment.sizes.devGuard).toBe(12)
     expect(commitment.sizes.sealed).toBe(29)
+    expect(commitment.taskInventoryDigest).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(commitment.merkleRoot).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
-  it('verifySplit accepts the matching assignment', () => {
-    const a = makeAssignment()
-    const c = commitSplit(a, 'sha256:seed')
-    expect(verifySplit(c, a)).toBe(true)
+  it('verifySplit accepts only the matching assignment and inventory', () => {
+    const assignment = makeAssignment()
+    const inventory = inventoryOf(assignment)
+    const commitment = commitSplit(assignment, splitSeed('seed'), inventory)
+    expect(verifySplit(commitment, assignment, inventory)).toBe(true)
+
+    const tampered = structuredClone(assignment)
+    tampered[0]!.label = 'sealed'
+    expect(verifySplit(commitment, tampered, inventory)).toBe(false)
+
+    const substitutedInventory = [...inventory]
+    substitutedInventory[0] = 'different-official-task'
+    expect(verifySplit(commitment, assignment, substitutedInventory)).toBe(false)
   })
 
-  it('verifySplit rejects a tampered assignment (swapped label)', () => {
-    const a = makeAssignment()
-    const c = commitSplit(a, 'sha256:seed')
-    a[0]!.label = 'sealed' // corrupt
-    expect(verifySplit(c, a)).toBe(false)
+  it('binds seed, schema, and split-size metadata', () => {
+    const assignment = makeAssignment()
+    const inventory = inventoryOf(assignment)
+    const seed = splitSeed('seed-a')
+    const commitment = commitSplit(assignment, seed, inventory)
+    expect(
+      verifySplit({ ...commitment, seedCommitment: splitSeed('seed-b') }, assignment, inventory),
+    ).toBe(false)
+    expect(
+      verifySplit(
+        { ...commitment, sizes: { ...commitment.sizes, sealed: commitment.sizes.sealed + 1 } },
+        assignment,
+        inventory,
+      ),
+    ).toBe(false)
+    expect(verifySplit({ ...commitment, schemaVersion: 1 as 2 }, assignment, inventory)).toBe(false)
+  })
+
+  it('rejects duplicate, cross-label, malformed, missing, and extra task identities', () => {
+    const assignment = makeAssignment()
+    const inventory = inventoryOf(assignment)
+    const seed = splitSeed('seed')
+
+    const duplicateAssignment = structuredClone(assignment)
+    duplicateAssignment[duplicateAssignment.length - 1]!.taskId = duplicateAssignment[0]!.taskId
+    expect(() => commitSplit(duplicateAssignment, seed, inventory)).toThrow(/duplicate task ID/)
+
+    const duplicateInventory = [...inventory]
+    duplicateInventory[duplicateInventory.length - 1] = duplicateInventory[0]!
+    expect(() => commitSplit(assignment, seed, duplicateInventory)).toThrow(
+      /duplicate frozen task ID/,
+    )
+
+    const empty = structuredClone(assignment)
+    empty[0]!.taskId = ''
+    expect(() => commitSplit(empty, seed, inventory)).toThrow(/canonical NFC strings/)
+
+    const substitutedInventory = [...inventory]
+    substitutedInventory[0] = 'outside-task'
+    expect(() => commitSplit(assignment, seed, substitutedInventory)).toThrow(
+      /outside frozen inventory/,
+    )
+    expect(() => commitSplit(assignment, seed, inventory.slice(1))).toThrow(/must match exactly/)
+    expect(() => commitSplit(assignment, seed, [...inventory, 'extra-task'])).toThrow(
+      /must match exactly/,
+    )
+    expect(() => commitSplit(assignment, 'sha256:seed', inventory)).toThrow(/canonical sha256/)
+  })
+
+  it('is permutation-invariant when distinct task IDs share UTF-8 replacement bytes', () => {
+    const assignment = makeAssignment()
+    assignment[0]!.taskId = '\ud800'
+    assignment[1]!.taskId = '\ud801'
+    const inventory = inventoryOf(assignment)
+    const seed = splitSeed('surrogate-order')
+    const forward = commitSplit(assignment, seed, inventory)
+    const reverse = commitSplit([...assignment].reverse(), seed, [...inventory].reverse())
+    expect(reverse).toEqual(forward)
   })
 
   it('commitSplit rejects wrong sizes', () => {
-    const bad = makeAssignment().slice(0, 47) // too few dev-observed
-    bad.push(
-      ...Array.from({ length: 1 }, (_, i) => ({ taskId: `x${i}`, label: 'dev-observed' as const })),
-    )
-    // now 48 dev-observed? No — sliced to 47 then +1 = 48, but original 48 dev-observed sliced to 47.
-    // Simpler: build a definitely-wrong one.
     const wrong: SplitAssignment[] = [{ taskId: 'only', label: 'dev-observed' }]
-    expect(() => commitSplit(wrong, 'sha256:seed')).toThrow(/dev-observed count/)
+    expect(() => commitSplit(wrong, splitSeed('seed'), inventoryOf(wrong))).toThrow(
+      /must match exactly/,
+    )
   })
 })
 

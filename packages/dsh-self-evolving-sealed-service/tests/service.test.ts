@@ -12,6 +12,19 @@ import {
 
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`
 
+function canonical(value: unknown): string {
+  if (value === undefined) return 'null'
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
 function tasks(): CeremonyTask[] {
   return Array.from({ length: 89 }, (_, index) => ({
     taskId: `task-${String(index).padStart(3, '0')}`,
@@ -101,6 +114,25 @@ describe('sealed ceremony service', () => {
     const changed = structuredClone(f.request)
     changed.tasks[0]!.category = 'changed'
     await expect(handleServiceRequest(changed)).rejects.toThrow(/immutable identity mismatch/)
+  })
+
+  it('rejects a self-consistent legacy split commitment during recovery', async () => {
+    const f = await fixture()
+    await handleServiceRequest(f.request)
+    const statePath = join(f.privateDir, 'ceremony-state.json')
+    const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown> & {
+      controllerView: { commitment: Record<string, unknown> }
+      stateHash: string
+    }
+    delete state.controllerView.commitment['schemaVersion']
+    delete state.controllerView.commitment['taskInventoryDigest']
+    const { stateHash: _oldHash, ...body } = state
+    state.stateHash = digest(canonical(body))
+    await writeFile(statePath, canonical(state) + '\n')
+
+    await expect(handleServiceRequest(f.request)).rejects.toThrow(
+      /split commitment does not bind ceremony state/,
+    )
   })
 
   it('recovers a missing public receipt but never overwrites conflicting public bytes', async () => {

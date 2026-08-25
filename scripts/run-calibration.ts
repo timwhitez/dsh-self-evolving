@@ -149,7 +149,11 @@ async function main(): Promise<void> {
   // 1. Deterministic fixture partition. The public seed conceals nothing.
   const assignment = deterministicSplit(tasks, MASTER_SEED)
   const seedCommitment = 'sha256:' + createHash('sha256').update(String(MASTER_SEED)).digest('hex')
-  const commitment = commitSplit(assignment, seedCommitment)
+  const commitment = commitSplit(
+    assignment,
+    seedCommitment,
+    tasks.map((task) => task.taskId),
+  )
   await writeFile(
     join(evidenceDir, 'split-commitment.json'),
     JSON.stringify(commitment, null, 2) + '\n',
