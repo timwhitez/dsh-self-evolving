@@ -1,0 +1,28 @@
+name: export-audit-snapshot
+
+on:
+  push:
+    branches:
+      - audit/source-snapshot-20260825
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/source-snapshot-20260825
+
+      - name: Upload repository source
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-source-snapshot
+          path: |
+            .
+            !.git
+          include-hidden-files: true
+          retention-days: 1
