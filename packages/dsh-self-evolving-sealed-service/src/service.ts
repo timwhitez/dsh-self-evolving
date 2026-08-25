@@ -359,7 +359,11 @@ async function ceremony(request: CeremonyRequest): Promise<ServiceResponse> {
     )
     const seedValue = BigInt(`0x${seed.toString('hex')}`)
     const assignment = deterministicSplit(publicSplitTasks(tasks), seedValue)
-    const commitment = commitSplit(assignment, seedCommitment)
+    const commitment = commitSplit(
+      assignment,
+      seedCommitment,
+      tasks.map((task) => task.taskId),
+    )
     const observedTaskIds = assignment
       .filter((entry) => entry.label === 'dev-observed')
       .map((entry) => entry.taskId)
