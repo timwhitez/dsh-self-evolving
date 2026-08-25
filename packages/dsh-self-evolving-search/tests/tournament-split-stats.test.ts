@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  baselineNodeCmp,
   buildShortlist,
   lockChampion,
   commitSplit,
@@ -56,17 +57,67 @@ describe('shortlist tournament (spec 03 §11)', () => {
 
   it('lockChampion returns the rank-1 candidate', () => {
     const sl = [{ candidateId: 'x', cmp: 0.9, s: 9, f: 1, rank: 1 }]
-    const res = lockChampion(sl)
+    const res = lockChampion(sl, 0.5)
     expect(res.championId).toBe('x')
     expect(res.outcome).toBe('DEVELOPMENT_CHAMPION')
   })
 
-  it('lockChampion reports NO_DEVELOPMENT_IMPROVEMENT on empty/undefined shortlist', () => {
-    expect(lockChampion([]).outcome).toBe('NO_DEVELOPMENT_IMPROVEMENT')
-    expect(lockChampion([{ candidateId: 'y', cmp: undefined, s: 0, f: 0, rank: 1 }]).outcome).toBe(
+  it('lockChampion reports NO_DEVELOPMENT_IMPROVEMEMT on empty/undefined shortlist', () => {
+    expect(lockChampion([], 0.5).outcome).toBe('NO_DEVELOPMENT_IMPROVEMEMT')
+    expect(
+      lockChampion([{ candidateId: 'y', cmp: undefined, s: 0, f: 0, rank: 1 }], 0.5).outcome,
+    ).toBe(
       'NO_DEVELOPMENT_IMPROVEMENT',
     )
   })
+
+  it('never shortlists the evaluated baseline and requires a strict successor improvement', () => {
+    const baseline: NodeUtility = {
+      candidateId: 'baseline',
+      canonicalParent: null,
+      donorCandidates: [],
+      s: 9,
+      f: 1,
+    }
+    const weak: NodeUtility = {
+      candidateId: 'weak',
+      canonicalParent: 'baseline',
+      donorCandidates: [],
+      s: 1,
+      f: 9,
+    }
+    const weakView = view([baseline, weak])
+    const shortlist = buildShortlist(weakView, {
+      K: 80,
+      q0: 3,
+      alpha: 0.6,
+      tau: 1,
+      waveSize: 4,
+      shortlistSize: 5,
+    })
+
+    expect(shortlist.map((entry) => entry.candidateId)).toEqual(['weak'])
+    expect(lockChampion(shortlist, baselineNodeCmp(weakView))).toEqual({
+      championId: null,
+      outcome: 'NO_DEVELOPMENT_IMPROVEMENT',
+    })
+
+    const strongView = view([baseline, { ...weak, candidateId: 'strong', s: 10, f: 0 }])
+    expect(
+      lockChampion(
+        buildShortlist(strongView, {
+          K: 80,
+          q0: 3,
+          alpha: 0.6,
+          tau: 1,
+          waveSize: 4,
+          shortlistSize: 5,
+        }),
+        baselineNodeCmp(strongView),
+      ),
+    ).toEqual({ championId: 'strong', outcome: 'DEVELOPMENT_CHAMPION' })
+  })
+
 })
 
 describe('split ceremony (spec 04 §3)', () => {

@@ -22,7 +22,7 @@ export interface ShortlistEntry {
  *   2. undefined-CMP nodes by candidateId ascending (deterministic tiebreak).
  */
 export function buildShortlist(view: ArchiveView, params: SearchParams): ShortlistEntry[] {
-  const eligible = view.nodes.filter((n) => n.canonicalParent !== null || n.s + n.f > 0)
+  const eligible = view.nodes.filter((n) => n.canonicalParent !== null)
   const entries: ShortlistEntry[] = eligible.map((n) => {
     const c = cladeCMP(view, n.candidateId)
     return { candidateId: n.candidateId, cmp: c.cmp, s: c.s, f: c.f, rank: 0 }
@@ -46,14 +46,30 @@ export function buildShortlist(view: ArchiveView, params: SearchParams): Shortli
 
 /**
  * Lock the unique development champion: the rank-1 entry. If the shortlist is
- * empty, returns NO_DEVELOPMENT_IMPROVEMENT (reported honestly, not invented).
+ * empty, returns NO_DEVELOPMENT_IMPROVEMEMT (reported honestly, not invented).
  */
-export function lockChampion(shortlist: ShortlistEntry[]): {
+export function baselineNodeCmp(view: ArchiveView): number | undefined {
+  const baseline = view.nodes.find((node) => node.canonicalParent === null)
+  if (baseline === undefined) return undefined
+  const observations = baseline.s + baseline.f
+  return observations === 0 ? undefined : baseline.s / observations
+}
+
+export function lockChampion(
+  shortlist: ShortlistEntry[],
+  baselineCmp: number | undefined,
+): {
   championId: string | null
-  outcome: 'DEVELOPMENT_CHAMPION' | 'NO_DEVELOPMENT_IMPROVEMENT'
+  outcome: 'DEVELOPMENT_CHAMPION' | 'NO_DEVELOPMENT_IMPROVEMEMT'
 } {
-  if (shortlist.length === 0 || shortlist[0]!.cmp === undefined) {
-    return { championId: null, outcome: 'NO_DEVELOPMENT_IMPROVEMENT' }
+  const best = shortlist[0]
+  if (
+    best === undefined ||
+    best.cmp === undefined ||
+    baselineCmp === undefined ||
+    best.cmp <= baselineCmp
+  ) {
+    return { championId: null, outcome: 'NO_DEVELOPMENT_IMPROVEMEMT' }
   }
-  return { championId: shortlist[0]!.candidateId, outcome: 'DEVELOPMENT_CHAMPION' }
+  return { championId: best.candidateId, outcome: 'DEVELOPMENT_CHAMPION' }
 }
