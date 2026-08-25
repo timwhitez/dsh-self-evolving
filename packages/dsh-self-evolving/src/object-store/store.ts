@@ -16,7 +16,7 @@
  */
 import { createHash } from 'node:crypto'
 import { link, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 export type DataLabel = 'PUBLIC_SPEC' | 'DEV_OBSERVED' | 'GUARDED' | 'SEALED'
@@ -41,6 +41,15 @@ interface StoredObjectMetadata {
   mediaType: string
   label: DataLabel
   metadataHash: string
+}
+
+export class IncompleteObjectPublishError extends Error {
+  readonly code = 'OBJECT_PUBLISH_INCOMPLETE'
+
+  constructor(readonly digest: string) {
+    super(`object-store: publish is incomplete for object ${digest}`)
+    this.name = 'IncompleteObjectPublishError'
+  }
 }
 
 /** Two-level sharded path for a digest: objects/sha256/<aa>/<digest>. */
@@ -106,14 +115,23 @@ async function publishMetadata(store: ObjectStore, ref: ObjectRef): Promise<void
   const path = metadataPath(store.root, ref.digest)
   const expected = createMetadata(ref)
   const bytes = JSON.stringify(expected) + '\n'
-  let file
+  const stagingDir = join(store.root, 'objects', 'sha256', '.staging')
+  await mkdir(stagingDir, { recursive: true })
+  await mkdir(dirname(path), { recursive: true })
+  const stagingPath = join(stagingDir, `${ref.digest}.meta.${randomBytes(8).toString('hex')}.tmp`)
+  const file = await open(stagingPath, 'wx', 0o600)
   try {
-    file = await open(path, 'wx', 0o600)
     await file.writeFile(bytes)
     await file.sync()
+  } finally {
     await file.close()
+  }
+
+  let published = false
+  try {
+    await link(stagingPath, path)
+    published = true
   } catch (error) {
-    await file?.close().catch(() => {})
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     const existing = await readMetadata(store, ref.digest)
     if (JSON.stringify(existing) !== JSON.stringify(expected)) {
@@ -121,7 +139,10 @@ async function publishMetadata(store: ObjectStore, ref: ObjectRef): Promise<void
         cause: error,
       })
     }
+  } finally {
+    await rm(stagingPath, { force: true })
   }
+  if (published) await fsyncDir(dirname(path))
 }
 
 /**
@@ -137,57 +158,55 @@ export async function publishBytes(
   const digest = createHash('sha256').update(bytes).digest('hex')
   const ref: ObjectRef = { algorithm: 'sha256', digest, size: bytes.length, mediaType, label }
   const finalPath = digestPath(store.root, digest)
+  const finalDir = dirname(finalPath)
   const existing = await stat(finalPath).catch(() => null)
   if (existing) {
-    // Verify byte-for-byte equality (size first, then full hash via re-read).
     if (existing.size !== bytes.length) {
       throw new Error(`EVIDENCE_CORRUPT: size mismatch for existing object ${digest}`)
-    }
-    const existingMetadata = await readMetadata(store, digest)
-    if (JSON.stringify(existingMetadata) !== JSON.stringify(createMetadata(ref))) {
-      throw new Error(`EVIDENCE_CORRUPT: immutable metadata conflict for object ${digest}`)
     }
     if (!(await verifyEqualityBytes(bytes, finalPath))) {
       throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`)
     }
+    // A crash after the bytes-first commit but before metadata leaves
+    // an unreferenced bytes-only object. The exact retry completes it.
+    await publishMetadata(store, ref)
     return ref
   }
-  // Stage → fsync → rename (no-clobber via link).
+
   const stagingDir = join(store.root, 'objects', 'sha256', '.staging')
   await mkdir(stagingDir, { recursive: true })
   const stagingPath = join(stagingDir, `${digest}.${randomBytes(8).toString('hex')}.tmp`)
-  const fh = await open(stagingPath, 'wx')
+  const file = await open(stagingPath, 'wx')
   try {
-    await fh.writeFile(bytes)
-    await fh.sync() // fsync the staged file's data
+    await file.writeFile(bytes)
+    await file.sync()
   } finally {
-    await fh.close()
+    await file.close()
   }
-  await mkdir(join(finalPath, '..'), { recursive: true })
-  // The immutable label/media binding wins before bytes become addressable.
-  // A crash between these steps leaves a detectable/retryable metadata-only
-  // record; it can never publish the same digest under a different label.
-  await publishMetadata(store, ref)
-  // no-clobber: link first (atomic on same fs); if it exists, verify.
+
   try {
-    await link(stagingPath, finalPath)
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-      // another writer won; verify equality and move on
-      const ok = await verifyEquality(stagingPath, finalPath)
-      if (!ok) {
+    await mkdir(finalDir, { recursive: true })
+    let publishedBytes = false
+    try {
+      await link(stagingPath, finalPath)
+      publishedBytes = true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if (!(await verifyEquality(stagingPath, finalPath))) {
         throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`, {
-          cause: err,
+          cause: error,
         })
       }
-    } else {
-      throw err
     }
+
+    // The final bytes and their directory entry are durable before a
+    // metadata/reference can become visible.
+    if (publishedBytes) await fsyncDir(finalDir)
+    await publishMetadata(store, ref)
+    return ref
+  } finally {
+    await rm(stagingPath, { force: true })
   }
-  await rm(stagingPath, { force: true })
-  // fsync the parent directory so the rename/link survives a crash.
-  await fsyncDir(join(finalPath, '..'))
-  return ref
 }
 
 async function verifyEqualityBytes(bytes: Uint8Array, path: string): Promise<boolean> {
@@ -232,8 +251,17 @@ async function fsyncDir(dir: string): Promise<void> {
 export async function readBytes(store: ObjectStore, digest: string): Promise<Uint8Array> {
   const { readFile } = await import('node:fs/promises')
   const data = await readFile(digestPath(store.root, digest))
-  const metadata = await readMetadata(store, digest)
-  // Integrity check on read.
+  let metadata: StoredObjectMetadata
+  try {
+    metadata = await readMetadata(store, digest)
+  } catch {
+    if ((await stat(metadataPath(store.root, digest)).catch(() => null)) === null) {
+      throw new IncompleteObjectPublishError(digest)
+    }
+    // Metadata may have been atomically linked between the failed read
+    // and the existence probe. Retry the complete immutable record.
+    metadata = await readMetadata(store, digest)
+  }
   const actual = createHash('sha256').update(data).digest('hex')
   if (actual !== digest) {
     throw new Error(`EVIDENCE_CORRUPT: object ${digest} hashes to ${actual}`)
@@ -247,11 +275,14 @@ export async function readBytes(store: ObjectStore, digest: string): Promise<Uin
 /** Read bytes and verify the caller's full immutable reference metadata. */
 export async function readRefBytes(store: ObjectStore, ref: ObjectRef): Promise<Uint8Array> {
   if (ref.algorithm !== 'sha256') throw new Error('object-store: unsupported reference algorithm')
+  // Read the completed object first so a bytes-only crash state is
+  // classified as retryable rather than as missing metadata corruption.
+  const bytes = await readBytes(store, ref.digest)
   const metadata = await readMetadata(store, ref.digest)
   if (JSON.stringify(metadata) !== JSON.stringify(createMetadata(ref))) {
     throw new Error(`EVIDENCE_CORRUPT: reference metadata mismatch for object ${ref.digest}`)
   }
-  return readBytes(store, ref.digest)
+  return bytes
 }
 
 /**
@@ -292,7 +323,10 @@ export async function scrub(store: ObjectStore): Promise<string[]> {
 
 /** Check whether a digest exists in the store. */
 export async function exists(store: ObjectStore, digest: string): Promise<boolean> {
-  return (await stat(digestPath(store.root, digest)).catch(() => null)) !== null
+  if ((await stat(digestPath(store.root, digest)).catch(() => null)) === null) return false
+  if ((await stat(metadataPath(store.root, digest)).catch(() => null)) === null) return false
+  await readMetadata(store, digest)
+  return true
 }
 
 /** rename helper exported for the journal (same fsync-dir discipline). */
