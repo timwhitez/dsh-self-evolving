@@ -166,6 +166,38 @@ describe('sealed ceremony service', () => {
     ).rejects.toThrow(/does not match ceremony layout/)
   })
 
+  it('binds the candidate lock to the protocol sealed by the ceremony', async () => {
+    const f = await fixture()
+    await handleServiceRequest(f.request)
+    const statePath = join(f.privateDir, 'ceremony-state.json')
+    const receiptPath = join(f.publicDir, 'candidate-lock.json')
+    const stateBefore = await readFile(statePath, 'utf8')
+    const foreignProtocolIdentity = {
+      ...lockIdentity(),
+      protocolHash: digest('foreign-protocol'),
+    }
+
+    await expect(
+      handleServiceRequest({
+        operation: 'lock',
+        privateDir: f.privateDir,
+        publicDir: f.publicDir,
+        identity: foreignProtocolIdentity,
+      }),
+    ).rejects.toThrow(/protocolHash does not match sealed ceremony/)
+
+    await expect(readFile(statePath, 'utf8')).resolves.toBe(stateBefore)
+    await expect(readFile(receiptPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      handleServiceRequest({
+        operation: 'lock',
+        privateDir: f.privateDir,
+        publicDir: f.publicDir,
+        identity: lockIdentity(),
+      }),
+    ).resolves.toMatchObject({ operation: 'lock', idempotent: false })
+  })
+
   it('rejects private-state tampering before authorization', async () => {
     const f = await fixture()
     await handleServiceRequest(f.request)
