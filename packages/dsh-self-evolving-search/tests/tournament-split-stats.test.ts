@@ -176,14 +176,7 @@ describe('paired cluster-bootstrap CI (spec 04 §5)', () => {
 
   it('rejects invalid bootstrap loop bounds independently of Gate 8', () => {
     const trials = [{ taskId: 'task', baselineReward: 0, candidateReward: 1 }]
-    for (const nResamples of [
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-      0,
-      -1,
-      1.5,
-      1_000_001,
-    ]) {
+    for (const nResamples of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 1.5, 1_000_001]) {
       expect(() => pairedBootstrapCi(trials, { nResamples })).toThrow(/safe integer/)
     }
   })
