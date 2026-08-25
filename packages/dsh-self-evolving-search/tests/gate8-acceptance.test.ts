@@ -149,6 +149,25 @@ describe('Gate 8 sealed/full/release evidence', () => {
     })
   })
 
+  it('rejects every non-binary runtime reward before statistical analysis', () => {
+    for (const reward of [-1, 0.5, 2, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const sealed = complete()
+      ;(sealed.sealedTrials[0] as unknown as { reward: number }).reward = reward
+      sealed.reportedPromotionState = 'PROTOCOL_INVALID'
+      sealed.fullSet = null
+      sealed.release = null
+      const sealedVerdict = verifyGate8Evidence(sealed)
+      expect(sealedVerdict.protocolValid).toBe(false)
+      expect(sealedVerdict.reasons.join('\n')).toMatch(/sealed trial identity\/artifact invalid/)
+
+      const full = complete()
+      ;(full.fullSet!.trials[0] as unknown as { reward: number }).reward = reward
+      const fullVerdict = verifyGate8Evidence(full)
+      expect(fullVerdict.fullSetVerified).toBe(false)
+      expect(fullVerdict.reasons.join('\n')).toMatch(/full-set trial identity\/artifact invalid/)
+    }
+  })
+
   it('marks an incomplete paired matrix protocol-invalid and ineligible for full set', () => {
     const input = complete()
     input.sealedTrials.pop()
