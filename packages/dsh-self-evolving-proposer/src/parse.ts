@@ -6,13 +6,13 @@
  * candidate-SDK builder to produce real admitted candidate artifacts. Rejected
  * proposals + their reasons are retained as evidence (never silently dropped).
  */
+import { createHash } from 'node:crypto'
+import { buildCanonicalArchive, type DeclaredFile } from '@dsh-self-evolving/candidate-sdk'
 import {
   validateProposalBatch,
   type ProposalChild,
   type ProposalBatch,
 } from '@dsh-self-evolving/core'
-import { createHash } from 'node:crypto'
-import { buildCanonicalArchive, type DeclaredFile } from '@dsh-self-evolving/candidate-sdk'
 
 export interface ParsedProposal {
   accepted: ProposalChild[]
