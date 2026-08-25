@@ -442,8 +442,11 @@ async function lockCandidate(request: LockRequest): Promise<ServiceResponse> {
     ) {
       throw new Error('INVALID_LAYOUT: lock request does not match ceremony layout')
     }
-    await prepareDirs(state.privateDir, state.publicDir)
-    if (state.candidateLock !== null) {
+    if (request.identity.protocolHash !== state.protocolHash) {
+    throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')
+  }
+  await prepareDirs(state.privateDir, state.publicDir)
+  if (state.candidateLock !== null) {
       if (canonical(state.candidateLock.identity) !== canonical(request.identity)) {
         throw new Error('CANDIDATE_ALREADY_LOCKED: identity mismatch')
       }
