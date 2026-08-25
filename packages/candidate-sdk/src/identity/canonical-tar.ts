@@ -98,8 +98,10 @@ function validateAndSort(files: DeclaredFile[]): DeclaredFile[] {
     if (sep !== '/' && p.includes(sep)) {
       throw new Error(`canonical: native separator in path rejected: ${p}`)
     }
-    // Case-fold + Unicode-normalize collision check (best-effort procedural guard).
-    const foldKey = p.toLowerCase()
+    // Normalize before the existing locale-independent lowercase policy so
+    // canonically equivalent Unicode spellings cannot coexist. Preserve the
+    // original path bytes for archive emission under the current protocol.
+    const foldKey = p.normalize('NFC').toLowerCase()
     if (seen.has(foldKey)) throw new Error(`canonical: case/unicode collision: ${p}`)
     seen.add(foldKey)
   }
