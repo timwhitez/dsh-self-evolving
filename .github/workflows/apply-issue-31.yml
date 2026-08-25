@@ -1,0 +1,218 @@
+name: apply-issue-31
+
+on:
+  push:
+    branches:
+      - fix/issue-31-separate-logical-state-hash
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-31-separate-logical-state-hash
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Add an order-independent logical projection without weakening checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/dsh-self-evolving/src/reducer/reducer.ts')
+          text = path.read_text()
+          reduce_anchor = """/**
+           * Apply one event to the state. Pure — returns a NEW state object.
+          """
+          comparator = """function compareObservations(left: ObservationRecord, right: ObservationRecord): number {
+            const leftKey = canonicalJson(left)
+            const rightKey = canonicalJson(right)
+            return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+          }
+
+          """
+          if reduce_anchor not in text:
+              raise SystemExit('reducer insertion anchor missing')
+          text = text.replace(reduce_anchor, comparator + reduce_anchor, 1)
+
+          hash_anchor = """/** Canonical state hash — proves full-replay == snapshot-resume. */
+          export function stateHash(state: ControllerState): string {
+            return 'sha256:' + createHash('sha256').update(canonicalJson(state)).digest('hex')
+          }
+          """
+          logical = """/** Canonical state hash — proves full-replay == snapshot-resume. */
+          export function stateHash(state: ControllerState): string {
+            return 'sha256:' + createHash('sha256').update(canonicalJson(state)).digest('hex')
+          }
+
+          export type LogicalControllerState = Omit<ControllerState, 'lastSeq' | 'lastEventHash'>
+
+          /**
+           * Canonical logical projection for order-independent comparisons.
+           *
+           * The exact checkpoint hash above remains bound to the real journal cursor
+           * and persisted array order. This projection excludes only transport cursor
+           * metadata and canonicalizes observations, which are protocol facts keyed by
+           * candidate/task/attempt rather than by completion time.
+           */
+          export function logicalStateProjection(state: ControllerState): LogicalControllerState {
+            return {
+              reducerVersion: state.reducerVersion,
+              runPhase: state.runPhase,
+              candidates: state.candidates,
+              actions: state.actions,
+              observations: [...state.observations].sort(compareObservations),
+              candidateLocked: state.candidateLocked,
+              sealedAccessCount: state.sealedAccessCount,
+            }
+          }
+
+          export function logicalStateHash(state: ControllerState): string {
+            return (
+              'sha256:' +
+              createHash('sha256').update(canonicalJson(logicalStateProjection(state))).digest('hex')
+            )
+          }
+          """
+          if hash_anchor not in text:
+              raise SystemExit('stateHash anchor missing')
+          path.write_text(text.replace(hash_anchor, logical, 1))
+          PY
+
+          cat > packages/dsh-self-evolving/tests/reducer-logical-state.test.ts <<'TS'
+          import { describe, expect, it } from 'vitest'
+          import {
+            computeEventHash,
+            logicalStateHash,
+            logicalStateProjection,
+            replay,
+            stateHash,
+            type JournalEvent,
+          } from '../src/index.js'
+
+          interface LogicalEvent {
+            eventId: string
+            type: string
+            payload: Record<string, unknown>
+          }
+
+          function materialize(events: LogicalEvent[]): JournalEvent[] {
+            const out: JournalEvent[] = []
+            let previousHash: string | null = null
+            for (const [index, row] of events.entries()) {
+              const partial: Omit<JournalEvent, 'eventHash'> = {
+                schemaVersion: 1,
+                runId: 'logical-state-test',
+                seq: index + 1,
+                eventId: row.eventId,
+                occurredAt: '2026-08-25T00:00:00.000Z',
+                type: row.type,
+                causationId: null,
+                correlationId: 'wave-1',
+                actor: 'test',
+                payload: row.payload,
+                previousHash,
+              }
+              const eventHash = computeEventHash(partial)
+              out.push({ ...partial, eventHash })
+              previousHash = eventHash
+            }
+            return out
+          }
+
+          const observationA: LogicalEvent = {
+            eventId: 'observation-a',
+            type: 'evaluation.observed',
+            payload: {
+              candidateId: 'c_a',
+              taskId: 'task-2',
+              attemptIndex: 0,
+              status: 'pass',
+              reward: 1,
+            },
+          }
+          const observationB: LogicalEvent = {
+            eventId: 'observation-b',
+            type: 'evaluation.observed',
+            payload: {
+              candidateId: 'c_b',
+              taskId: 'task-1',
+              attemptIndex: 0,
+              status: 'fail',
+              reward: 0,
+            },
+          }
+
+          describe('exact and logical reducer identities', () => {
+            it('keeps exact checkpoint identity order-sensitive while logical facts are order-independent', () => {
+              const prefix: LogicalEvent[] = [
+                { eventId: 'preflight', type: 'run.preflight', payload: {} },
+              ]
+              const stateA = replay(materialize([...prefix, observationA, observationB]))
+              const stateB = replay(materialize([...prefix, observationB, observationA]))
+
+              expect(stateA.lastSeq).toBe(stateB.lastSeq)
+              expect(stateA.lastEventHash).not.toBe(stateB.lastEventHash)
+              expect(stateA.observations).not.toEqual(stateB.observations)
+              expect(stateHash(stateA)).not.toBe(stateHash(stateB))
+              expect(logicalStateProjection(stateA)).toEqual(logicalStateProjection(stateB))
+              expect(logicalStateHash(stateA)).toBe(logicalStateHash(stateB))
+            })
+
+            it('never normalizes a changed journal tail out of the exact hash', () => {
+              const state = replay(materialize([observationA]))
+              const changedTail = { ...state, lastEventHash: `sha256:${'f'.repeat(64)}` }
+
+              expect(stateHash(changedTail)).not.toBe(stateHash(state))
+              expect(logicalStateHash(changedTail)).toBe(logicalStateHash(state))
+            })
+
+            it('excludes audit-only cursor movement but retains every logical fact', () => {
+              const state = replay(materialize([observationA]))
+              const withAuditEvent = replay(
+                materialize([
+                  observationA,
+                  { eventId: 'audit-only', type: 'audit.note', payload: { note: 'same facts' } },
+                ]),
+              )
+              expect(stateHash(withAuditEvent)).not.toBe(stateHash(state))
+              expect(logicalStateHash(withAuditEvent)).toBe(logicalStateHash(state))
+
+              const changedObservation = {
+                ...state,
+                observations: [{ ...state.observations[0]!, reward: 0 }],
+              }
+              expect(logicalStateHash(changedObservation)).not.toBe(logicalStateHash(state))
+            })
+          })
+          TS
+
+          rm .github/workflows/apply-issue-31.yml
+          pnpm setup:source
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving/src/reducer/reducer.ts \
+            packages/dsh-self-evolving/tests/reducer-logical-state.test.ts
+          pnpm typecheck
+          pnpm exec vitest run packages/dsh-self-evolving/tests/reducer-logical-state.test.ts
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(core): separate logical and checkpoint state hashes'
+          git push origin HEAD:fix/issue-31-separate-logical-state-hash
