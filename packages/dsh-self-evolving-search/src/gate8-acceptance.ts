@@ -125,6 +125,7 @@ function validTrialArtifacts(trial: {
   normalizedRecordHash: string
   rawEvidenceDigests: string[]
   protocolHash: string
+  reward: unknown
   costUsd: number
 }): boolean {
   return (
@@ -132,6 +133,7 @@ function validTrialArtifacts(trial: {
     trial.rawEvidenceDigests.length > 0 &&
     trial.rawEvidenceDigests.every(validDigest) &&
     validDigest(trial.protocolHash) &&
+    (trial.reward === 0 || trial.reward === 1) &&
     Number.isFinite(trial.costUsd) &&
     trial.costUsd >= 0
   )
