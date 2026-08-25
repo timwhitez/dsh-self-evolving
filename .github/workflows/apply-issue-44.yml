@@ -1,9 +1,8 @@
 name: apply-issue-44
 
 on:
-  push:
-    branches:
-      - fix/issue-44-bind-lock-protocol
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
