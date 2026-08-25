@@ -74,6 +74,8 @@ export interface ControllerState {
   sealedAccessCount: number
 }
 
+export type LogicalControllerState = Omit<ControllerState, 'lastSeq' | 'lastEventHash'>
+
 export function genesisState(): ControllerState {
   return {
     reducerVersion: 1,
@@ -86,6 +88,12 @@ export function genesisState(): ControllerState {
     candidateLocked: false,
     sealedAccessCount: 0,
   }
+}
+
+function compareObservations(left: ObservationRecord, right: ObservationRecord): number {
+  const leftKey = canonicalJson(left)
+  const rightKey = canonicalJson(right)
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
 }
 
 /**
@@ -214,9 +222,36 @@ export function reduce(state: ControllerState, event: JournalEvent): ControllerS
   return next
 }
 
-/** Canonical state hash — proves full-replay == snapshot-resume. */
+/** Canonical exact state hash — proves full-replay == snapshot-resume. */
 export function stateHash(state: ControllerState): string {
   return 'sha256:' + createHash('sha256').update(canonicalJson(state)).digest('hex')
+}
+
+/**
+ * Canonical logical projection for order-independent fact comparisons.
+ *
+ * The exact checkpoint hash above remains bound to the real journal cursor and
+ * persisted array order. This projection excludes only transport cursor fields
+ * and canonicalizes observations, which are protocol facts keyed by
+ * candidate/task/attempt rather than by same-wave completion time.
+ */
+export function logicalStateProjection(state: ControllerState): LogicalControllerState {
+  return {
+    reducerVersion: state.reducerVersion,
+    runPhase: state.runPhase,
+    candidates: state.candidates,
+    actions: state.actions,
+    observations: [...state.observations].sort(compareObservations),
+    candidateLocked: state.candidateLocked,
+    sealedAccessCount: state.sealedAccessCount,
+  }
+}
+
+export function logicalStateHash(state: ControllerState): string {
+  return (
+    'sha256:' +
+    createHash('sha256').update(canonicalJson(logicalStateProjection(state))).digest('hex')
+  )
 }
 
 /**
