@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import {
   SPLIT_SIZES,
   commitSplit,
+  verifySplit,
   type SplitAssignment,
   type SplitCommitment,
 } from '@dsh-self-evolving/search/split'
@@ -341,6 +342,26 @@ async function ceremony(request: CeremonyRequest): Promise<ServiceResponse> {
     )
     if (existing !== null) {
       const state = await readState(request.privateDir)
+      if (!/^[0-9a-f]{64}$/.test(state.seedHex)) {
+        throw new Error('EVIDENCE_CORRUPT: invalid ceremony seed')
+      }
+      const expectedSeedCommitment = sha256(
+        Buffer.concat([
+          Buffer.from(state.seedHex, 'hex'),
+          Buffer.from(state.datasetDigest),
+          Buffer.from(state.protocolHash),
+        ]),
+      )
+      if (
+        state.controllerView.commitment.seedCommitment !== expectedSeedCommitment ||
+        !verifySplit(
+          state.controllerView.commitment,
+          state.assignment,
+          tasks.map((task) => task.taskId),
+        )
+      ) {
+        throw new Error('EVIDENCE_CORRUPT: split commitment does not bind ceremony state')
+      }
       const same =
         state.ceremonyId === request.ceremonyId &&
         state.datasetDigest === request.datasetDigest &&
