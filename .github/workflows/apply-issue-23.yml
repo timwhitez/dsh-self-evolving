@@ -1,0 +1,339 @@
+name: apply-issue-23
+
+on:
+  push:
+    branches:
+      - fix/issue-23-bytes-first-atomic-publish
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-23-bytes-first-atomic-publish
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Apply bytes-first atomic publication protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/dsh-self-evolving/src/object-store/store.ts')
+          text = path.read_text()
+          text = text.replace(
+              "import { join } from 'node:path'",
+              "import { dirname, join } from 'node:path'",
+              1,
+          )
+
+          interface_anchor = """interface StoredObjectMetadata {
+            schemaVersion: 1
+            digest: string
+            size: number
+            mediaType: string
+            label: DataLabel
+            metadataHash: string
+          }
+          """
+          error_class = """
+
+          export class IncompleteObjectPublishError extends Error {
+            readonly code = 'OBJECT_PUBLISH_INCOMPLETE'
+
+            constructor(readonly digest: string) {
+              super(`object-store: publish is incomplete for object ${digest}`)
+              this.name = 'IncompleteObjectPublishError'
+            }
+          }
+          """
+          if interface_anchor not in text:
+              raise SystemExit('metadata interface anchor missing')
+          text = text.replace(interface_anchor, interface_anchor + error_class, 1)
+
+          publish_metadata_start = text.index('async function publishMetadata(')
+          publish_metadata_end = text.index('\n\n/**\n * Publish bytes into the store.', publish_metadata_start)
+          publish_metadata = """async function publishMetadata(store: ObjectStore, ref: ObjectRef): Promise<void> {
+            const path = metadataPath(store.root, ref.digest)
+            const expected = createMetadata(ref)
+            const bytes = JSON.stringify(expected) + '\\n'
+            const stagingDir = join(store.root, 'objects', 'sha256', '.staging')
+            await mkdir(stagingDir, { recursive: true })
+            await mkdir(dirname(path), { recursive: true })
+            const stagingPath = join(
+              stagingDir,
+              `${ref.digest}.meta.${randomBytes(8).toString('hex')}.tmp`,
+            )
+            const file = await open(stagingPath, 'wx', 0o600)
+            try {
+              await file.writeFile(bytes)
+              await file.sync()
+            } finally {
+              await file.close()
+            }
+
+            let published = false
+            try {
+              await link(stagingPath, path)
+              published = true
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+              const existing = await readMetadata(store, ref.digest)
+              if (JSON.stringify(existing) !== JSON.stringify(expected)) {
+                throw new Error(`EVIDENCE_CORRUPT: immutable metadata conflict for object ${ref.digest}`, {
+                  cause: error,
+                })
+              }
+            } finally {
+              await rm(stagingPath, { force: true })
+            }
+            if (published) await fsyncDir(dirname(path))
+          }"""
+          text = text[:publish_metadata_start] + publish_metadata + text[publish_metadata_end:]
+
+          publish_start = text.index('export async function publishBytes(')
+          publish_end = text.index('\n\nasync function verifyEqualityBytes(', publish_start)
+          publish_bytes = """export async function publishBytes(
+            store: ObjectStore,
+            bytes: Uint8Array,
+            mediaType: string,
+            label: DataLabel,
+          ): Promise<ObjectRef> {
+            const digest = createHash('sha256').update(bytes).digest('hex')
+            const ref: ObjectRef = { algorithm: 'sha256', digest, size: bytes.length, mediaType, label }
+            const finalPath = digestPath(store.root, digest)
+            const finalDir = dirname(finalPath)
+            const existing = await stat(finalPath).catch(() => null)
+            if (existing) {
+              if (existing.size !== bytes.length) {
+                throw new Error(`EVIDENCE_CORRUPT: size mismatch for existing object ${digest}`)
+              }
+              if (!(await verifyEqualityBytes(bytes, finalPath))) {
+                throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`)
+              }
+              // A crash after the bytes-first commit but before metadata leaves
+              // an unreferenced bytes-only object. The exact retry completes it.
+              await publishMetadata(store, ref)
+              return ref
+            }
+
+            const stagingDir = join(store.root, 'objects', 'sha256', '.staging')
+            await mkdir(stagingDir, { recursive: true })
+            const stagingPath = join(stagingDir, `${digest}.${randomBytes(8).toString('hex')}.tmp`)
+            const file = await open(stagingPath, 'wx')
+            try {
+              await file.writeFile(bytes)
+              await file.sync()
+            } finally {
+              await file.close()
+            }
+
+            try {
+              await mkdir(finalDir, { recursive: true })
+              let publishedBytes = false
+              try {
+                await link(stagingPath, finalPath)
+                publishedBytes = true
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                if (!(await verifyEquality(stagingPath, finalPath))) {
+                  throw new Error(`EVIDENCE_CORRUPT: byte mismatch for existing object ${digest}`, {
+                    cause: error,
+                  })
+                }
+              }
+
+              // The final bytes and their directory entry are durable before a
+              // metadata/reference can become visible.
+              if (publishedBytes) await fsyncDir(finalDir)
+              await publishMetadata(store, ref)
+              return ref
+            } finally {
+              await rm(stagingPath, { force: true })
+            }
+          }"""
+          text = text[:publish_start] + publish_bytes + text[publish_end:]
+
+          read_start = text.index('export async function readBytes(')
+          read_end = text.index('\n\n/** Read bytes and verify', read_start)
+          read_bytes = """export async function readBytes(store: ObjectStore, digest: string): Promise<Uint8Array> {
+            const { readFile } = await import('node:fs/promises')
+            const data = await readFile(digestPath(store.root, digest))
+            let metadata: StoredObjectMetadata
+            try {
+              metadata = await readMetadata(store, digest)
+            } catch (error) {
+              if ((await stat(metadataPath(store.root, digest)).catch(() => null)) === null) {
+                throw new IncompleteObjectPublishError(digest)
+              }
+              throw error
+            }
+            const actual = createHash('sha256').update(data).digest('hex')
+            if (actual !== digest) {
+              throw new Error(`EVIDENCE_CORRUPT: object ${digest} hashes to ${actual}`)
+            }
+            if (metadata.size !== data.byteLength) {
+              throw new Error(`EVIDENCE_CORRUPT: metadata size mismatch for object ${digest}`)
+            }
+            return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          }"""
+          text = text[:read_start] + read_bytes + text[read_end:]
+
+          exists_start = text.index('export async function exists(')
+          exists_end = text.index('\n\n/** rename helper', exists_start)
+          exists_fn = """export async function exists(store: ObjectStore, digest: string): Promise<boolean> {
+            if ((await stat(digestPath(store.root, digest)).catch(() => null)) === null) return false
+            if ((await stat(metadataPath(store.root, digest)).catch(() => null)) === null) return false
+            await readMetadata(store, digest)
+            return true
+          }"""
+          text = text[:exists_start] + exists_fn + text[exists_end:]
+          path.write_text(text)
+          PY
+
+          cat > packages/dsh-self-evolving/tests/object-store-bytes-first.test.ts <<'TS'
+          import { createHash } from 'node:crypto'
+          import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+          import { tmpdir } from 'node:os'
+          import { join } from 'node:path'
+          import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+          import {
+            exists,
+            publishBytes,
+            readBytes,
+            scrub,
+            type DataLabel,
+            type ObjectStore,
+          } from '../src/index.js'
+
+          let root: string | undefined
+
+          beforeEach(async () => {
+            root = await mkdtemp(join(tmpdir(), 'dsh-object-bytes-first-'))
+          })
+
+          afterEach(async () => {
+            if (root !== undefined) await rm(root, { recursive: true, force: true })
+            root = undefined
+          })
+
+          function store(): ObjectStore {
+            return { root: root! }
+          }
+
+          function digestOf(bytes: Uint8Array): string {
+            return createHash('sha256').update(bytes).digest('hex')
+          }
+
+          function shardPath(digest: string): string {
+            return join(root!, 'objects', 'sha256', digest.slice(0, 2))
+          }
+
+          async function writeBytesOnly(bytes: Uint8Array): Promise<string> {
+            const digest = digestOf(bytes)
+            const shard = shardPath(digest)
+            await mkdir(shard, { recursive: true })
+            await writeFile(join(shard, digest), bytes)
+            return digest
+          }
+
+          async function writeMetadataOnly(
+            bytes: Uint8Array,
+            mediaType: string,
+            label: DataLabel,
+          ): Promise<string> {
+            const digest = digestOf(bytes)
+            const body = {
+              schemaVersion: 1 as const,
+              digest,
+              size: bytes.byteLength,
+              mediaType,
+              label,
+            }
+            const metadata = {
+              ...body,
+              metadataHash: createHash('sha256').update(JSON.stringify(body)).digest('hex'),
+            }
+            const shard = shardPath(digest)
+            await mkdir(shard, { recursive: true })
+            await writeFile(join(shard, `${digest}.meta.json`), JSON.stringify(metadata) + '\n')
+            return digest
+          }
+
+          describe('bytes-first object publication', () => {
+            it('recovers an interrupted bytes-only commit using the exact immutable reference', async () => {
+              const bytes = Buffer.from('durable bytes before metadata')
+              const digest = await writeBytesOnly(bytes)
+
+              expect(await exists(store(), digest)).toBe(false)
+              await expect(readBytes(store(), digest)).rejects.toMatchObject({
+                name: 'IncompleteObjectPublishError',
+                code: 'OBJECT_PUBLISH_INCOMPLETE',
+                digest,
+              })
+
+              const ref = await publishBytes(store(), bytes, 'text/plain', 'DEV_OBSERVED')
+              expect(ref.digest).toBe(digest)
+              expect(await exists(store(), digest)).toBe(true)
+              expect(Buffer.from(await readBytes(store(), digest))).toEqual(bytes)
+              expect(await scrub(store())).toEqual([])
+            })
+
+            it('never treats a legacy metadata-only record as healthy', async () => {
+              const bytes = Buffer.from('legacy metadata-first state')
+              const digest = await writeMetadataOnly(bytes, 'text/plain', 'PUBLIC_SPEC')
+
+              expect(await exists(store(), digest)).toBe(false)
+              expect(await scrub(store())).toEqual([digest])
+
+              const ref = await publishBytes(store(), bytes, 'text/plain', 'PUBLIC_SPEC')
+              expect(ref.digest).toBe(digest)
+              expect(Buffer.from(await readBytes(store(), digest))).toEqual(bytes)
+              expect(await scrub(store())).toEqual([])
+            })
+
+            it('fails closed when the same bytes are already bound to different metadata', async () => {
+              const bytes = Buffer.from('immutable label binding')
+              await publishBytes(store(), bytes, 'text/plain', 'PUBLIC_SPEC')
+              await expect(publishBytes(store(), bytes, 'text/plain', 'SEALED')).rejects.toThrow(
+                /immutable metadata conflict/,
+              )
+            })
+
+            it('leaves no staging artifacts after a completed publication', async () => {
+              await publishBytes(store(), Buffer.from('clean staging'), 'text/plain', 'PUBLIC_SPEC')
+              const staging = join(root!, 'objects', 'sha256', '.staging')
+              expect(await readdir(staging)).toEqual([])
+            })
+          })
+          TS
+
+          rm .github/workflows/apply-issue-23.yml
+          pnpm setup:source
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving/src/object-store/store.ts \
+            packages/dsh-self-evolving/tests/object-store-bytes-first.test.ts
+          pnpm typecheck
+          pnpm exec vitest run packages/dsh-self-evolving/tests/object-store-bytes-first.test.ts
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(core): publish object bytes before atomic metadata'
+          git push origin HEAD:fix/issue-23-bytes-first-atomic-publish
