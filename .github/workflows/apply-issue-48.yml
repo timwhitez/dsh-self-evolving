@@ -1,0 +1,197 @@
+name: apply-issue-48
+
+on:
+  push:
+    branches:
+      - fix/issue-48-typescript-syntax-behavior-diff
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-48-typescript-syntax-behavior-diff
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Apply grammar-aware behavior projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('packages/candidate-sdk/src/v011/tree.ts')
+          text = path.read_text()
+          import_anchor = "import { createHash } from 'node:crypto'\n"
+          if "from 'typescript'" not in text:
+              text = text.replace(import_anchor, import_anchor + "import ts from 'typescript'\n", 1)
+
+          start = text.index('function behaviorText(source: string): string {')
+          end = text.index('\n\nexport async function deriveV011Operations(', start)
+          replacement = """const behaviorPrinter = ts.createPrinter({
+            removeComments: true,
+            newLine: ts.NewLineKind.LineFeed,
+          })
+
+          /**
+           * Build a grammar-aware production projection. TypeScript parses string,
+           * template, regular-expression, and comment boundaries; the printer then
+           * removes only trivia/comments while preserving executable literal values.
+           * Invalid source is returned verbatim so a parse failure can never hide a
+           * real textual change before the trusted build rejects it.
+           */
+          function behaviorText(source: string): string {
+            const sourceFile = ts.createSourceFile(
+              'candidate.ts',
+              source,
+              ts.ScriptTarget.Latest,
+              true,
+              ts.ScriptKind.TS,
+            )
+            const diagnostics = (
+              sourceFile as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }
+            ).parseDiagnostics
+            if (diagnostics !== undefined && diagnostics.length > 0) return source
+            return behaviorPrinter.printFile(sourceFile)
+          }"""
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text)
+
+          package_path = Path('packages/candidate-sdk/package.json')
+          package = json.loads(package_path.read_text())
+          version = package.get('devDependencies', {}).pop('typescript', None)
+          if version is None:
+              version = package.get('dependencies', {}).get('typescript')
+          if version is None:
+              raise SystemExit('candidate-sdk TypeScript version missing')
+          package.setdefault('dependencies', {})['typescript'] = version
+          package_path.write_text(json.dumps(package, indent=2) + '\n')
+          PY
+
+          cat > packages/candidate-sdk/tests/v011-behavior-syntax.test.ts <<'TS'
+          import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+          import { tmpdir } from 'node:os'
+          import { join } from 'node:path'
+          import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+          import { deriveV011Operations, snapshotV011Tree } from '../src/index.js'
+
+          let root: string | undefined
+
+          beforeEach(async () => {
+            root = await mkdtemp(join(tmpdir(), 'dsh-v011-behavior-syntax-'))
+          })
+
+          afterEach(async () => {
+            if (root !== undefined) await rm(root, { recursive: true, force: true })
+            root = undefined
+          })
+
+          async function diff(parentSource: string, childSource: string) {
+            const parentRoot = join(root!, 'parent')
+            const childRoot = join(root!, 'child')
+            await mkdir(join(parentRoot, 'src'), { recursive: true })
+            await mkdir(join(childRoot, 'src'), { recursive: true })
+            await writeFile(join(parentRoot, 'src', 'index.ts'), parentSource)
+            await writeFile(join(childRoot, 'src', 'index.ts'), childSource)
+            return deriveV011Operations(
+              await snapshotV011Tree(parentRoot),
+              await snapshotV011Tree(childRoot),
+            )
+          }
+
+          describe('v0.1.1 grammar-aware production change projection', () => {
+            it.each([
+              [
+                'URL string',
+                'export const endpoint = "https://example.test/v1"\n',
+                'export const endpoint = "https://example.test/v2"\n',
+              ],
+              [
+                'block-comment-shaped string',
+                'export const marker = "prefix /* first */ suffix"\n',
+                'export const marker = "prefix /* second */ suffix"\n',
+              ],
+              [
+                'regular expression literal',
+                'export const route = /https?:\\/\\/old\\.test/\n',
+                'export const route = /https?:\\/\\/new\\.test/\n',
+              ],
+              [
+                'template literal text',
+                'export const message = `visit //old ${1}`\n',
+                'export const message = `visit //new ${1}`\n',
+              ],
+              [
+                'escaped quote literal',
+                'export const quote = "a \\"first\\" value"\n',
+                'export const quote = "a \\"second\\" value"\n',
+              ],
+            ])('detects a behavior change in %s', async (_name, parent, child) => {
+              const result = await diff(parent, child)
+              expect(result.productionChanged).toBe(true)
+              expect(result.operations).toEqual([{ op: 'modify', path: 'src/index.ts' }])
+            })
+
+            it.each([
+              [
+                'line comment',
+                'export const value = 1 // first explanation\n',
+                'export const value = 1 // second explanation\n',
+              ],
+              [
+                'block comment',
+                'export const value = 1 /* first explanation */\n',
+                'export const value = 1 /* second explanation */\n',
+              ],
+              [
+                'template expression comment',
+                'export const value = `count:${1 /* first */}`\n',
+                'export const value = `count:${1 /* second */}`\n',
+              ],
+              [
+                'formatting',
+                'export const value={a:1,b:"https://example.test"}\n',
+                'export const value = { a: 1, b: "https://example.test" }\n',
+              ],
+            ])('rejects a %s-only production edit', async (_name, parent, child) => {
+              await expect(diff(parent, child)).rejects.toThrow(
+                /test\/comment\/format\/manifest-only child rejected/,
+              )
+            })
+          })
+          TS
+
+          rm .github/workflows/apply-issue-48.yml
+          node scripts/bootstrap-upstreams.mjs
+          node scripts/bootstrap-references.mjs
+          pnpm install --lockfile-only
+          pnpm setup:source
+          pnpm exec prettier --write \
+            packages/candidate-sdk/src/v011/tree.ts \
+            packages/candidate-sdk/tests/v011-behavior-syntax.test.ts \
+            packages/candidate-sdk/package.json \
+            pnpm-lock.yaml
+          pnpm typecheck
+          pnpm exec vitest run packages/candidate-sdk/tests/v011-behavior-syntax.test.ts
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(candidate-sdk): parse production changes with TypeScript grammar'
+          git push origin HEAD:fix/issue-48-typescript-syntax-behavior-diff
