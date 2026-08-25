@@ -117,6 +117,54 @@ describe('trusted compatible Chat Completions proposal adapter', () => {
     expect(JSON.stringify(chunks)).not.toContain('authorization')
   })
 
+  it('honors a lower per-request output cap and rejects invalid caps', async () => {
+    process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = 'x'
+    const wireCaps: number[] = []
+    const adapter = new TrustedChatCompletionsAdapter({
+      route,
+      expectedResponseModel: 'deepseek-v4-flash',
+      contextWindow: 1_048_576,
+      async fetchImpl(_input, init) {
+        const body = JSON.parse(String(init?.body)) as { max_tokens: number }
+        wireCaps.push(body.max_tokens)
+        return Response.json({
+          id: 'chat-lower-cap',
+          model: 'deepseek-v4-flash',
+          choices: [{ finish_reason: 'stop', message: { content: 'ok' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        })
+      },
+    })
+
+    for await (const _chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      maxTokens: 100,
+      messages: [
+        createUserMessage({ content: [{ type: 'text', text: 'bounded' }], source: { kind: 'user' } }),
+      ],
+    })) {
+      // consume
+    }
+    expect(wireCaps).toEqual([100])
+
+    for (const maxTokens of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, route.maxTokens + 1]) {
+      const consume = async () => {
+        for await (const _chunk of adapter.stream({
+          provider: route.provider,
+          model: route.model,
+          maxTokens,
+          messages: [
+            createUserMessage({ content: [{ type: 'text', text: 'invalid' }], source: { kind: 'user' } }),
+          ],
+        })) {
+          // consume
+        }
+      }
+      await expect(consume()).rejects.toThrow(/locked route/)
+    }
+  })
+
   it('translates tool calls and replays hidden reasoning only on the trusted host', async () => {
     process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = 'x'
     const wireBodies: Array<Record<string, unknown>> = []
