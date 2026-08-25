@@ -62,13 +62,11 @@ describe('shortlist tournament (spec 03 §11)', () => {
     expect(res.outcome).toBe('DEVELOPMENT_CHAMPION')
   })
 
-  it('lockChampion reports NO_DEVELOPMENT_IMPROVEMEMT on empty/undefined shortlist', () => {
-    expect(lockChampion([], 0.5).outcome).toBe('NO_DEVELOPMENT_IMPROVEMEMT')
+  it('lockChampion reports NO_DEVELOPMENT_IMPROVEMENT on empty/undefined shortlist', () => {
+    expect(lockChampion([], 0.5).outcome).toBe('NO_DEVELOPMENT_IMPROVEMENT')
     expect(
       lockChampion([{ candidateId: 'y', cmp: undefined, s: 0, f: 0, rank: 1 }], 0.5).outcome,
-    ).toBe(
-      'NO_DEVELOPMENT_IMPROVEMENT',
-    )
+    ).toBe('NO_DEVELOPMENT_IMPROVEMENT')
   })
 
   it('never shortlists the evaluated baseline and requires a strict successor improvement', () => {
@@ -117,7 +115,6 @@ describe('shortlist tournament (spec 03 §11)', () => {
       ),
     ).toEqual({ championId: 'strong', outcome: 'DEVELOPMENT_CHAMPION' })
   })
-
 })
 
 describe('split ceremony (spec 04 §3)', () => {
