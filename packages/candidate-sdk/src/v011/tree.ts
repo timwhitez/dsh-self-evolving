@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import ts from 'typescript'
 import { cp, lstat, mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import { buildCanonicalArchive, type CanonicalArchive } from '../identity/canonical-tar.js'
@@ -169,11 +170,31 @@ function changedLineCount(parent: string, child: string): number {
   return additions + removals
 }
 
+const behaviorPrinter = ts.createPrinter({
+  removeComments: true,
+  newLine: ts.NewLineKind.LineFeed,
+})
+
+/**
+ * Build a grammar-aware production projection. TypeScript parses string,
+ * template, regular-expression, and comment boundaries; the printer then
+ * removes only trivia/comments while preserving executable literal values.
+ * Invalid source is returned verbatim so a parse failure can never hide a
+ * real textual change before the trusted build rejects it.
+ */
 function behaviorText(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '')
-    .replace(/\s+/g, '')
+  const sourceFile = ts.createSourceFile(
+    'candidate.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  )
+  const diagnostics = (
+    sourceFile as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }
+  ).parseDiagnostics
+  if (diagnostics !== undefined && diagnostics.length > 0) return source
+  return behaviorPrinter.printFile(sourceFile)
 }
 
 export async function deriveV011Operations(

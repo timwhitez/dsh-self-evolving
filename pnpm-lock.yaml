@@ -84,6 +84,9 @@ importers:
       ajv-formats:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.20.0)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: link:../../deepseek-harness/vendor/cordis
@@ -97,9 +100,6 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
       vitest:
         specifier: ^3.0.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)
