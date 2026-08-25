@@ -1,0 +1,36 @@
+name: format-pr-155
+
+on:
+  push:
+    branches:
+      - fix/issue-58-require-proposal-id
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-58-require-proposal-id
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Format changed files and remove helper
+        run: |
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving-proposer/src/parse.ts \
+            packages/dsh-self-evolving-proposer/tests/parse.test.ts
+          rm .github/workflows/format-pr-155.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'style(proposer): format proposal identity patch'
+          git push origin HEAD:fix/issue-58-require-proposal-id
