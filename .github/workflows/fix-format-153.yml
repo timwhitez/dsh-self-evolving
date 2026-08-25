@@ -1,15 +1,15 @@
 name: fix-format-153
 
 on:
-  push:
-    branches:
-      - fix/issue-44-bind-lock-protocol
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   patch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -25,13 +25,12 @@ jobs:
           source_path = Path('packages/dsh-self-evolving-sealed-service/src/service.ts')
           source = source_path.read_text()
           malformed = """    if (request.identity.protocolHash !== state.protocolHash) {
-            throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')
-          }
-          await prepareDirs(state.privateDir, state.publicDir)
-          if (state.candidateLock !== null) {
+              throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')
+            }
+            await prepareDirs(state.privateDir, state.publicDir)
+            if (state.candidateLock !== null) {
           """
-          # The prior helper lost six leading spaces inside the YAML block.
-          malformed = malformed.replace('      throw', '    throw').replace('    }\n    await', '  }\n  await').replace('    if (state.candidateLock', '  if (state.candidateLock')
+          malformed = malformed.replace('      throw', 'throw').replace('    }', '}').replace('    await', 'await').replace('    if (state.candidateLock', 'if (state.candidateLock')
           fixed = """    if (request.identity.protocolHash !== state.protocolHash) {
               throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')
             }
