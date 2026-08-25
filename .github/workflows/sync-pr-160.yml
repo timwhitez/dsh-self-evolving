@@ -1,0 +1,31 @@
+name: sync-pr-160
+
+on:
+  push:
+    branches:
+      - fix/issue-68-bound-bootstrap-resamples
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-68-bound-bootstrap-resamples
+          fetch-depth: 0
+      - name: Merge current main and remove this helper
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main
+          git merge --no-commit --no-ff origin/main
+          rm .github/workflows/sync-pr-160.yml
+          git add -A
+          git diff --cached --check
+          git commit -m 'merge main into fix/issue-68-bound-bootstrap-resamples'
+          git push origin HEAD:fix/issue-68-bound-bootstrap-resamples
