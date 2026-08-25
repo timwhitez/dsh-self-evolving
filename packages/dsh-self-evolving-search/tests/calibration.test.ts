@@ -74,8 +74,9 @@ describe('calibration splitter (spec 04 §3)', () => {
   it('the split commitment verifies against its assignment', () => {
     const tasks = fakeTasks(89)
     const assignment = deterministicSplit(tasks, 7n)
-    const commitment = commitSplit(assignment, 'sha256:seed', SPLIT_SIZES)
-    expect(verifySplit(commitment, assignment)).toBe(true)
+    const inventory = tasks.map((task) => task.taskId)
+    const commitment = commitSplit(assignment, `sha256:${'0'.repeat(64)}`, inventory, SPLIT_SIZES)
+    expect(verifySplit(commitment, assignment, inventory)).toBe(true)
   })
 
   it('sampleCalibrationStratum respects perStratum + maxTasks', () => {
