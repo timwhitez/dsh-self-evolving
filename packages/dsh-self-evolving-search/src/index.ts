@@ -20,7 +20,7 @@ export {
   type NodeUtility,
   type SearchParams,
 } from './scheduler.js'
-export { buildShortlist, lockChampion, type ShortlistEntry } from './tournament.js'
+export { baselineNodeCmp, buildShortlist, lockChampion, type ShortlistEntry } from './tournament.js'
 export {
   commitSplit,
   verifySplit,

@@ -59,8 +59,13 @@ export interface Gate5AcceptanceVerdict {
   observedBaselineTrials: number
 }
 
+function validAttemptIndex(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
+}
+
 function validTrial(trial: Gate5TrialEvidence): boolean {
   return (
+    validAttemptIndex(trial.attemptIndex) &&
     trial.capabilityMode === 'real' &&
     typeof trial.normalizedRecordHash === 'string' &&
     /^sha256:[0-9a-f]{64}$/.test(trial.normalizedRecordHash) &&
@@ -96,11 +101,17 @@ export function verifyGate5Acceptance(input: Gate5AcceptanceInput): Gate5Accepta
     }
     if (!uniqueTasks.has(trial.taskId))
       reasons.push(`baseline task outside inventory: ${trial.taskId}`)
-    if (trial.attemptIndex < 0 || trial.attemptIndex >= input.requiredAttempts) {
-      reasons.push(`baseline attempt outside preregistered range: ${key}`)
+    if (!validAttemptIndex(trial.attemptIndex) || trial.attemptIndex >= input.requiredAttempts) {
+      reasons.push(`baseline attempt outside preregistered integer range: ${key}`)
     }
     if (!validTrial(trial))
       reasons.push(`baseline trial lacks real/priced/normalized evidence: ${key}`)
+  }
+  for (const taskId of uniqueTasks) {
+    for (let attemptIndex = 0; attemptIndex < input.requiredAttempts; attemptIndex++) {
+      const expectedKey = `${taskId}/${attemptIndex}`
+      if (!baselineKeys.has(expectedKey)) reasons.push(`baseline trial missing: ${expectedKey}`)
+    }
   }
   if (baselineKeys.size !== expectedBaselineTrials) {
     reasons.push(`baseline trial matrix incomplete: ${baselineKeys.size}/${expectedBaselineTrials}`)
@@ -124,6 +135,11 @@ export function verifyGate5Acceptance(input: Gate5AcceptanceInput): Gate5Accepta
   }
   const covered = new Set<string>()
   for (const trial of input.calibrationTrials) {
+    if (!validAttemptIndex(trial.attemptIndex)) {
+      reasons.push(
+        `calibration attempt is not a non-negative safe integer: ${trial.candidateId}/${trial.taskId}/${String(trial.attemptIndex)}`,
+      )
+    }
     if (!validTrial(trial)) {
       reasons.push(
         `calibration trial lacks real/priced/normalized evidence: ${trial.candidateId}/${trial.taskId}/${trial.attemptIndex}`,

@@ -6,12 +6,13 @@
  * candidate-SDK builder to produce real admitted candidate artifacts. Rejected
  * proposals + their reasons are retained as evidence (never silently dropped).
  */
+import { createHash } from 'node:crypto'
+import { buildCanonicalArchive, type DeclaredFile } from '@dsh-self-evolving/candidate-sdk'
 import {
   validateProposalBatch,
   type ProposalChild,
   type ProposalBatch,
 } from '@dsh-self-evolving/core'
-import { buildCanonicalArchive, type DeclaredFile } from '@dsh-self-evolving/candidate-sdk'
 
 export interface ParsedProposal {
   accepted: ProposalChild[]
@@ -27,28 +28,56 @@ export function parseAndValidate(
   parentDigest: string,
   width: number,
 ): ParsedProposal {
-  const children = parseChildren(assistantText)
-  const batch: ProposalBatch = { parentDigest, children }
+  const parsed = parseChildren(assistantText)
+  const batch: ProposalBatch = { parentDigest, children: parsed.children }
   const result = validateProposalBatch(batch, width)
-  return { accepted: result.accepted, rejected: result.rejected }
+  return { accepted: result.accepted, rejected: [...parsed.rejected, ...result.rejected] }
 }
 
-function parseChildren(text: string): ProposalChild[] {
+function parseChildren(text: string): {
+  children: ProposalChild[]
+  rejected: Array<{ proposalId: string; reason: string }>
+} {
   const cleaned = stripFences(text).trim()
   // Try to locate a JSON object or array within the text.
   const jsonText = extractJson(cleaned)
-  if (jsonText === null) return []
+  if (jsonText === null) return { children: [], rejected: [] }
   let parsed: unknown
   try {
     parsed = JSON.parse(jsonText)
   } catch {
-    return []
+    return { children: [], rejected: [] }
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed]
-  return arr
-    .filter((o): o is Record<string, unknown> => o !== null && typeof o === 'object')
-    .map((o) => toProposalChild(o))
-    .filter((c): c is ProposalChild => c !== null)
+  const children: ProposalChild[] = []
+  const rejected: Array<{ proposalId: string; reason: string }> = []
+  for (const value of arr) {
+    if (value === null || typeof value !== 'object') continue
+    const object = value as Record<string, unknown>
+    const proposalId = object['proposalId']
+    if (typeof proposalId !== 'string' || proposalId.trim().length === 0) {
+      rejected.push({
+        proposalId: `invalid_${createHash('sha256').update(canonicalObject(object)).digest('hex')}`,
+        reason: 'proposalId is required and must be a non-empty string',
+      })
+      continue
+    }
+    const child = toProposalChild(object)
+    if (child !== null) children.push(child)
+  }
+  return { children, rejected }
+}
+
+function canonicalObject(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalObject).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalObject(record[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
 }
 
 function stripFences(text: string): string {
@@ -86,9 +115,11 @@ function extractJson(text: string): string | null {
 }
 
 function toProposalChild(o: Record<string, unknown>): ProposalChild | null {
+  const proposalId = o['proposalId']
+  if (typeof proposalId !== 'string' || proposalId.trim().length === 0) return null
   try {
     return {
-      proposalId: String(o['proposalId'] ?? `prop-${Math.random().toString(36).slice(2, 8)}`),
+      proposalId,
       canonicalParentDigest: String(o['canonicalParentDigest'] ?? ''),
       donorCandidates: Array.isArray(o['donorCandidates'])
         ? (o['donorCandidates'] as string[])
