@@ -1,0 +1,42 @@
+name: format-pr-160-final
+
+on:
+  push:
+    branches:
+      - fix/issue-68-bound-bootstrap-resamples
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-68-bound-bootstrap-resamples
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+      - run: pnpm setup:source
+      - name: Format final patch and remove helper
+        run: |
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving-search/src/gate8-acceptance.ts \
+            packages/dsh-self-evolving-search/src/index.ts \
+            packages/dsh-self-evolving-search/src/stats.ts \
+            packages/dsh-self-evolving-search/tests/gate8-acceptance.test.ts \
+            packages/dsh-self-evolving-search/tests/tournament-split-stats.test.ts
+          rm .github/workflows/format-pr-160-final.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'style(search): format bootstrap-bound patch'
+          git push origin HEAD:fix/issue-68-bound-bootstrap-resamples
