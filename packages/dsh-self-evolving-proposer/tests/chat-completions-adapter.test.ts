@@ -141,21 +141,34 @@ describe('trusted compatible Chat Completions proposal adapter', () => {
       model: route.model,
       maxTokens: 100,
       messages: [
-        createUserMessage({ content: [{ type: 'text', text: 'bounded' }], source: { kind: 'user' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: 'bounded' }],
+          source: { kind: 'user' },
+        }),
       ],
     })) {
       // consume
     }
     expect(wireCaps).toEqual([100])
 
-    for (const maxTokens of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, route.maxTokens + 1]) {
+    for (const maxTokens of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      route.maxTokens + 1,
+    ]) {
       const consume = async () => {
         for await (const _chunk of adapter.stream({
           provider: route.provider,
           model: route.model,
           maxTokens,
           messages: [
-            createUserMessage({ content: [{ type: 'text', text: 'invalid' }], source: { kind: 'user' } }),
+            createUserMessage({
+              content: [{ type: 'text', text: 'invalid' }],
+              source: { kind: 'user' },
+            }),
           ],
         })) {
           // consume
