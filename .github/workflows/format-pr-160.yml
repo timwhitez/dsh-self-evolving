@@ -1,15 +1,15 @@
 name: format-pr-160
 
 on:
-  push:
-    branches:
-      - fix/issue-68-bound-bootstrap-resamples
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   format:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
