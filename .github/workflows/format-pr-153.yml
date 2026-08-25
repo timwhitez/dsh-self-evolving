@@ -1,0 +1,36 @@
+name: format-pr-153
+
+on:
+  push:
+    branches:
+      - fix/issue-44-bind-lock-protocol
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-44-bind-lock-protocol
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Format final source and remove helper
+        run: |
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving-sealed-service/src/service.ts \
+            packages/dsh-self-evolving-sealed-service/tests/service.test.ts
+          rm .github/workflows/format-pr-153.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'style(sealed-service): format protocol-lock regression'
+          git push origin HEAD:fix/issue-44-bind-lock-protocol
