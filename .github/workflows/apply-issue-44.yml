@@ -1,0 +1,141 @@
+name: apply-issue-44
+
+on:
+  push:
+    branches:
+      - fix/issue-44-bind-lock-protocol
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-44-bind-lock-protocol
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Apply protocol binding fix and regression
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('packages/dsh-self-evolving-sealed-service/src/service.ts')
+          source = path.read_text()
+          old = """    await prepareDirs(state.privateDir, state.publicDir)\n    if (state.candidateLock !== null) {\n"""
+          new = """    await prepareDirs(state.privateDir, state.publicDir)\n    if (request.identity.protocolHash !== state.protocolHash) {\n      throw new Error('INVALID_LOCK: protocolHash does not match sealed ceremony')\n    }\n    if (state.candidateLock !== null) {\n"""
+          if source.count(old) != 1:
+              raise SystemExit('expected lockCandidate insertion point exactly once')
+          path.write_text(source.replace(old, new))
+          PY
+          cat > packages/dsh-self-evolving-sealed-service/tests/protocol-binding.test.ts <<'EOF'
+          import { createHash } from 'node:crypto'
+          import { chmod, mkdtemp, rm } from 'node:fs/promises'
+          import { tmpdir } from 'node:os'
+          import { join } from 'node:path'
+          import { afterEach, describe, expect, it } from 'vitest'
+          import {
+            handleServiceRequest,
+            type CandidateLockIdentity,
+            type CeremonyTask,
+          } from '../src/service.js'
+
+          const roots: string[] = []
+          const digest = (value: string) =>
+            `sha256:${createHash('sha256').update(value).digest('hex')}`
+
+          function tasks(): CeremonyTask[] {
+            return Array.from({ length: 89 }, (_, index) => ({
+              taskId: `task-${String(index).padStart(3, '0')}`,
+              category: `category-${index % 7}`,
+              difficulty: 'OMITTED',
+              agentTimeoutSec: [900, 1800, 3600][index % 3]!,
+              allowInternet: index % 2 === 0,
+            }))
+          }
+
+          function identity(protocolHash: string): CandidateLockIdentity {
+            return {
+              runId: 'run-protocol-binding',
+              candidateId: digest('candidate'),
+              sourceDigest: digest('source'),
+              capsuleDigest: digest('capsule'),
+              runManifestDigest: digest('manifest'),
+              baselineCandidateId: digest('baseline-candidate'),
+              baselineCapsuleDigest: digest('baseline-capsule'),
+              modelRouteHash: digest('model-route'),
+              protocolHash,
+              sealedPlanHash: digest('sealed-plan'),
+              analysisContainerHash: digest('analysis-container'),
+            }
+          }
+
+          afterEach(async () => {
+            await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+          })
+
+          describe('sealed candidate lock protocol binding', () => {
+            it('rejects a validly shaped identity from a different protocol before publishing state', async () => {
+              const root = await mkdtemp(join(tmpdir(), 'sealed-protocol-binding-'))
+              roots.push(root)
+              await chmod(root, 0o755)
+              const privateDir = join(root, 'private')
+              const publicDir = join(root, 'public')
+              const ceremonyProtocol = digest('ceremony-protocol')
+
+              await handleServiceRequest({
+                operation: 'ceremony',
+                ceremonyId: 'protocol-binding-ceremony',
+                privateDir,
+                publicDir,
+                tasks: tasks(),
+                datasetDigest: digest('dataset'),
+                protocolHash: ceremonyProtocol,
+                splitterCodeHash: digest('splitter'),
+              })
+
+              await expect(
+                handleServiceRequest({
+                  operation: 'lock',
+                  privateDir,
+                  publicDir,
+                  identity: identity(digest('different-protocol')),
+                }),
+              ).rejects.toThrow(/protocolHash does not match sealed ceremony/)
+
+              await expect(
+                handleServiceRequest({
+                  operation: 'lock',
+                  privateDir,
+                  publicDir,
+                  identity: identity(ceremonyProtocol),
+                }),
+              ).resolves.toMatchObject({ operation: 'lock', idempotent: false })
+            })
+          })
+          EOF
+          pnpm exec prettier --write \
+            packages/dsh-self-evolving-sealed-service/src/service.ts \
+            packages/dsh-self-evolving-sealed-service/tests/protocol-binding.test.ts
+      - name: Verify focused regression
+        run: |
+          pnpm setup:source
+          pnpm exec vitest run packages/dsh-self-evolving-sealed-service/tests/protocol-binding.test.ts
+      - name: Publish branch changes
+        run: |
+          rm .github/workflows/apply-issue-44.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/dsh-self-evolving-sealed-service/src/service.ts \
+            packages/dsh-self-evolving-sealed-service/tests/protocol-binding.test.ts \
+            .github/workflows/apply-issue-44.yml
+          git commit -m 'fix(sealed-service): bind candidate lock to ceremony protocol'
+          git push origin HEAD:fix/issue-44-bind-lock-protocol
