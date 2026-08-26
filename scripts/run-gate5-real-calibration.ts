@@ -434,7 +434,18 @@ async function collectRun(input: {
   }
   const normalized = []
   const attemptsByTask = new Map<string, number>()
+  // One (task, attempt) pair exactly once: a duplicate means the trial matrix
+  // was reordered, duplicated or partially rebuilt (issue #107).
+  const seenTrialKeys = new Set<string>()
   for (const trialDir of trialDirs) {
+    // Harbor names each trial directory `<task>__<id>`; a fully numeric
+    // suffix IS the planned attempt index, which additionally binds the
+    // directory itself to its configured task instead of trusting lexical
+    // order alone.
+    const directoryName = trialDir.split('/').pop()!
+    const nameSeparator = directoryName.lastIndexOf('__')
+    const directoryTask = directoryName.slice(0, nameSeparator)
+    const directorySuffix = directoryName.slice(nameSeparator + 2)
     const result = await stat(join(trialDir, 'result.json')).catch(() => null)
     if (result?.isFile() !== true)
       throw new Error(`reconcile: terminal result missing: ${trialDir}`)
@@ -442,7 +453,19 @@ async function collectRun(input: {
       task: { path: string }
     }
     const taskId = configRaw.task.path.split('/').at(-1) ?? configRaw.task.path
-    const attemptIndex = attemptsByTask.get(taskId) ?? 0
+    if (/^[0-9]+$/.test(directorySuffix) && directoryTask !== taskId) {
+      throw new Error(
+        `reconcile: trial directory task ${directoryTask} does not match its config ${taskId}`,
+      )
+    }
+    const attemptIndex = /^[0-9]+$/.test(directorySuffix)
+      ? Number(directorySuffix)
+      : (attemptsByTask.get(taskId) ?? 0)
+    const trialKey = `${taskId}/${attemptIndex}`
+    if (seenTrialKeys.has(trialKey)) {
+      throw new Error(`reconcile: duplicate attempt identity ${trialKey}`)
+    }
+    seenTrialKeys.add(trialKey)
     attemptsByTask.set(taskId, attemptIndex + 1)
     const attributionPath = join(trialDir, 'attribution.json')
     let attribution = await readFile(attributionPath, 'utf8').catch(() => null)
@@ -454,6 +477,20 @@ async function collectRun(input: {
           attempt_index: attemptIndex,
         }) + '\n'
       await writeFile(attributionPath, attribution, { flag: 'wx' })
+    } else {
+      // An existing sidecar is evidence of a prior collection pass: its
+      // claim must already agree with this run's planned identity, never
+      // define it (issue #107).
+      const recorded = JSON.parse(attribution) as Record<string, unknown>
+      if (
+        recorded['candidate_id'] !== input.candidateIdHint ||
+        recorded['task_id'] !== taskId ||
+        recorded['attempt_index'] !== attemptIndex
+      ) {
+        throw new Error(
+          `reconcile: pre-existing attribution conflicts with the planned trial identity: ${trialDir}`,
+        )
+      }
     }
     const record = await normalizeTrial({
       trialDir,
@@ -559,6 +596,40 @@ async function main(): Promise<void> {
     const summaryPath = join(runDir, 'summary.json')
     const existing = await readFile(summaryPath, 'utf8').catch(() => null)
     if (existing !== null) {
+      // An idempotent replay may reuse the existing summary ONLY after
+      // verifying it was produced from this exact planned request: the
+      // durable run-intent manifest binds runId/candidate/capsule/trial count,
+      // and the summary's own trial matrix must equal the requested task set
+      // (issue #105).
+      const plannedTrials = taskIds.length * attempts
+      const intent = await readRunIntent(runDir, runId, plannedTrials)
+      const replayed = JSON.parse(existing) as {
+        schemaVersion?: unknown
+        runId?: unknown
+        candidateId?: unknown
+        capsuleSha256?: unknown
+        collectedTrials?: unknown
+        normalized?: Array<{ taskId?: unknown }>
+      }
+      if (
+        replayed.schemaVersion !== 1 ||
+        replayed.runId !== runId ||
+        replayed.candidateId !== intent.candidateId ||
+        replayed.capsuleSha256 !== intent.capsuleSha256 ||
+        replayed.collectedTrials !== intent.plannedTrials ||
+        !Array.isArray(replayed.normalized)
+      ) {
+        throw new Error('gate5 runner: existing summary does not bind the trusted run intent')
+      }
+      const summaryTasks = [...new Set(replayed.normalized.map((row) => String(row.taskId)))].sort()
+      if (
+        summaryTasks.length !== taskIds.length ||
+        JSON.stringify(summaryTasks) !== JSON.stringify([...taskIds].sort())
+      ) {
+        throw new Error(
+          'gate5 runner: existing summary trial matrix does not match the requested task set',
+        )
+      }
       process.stdout.write(existing)
       return
     }

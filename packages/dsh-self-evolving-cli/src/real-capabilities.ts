@@ -500,7 +500,10 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
       }
       const bytes = await readFile(summaryPath(config, runId), 'utf8')
       const summary = JSON.parse(bytes) as {
+        candidateId?: unknown
         normalized: Array<{
+          candidateId?: unknown
+          taskId?: unknown
           status: 'pass' | 'fail' | 'invalid'
           reward: number | null
           costUsd: number
@@ -509,6 +512,19 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
       const row = summary.normalized[0]
       if (row === undefined || summary.normalized.length !== 1) {
         throw new Error('real evaluator: expected one normalized trial')
+      }
+      // A reused summary may only answer THIS exact evaluation request: its
+      // recorded candidate/task identities must equal the current spec.
+      // Stamping caller-supplied identity onto unverified evidence would let
+      // one candidate inherit another's result (issue #105).
+      if (
+        summary.candidateId !== spec.candidate.candidateId ||
+        row.candidateId !== spec.candidate.candidateId ||
+        row.taskId !== spec.taskId
+      ) {
+        throw new Error(
+          'real evaluator: existing evaluator summary does not bind this candidate/task request',
+        )
       }
       return {
         candidateId: spec.candidate.candidateId,
