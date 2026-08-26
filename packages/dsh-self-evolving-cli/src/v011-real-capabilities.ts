@@ -330,7 +330,7 @@ function solverOverlay(config: V011DemoConfig): string {
     '- id: self-evolving-candidate',
     "  name: '__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__'",
     '  config:',
-    '    candidateId: v011-runtime-candidate',
+    '    candidateId: __DSH_SELF_EVOLVING_CANDIDATE_ID__',
     '    mode: solve',
     '',
   ].join('\n')

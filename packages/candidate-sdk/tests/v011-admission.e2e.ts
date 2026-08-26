@@ -112,12 +112,34 @@ describe('v0.1.1 generated-plugin admission', () => {
           entryPackage: '@dsh-self-evolving/candidate-sdk',
           entryBin: 'lib/v011/loader-probe-worker.js',
         },
-        runnerOverlay: '\n',
+        runnerOverlay: [
+          '- id: self-evolving-candidate',
+          "  name: '__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__'",
+          '  config:',
+          '    candidateId: __DSH_SELF_EVOLVING_CANDIDATE_ID__',
+          '    mode: solve',
+          '',
+        ].join('\n'),
         provenanceJson: '{"protocol":"dsh-self-evolving-candidate-tree-v2"}',
         sbomJson: '{"spdxVersion":"SPDX-2.3"}',
       })
       expect(result.receipt.admitted).toBe(true)
       expect(result.buildReceipt.doubleBuildIdentical).toBe(true)
+      // The packed runtime must receive the EXACT admitted identity, never a
+      // placeholder (issue #114): the overlay is rewritten with the digest
+      // before it lands in the capsule.
+      const packedOverlay = await readFile(join(outputRoot, 'runner', 'cordis.patch.yml'), 'utf8')
+      // The launcher boots runtime/cordis.yml; pin BOTH copies to the
+      // admitted identity.
+      const bootedOverlay = await readFile(join(outputRoot, 'runtime', 'cordis.yml'), 'utf8')
+      expect(packedOverlay).not.toContain('__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__')
+      expect(packedOverlay).not.toContain('__DSH_SELF_EVOLVING_CANDIDATE_ID__')
+      expect(packedOverlay).not.toContain('v011-runtime-candidate')
+      expect(packedOverlay).toContain(`candidateId: sha256:${result.buildReceipt.sourceHash}`)
+      expect(bootedOverlay).toContain(`candidateId: sha256:${result.buildReceipt.sourceHash}`)
+      expect(bootedOverlay).not.toContain('__DSH_SELF_EVOLVING_')
+      expect(result.loader.solve.candidateId).toBe(`sha256:${result.buildReceipt.sourceHash}`)
+      expect(result.loader.propose.candidateId).toBe(`sha256:${result.buildReceipt.sourceHash}`)
       expect(result.buildReceipt.runtimePackageName).toMatch(/^@dsh-self-evolving\/candidate-/)
       expect(result.loader.solve.promptSections).toContain('candidate:bounded-retry')
       expect(result.loader.propose.promptSections).toContain('candidate:bounded-retry')
