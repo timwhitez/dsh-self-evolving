@@ -7,6 +7,13 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import {
+  classifyStatus,
+  type AdapterDiscardedUsage,
+  type AdapterFetchAttempt,
+} from './fetch-attempts.js'
+
+type AdapterDiscardedUsageTotal = AdapterDiscardedUsage
 import type { ProposalGatewayRoute } from './gateway.js'
 
 export interface TrustedChatCompletionsAdapterConfig {
@@ -173,6 +180,13 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
   private readonly fetchImpl: typeof fetch
   private readonly reasoningByCallId = new Map<string, string>()
 
+  private fetchAttempts: AdapterFetchAttempt[] = []
+
+  /** Attempts recorded by the most recent stream() call (issue #123). */
+  get lastFetchAttempts(): readonly AdapterFetchAttempt[] {
+    return this.fetchAttempts
+  }
+
   constructor(private readonly config: TrustedChatCompletionsAdapterConfig) {
     super()
     if (!Number.isSafeInteger(config.contextWindow) || config.contextWindow <= 0) {
@@ -213,6 +227,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.fetchAttempts = []
     const route = this.config.route
     const effectiveMaxTokens = options.maxTokens ?? route.maxTokens
     if (
@@ -240,7 +255,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
     const maxTurns = this.config.reasoningContinuationMaxTurns ?? 0
 
     for (let turn = 0; turn <= maxTurns; turn++) {
-      body = await this.fetchBody(
+      const fetched = await this.fetchBody(
         {
           model: route.model,
           messages,
@@ -262,6 +277,16 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
         },
         options.signal,
       )
+      body = fetched.body
+      // Count any usage salvaged from discarded transport retries into the
+      // same totals as the surviving response (issue #123).
+      usage.inputTokens += fetched.discardedUsage.inputTokens
+      usage.outputTokens += fetched.discardedUsage.outputTokens
+      usage.cacheReadTokens += fetched.discardedUsage.cacheReadTokens
+      if (fetched.discardedUsage.reasoningTokens > 0) {
+        usage.reasoningTokens += fetched.discardedUsage.reasoningTokens
+        sawReasoningUsage = true
+      }
       if (body.model !== this.expectedResponseModel) {
         throw new Error('chat adapter: provider model mismatch')
       }
@@ -380,7 +405,10 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
     }
   }
 
-  private async fetchBody(body: unknown, signal?: AbortSignal): Promise<ChatCompletionsBody> {
+  private async fetchBody(
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ body: ChatCompletionsBody; discardedUsage: AdapterDiscardedUsageTotal }> {
     const route = this.config.route
     const request: RequestInit = {
       method: 'POST',
@@ -394,18 +422,66 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
     }
     const maxRetries = this.config.requestMaxRetries ?? 0
     let response: Response | undefined
+    const discarded: AdapterDiscardedUsageTotal = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+    }
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       response = await this.fetchImpl(
         `${route.endpoint.replace(/\/$/, '')}/chat/completions`,
         request,
       )
-      const retryable = response.status === 408 || response.status === 429 || response.status >= 500
-      if (response.ok || !retryable || attempt === maxRetries) break
-      await response.body?.cancel()
+      const { retryable, ambiguous } = classifyStatus(response.status)
+      if (response.ok || !retryable || attempt === maxRetries) {
+        this.fetchAttempts.push({
+          attemptIndex: attempt,
+          status: response.status,
+          retryable,
+          ambiguous,
+          discardedUsage: null,
+          responseId: null,
+        })
+        break
+      }
+      // A discarded 408/5xx may already have been billed; salvage any usage
+      // visible on its body into the accounting (issue #123).
+      let discardedUsage: AdapterFetchAttempt['discardedUsage'] = null
+      let responseId: string | null = null
+      try {
+        const raw = await response.text()
+        const parsed = JSON.parse(raw) as ChatCompletionsBody
+        if (typeof parsed.id === 'string') responseId = parsed.id
+        const inputTotal = finiteCount(parsed.usage?.prompt_tokens) ?? 0
+        const cacheRead = finiteCount(parsed.usage?.prompt_tokens_details?.cached_tokens) ?? 0
+        const reasoning =
+          finiteCount(parsed.usage?.completion_tokens_details?.reasoning_tokens) ?? 0
+        discardedUsage = {
+          inputTokens: inputTotal,
+          outputTokens: finiteCount(parsed.usage?.completion_tokens) ?? 0,
+          cacheReadTokens: cacheRead,
+          reasoningTokens: reasoning,
+        }
+        discarded.inputTokens += inputTotal
+        discarded.outputTokens += discardedUsage.outputTokens
+        discarded.cacheReadTokens += cacheRead
+        discarded.reasoningTokens += reasoning
+      } catch {
+        // Non-JSON error body: still recorded as an ambiguous attempt.
+      }
+      this.fetchAttempts.push({
+        attemptIndex: attempt,
+        status: response.status,
+        retryable,
+        ambiguous,
+        discardedUsage,
+        responseId,
+      })
       await waitForRetry(retryDelayMs(response, attempt), signal)
     }
     if (!response) throw new Error('chat adapter: provider response missing')
     if (!response.ok) throw new Error(`chat adapter: provider returned HTTP ${response.status}`)
-    return (await response.json()) as ChatCompletionsBody
+    return { body: (await response.json()) as ChatCompletionsBody, discardedUsage: discarded }
   }
 }

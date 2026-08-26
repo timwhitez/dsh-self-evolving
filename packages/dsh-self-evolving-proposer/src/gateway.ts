@@ -34,6 +34,20 @@ export interface ProposalGatewayReceipt {
   requestHash: string
   responseHash: string
   routeHash: string
+  /** Transport-retry attempt log for the trusted provider fetch (issue #123). */
+  attempts?: Array<{
+    attemptIndex: number
+    status: number | null
+    retryable: boolean
+    ambiguous: boolean
+    discardedUsage: {
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      reasoningTokens: number
+    } | null
+    responseId: string | null
+  }>
 }
 
 export interface ProposalGatewayHandleContext {
@@ -148,11 +162,18 @@ export async function startProposalGateway(
       responseHash,
     }
     completed.set(requestId, { requestHash, response })
+    const attempts =
+      result !== null &&
+      typeof result === 'object' &&
+      Array.isArray((result as { attempts?: unknown }).attempts)
+        ? ((result as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ?? undefined)
+        : undefined
     receiptLog.push({
       requestId,
       requestHash,
       responseHash,
       routeHash: sha256(stableJson(options.route)),
+      ...(attempts === undefined ? {} : { attempts }),
     })
     return response
   }

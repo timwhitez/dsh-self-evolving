@@ -8,6 +8,13 @@ import {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import type { ProposalGatewayRoute } from './gateway.js'
+import {
+  classifyStatus,
+  type AdapterDiscardedUsage,
+  type AdapterFetchAttempt,
+} from './fetch-attempts.js'
+
+type AdapterDiscardedUsageTotal = AdapterDiscardedUsage
 
 export interface TrustedResponsesAdapterConfig {
   route: ProposalGatewayRoute
@@ -208,6 +215,13 @@ export class TrustedResponsesAdapter extends LlmAdapter {
   private readonly fetchImpl: typeof fetch
   private readonly priorItemsByCallId = new Map<string, ResponsesOutputItem[]>()
 
+  private fetchAttempts: AdapterFetchAttempt[] = []
+
+  /** Attempts recorded by the most recent stream() call (issue #123). */
+  get lastFetchAttempts(): readonly AdapterFetchAttempt[] {
+    return this.fetchAttempts
+  }
+
   constructor(private readonly config: TrustedResponsesAdapterConfig) {
     super()
     if (!Number.isSafeInteger(config.contextWindow) || config.contextWindow <= 0) {
@@ -275,6 +289,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       throw new Error('responses adapter: request has no model input')
     }
 
+    this.fetchAttempts = []
     const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0 }
     let sawReasoningUsage = false
     const responseIds: string[] = []
@@ -284,7 +299,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
     const maxTurns = this.config.reasoningContinuationMaxTurns ?? 1
 
     for (let turn = 0; turn <= maxTurns; turn++) {
-      body = await this.fetchBody(
+      const fetched = await this.fetchBody(
         {
           model: route.model,
           input,
@@ -307,6 +322,16 @@ export class TrustedResponsesAdapter extends LlmAdapter {
         },
         options.signal,
       )
+      body = fetched.body
+      // Discarded transport retries may already have been billed: count their
+      // usage into the same totals as the surviving response (issue #123).
+      usage.inputTokens += fetched.discardedUsage.inputTokens
+      usage.outputTokens += fetched.discardedUsage.outputTokens
+      usage.cacheReadTokens += fetched.discardedUsage.cacheReadTokens
+      if (fetched.discardedUsage.reasoningTokens > 0) {
+        sawReasoningUsage = true
+        usage.reasoningTokens += fetched.discardedUsage.reasoningTokens
+      }
       if (body.model !== this.expectedResponseModel) {
         throw new Error('responses adapter: provider model mismatch')
       }
@@ -460,7 +485,10 @@ export class TrustedResponsesAdapter extends LlmAdapter {
     }
   }
 
-  private async fetchBody(body: unknown, signal?: AbortSignal): Promise<ResponsesBody> {
+  private async fetchBody(
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ body: ResponsesBody; discardedUsage: AdapterDiscardedUsageTotal }> {
     const route = this.config.route
     const request: RequestInit = {
       method: 'POST',
@@ -474,17 +502,65 @@ export class TrustedResponsesAdapter extends LlmAdapter {
     }
     const maxRetries = this.config.requestMaxRetries ?? 0
     let response: Response | undefined
+    const discarded: AdapterDiscardedUsageTotal = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+    }
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
-      const retryable = response.status === 408 || response.status === 429 || response.status >= 500
-      if (response.ok || !retryable || attempt === maxRetries) break
-      await response.body?.cancel()
+      const { retryable, ambiguous } = classifyStatus(response.status)
+      if (response.ok || !retryable || attempt === maxRetries) {
+        this.fetchAttempts.push({
+          attemptIndex: attempt,
+          status: response.status,
+          retryable,
+          ambiguous,
+          discardedUsage: null,
+          responseId: null,
+        })
+        break
+      }
+      // The discarded response may still carry billable usage; parse what is
+      // parseable and accumulate it so the final usage chunk reflects every
+      // possibly-billed attempt (issue #123).
+      let discardedUsage: AdapterFetchAttempt['discardedUsage'] = null
+      let responseId: string | null = null
+      try {
+        const raw = await response.text()
+        const parsed = JSON.parse(raw) as ResponsesBody
+        if (typeof parsed.id === 'string') responseId = parsed.id
+        const inputTotal = finiteCount(parsed.usage?.input_tokens) ?? 0
+        const cacheRead = finiteCount(parsed.usage?.input_tokens_details?.cached_tokens) ?? 0
+        const reasoning = finiteCount(parsed.usage?.output_tokens_details?.reasoning_tokens) ?? 0
+        discardedUsage = {
+          inputTokens: inputTotal,
+          outputTokens: finiteCount(parsed.usage?.output_tokens) ?? 0,
+          cacheReadTokens: cacheRead,
+          reasoningTokens: reasoning,
+        }
+        discarded.inputTokens += inputTotal
+        discarded.outputTokens += discardedUsage.outputTokens
+        discarded.cacheReadTokens += cacheRead
+        discarded.reasoningTokens += reasoning
+      } catch {
+        // Non-JSON error body: the attempt is still recorded as ambiguous.
+      }
+      this.fetchAttempts.push({
+        attemptIndex: attempt,
+        status: response.status,
+        retryable,
+        ambiguous,
+        discardedUsage,
+        responseId,
+      })
       await waitForRetry(retryDelayMs(response, attempt), signal)
     }
     if (response === undefined) throw new Error('responses adapter: provider response missing')
     if (!response.ok) {
       throw new Error(`responses adapter: provider returned HTTP ${response.status}`)
     }
-    return (await response.json()) as ResponsesBody
+    return { body: (await response.json()) as ResponsesBody, discardedUsage: discarded }
   }
 }
