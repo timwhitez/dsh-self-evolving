@@ -58,23 +58,38 @@ export async function readSourceArchiveIdentity(
 export interface SourceIdentityVerification {
   valid: boolean
   /**
+   * INVALID: verification failed.
    * SELF_CONSISTENT: the extracted tree matches the embedded manifest —
-   * nothing more. AUTHENTICATED: additionally bound to a caller-supplied
-   * commit obtained through an independently trusted channel (e.g. an
-   * operator-verified archive SHA256SUMS). Rewriting the archive and its
-   * embedded manifest stays detectable only in the AUTHENTICATED case.
+   * nothing more; an attacker rewriting the archive rewrites the manifest.
+   * COMMIT_ANCHORED: additionally, the manifest's commit equals a
+   * caller-supplied commit from an independently trusted channel. This
+   * catches whole-release substitution ONLY: an in-archive rewrite that
+   * recomputes manifest digests while keeping the commit still passes and is
+   * NOT authentication.
+   * AUTHENTICATED: the archive's own BYTES hash to a caller-supplied trusted
+   * digest (e.g. an operator-verified SHA256SUMS entry). The extracted tree
+   * is bound to those bytes under the assumption that trusted tooling
+   * performed the extraction; byte-level authentication of the archive is
+   * what issue #72 requires for any authenticity claim.
    */
-  status: 'SELF_CONSISTENT' | 'AUTHENTICATED'
+  status: 'INVALID' | 'SELF_CONSISTENT' | 'COMMIT_ANCHORED' | 'AUTHENTICATED'
   detail: string
 }
 
 export interface SourceIdentityVerifyOptions {
   /**
-   * Commit identity obtained OUTSIDE this tree (verified release channel).
-   * When provided, the manifest's commit must equal it for any authenticity
-   * claim; a mismatch is a hard failure, not a downgrade.
+   * Commit identity obtained OUTSIDE this tree. Catches whole-release
+   * substitution only; never sufficient for AUTHENTICATED.
    */
   trustedCommit?: string
+  /**
+   * Independently trusted sha256 of the release archive, together with the
+   * archive's path. When both are provided the archive bytes are hashed and
+   * must match; success upgrades the verdict to AUTHENTICATED. A digest
+   * mismatch is a hard failure, never a downgrade.
+   */
+  trustedArchiveDigest?: string
+  archivePath?: string
 }
 
 export async function verifySourceArchiveIdentity(
@@ -84,9 +99,11 @@ export async function verifySourceArchiveIdentity(
 ): Promise<SourceIdentityVerification> {
   const invalid = (detail: string): SourceIdentityVerification => ({
     valid: false,
-    status: 'SELF_CONSISTENT',
+    status: 'INVALID',
     detail,
   })
+  const anchoredToCommit =
+    options.trustedCommit !== undefined && identity.commit === options.trustedCommit
   if (options.trustedCommit !== undefined) {
     if (!/^[0-9a-f]{40}$/.test(options.trustedCommit)) {
       throw new Error('source identity: trusted commit anchor is not a sha1 commit')
@@ -94,6 +111,20 @@ export async function verifySourceArchiveIdentity(
     if (identity.commit !== options.trustedCommit) {
       return invalid(`source identity commit ${identity.commit} does not match the trusted anchor`)
     }
+  }
+  let archiveAuthenticated = false
+  if (options.trustedArchiveDigest !== undefined || options.archivePath !== undefined) {
+    if (options.trustedArchiveDigest === undefined || options.archivePath === undefined) {
+      throw new Error('source identity: archive anchoring requires both digest and path')
+    }
+    if (!/^sha256:[0-9a-f]{64}$/.test(options.trustedArchiveDigest)) {
+      throw new Error('source identity: trusted archive digest is not a sha256 value')
+    }
+    const bytes = await readFile(options.archivePath).catch(() => null)
+    if (bytes === null || sha256(bytes) !== options.trustedArchiveDigest) {
+      return invalid('archive bytes do not match the trusted archive digest')
+    }
+    archiveAuthenticated = true
   }
   const expected = Object.entries(identity.files).sort(([left], [right]) =>
     left.localeCompare(right),
@@ -123,27 +154,45 @@ export async function verifySourceArchiveIdentity(
   if (JSON.stringify(actual) !== JSON.stringify(expectedCode)) {
     return invalid('source file inventory differs from release manifest')
   }
-  // The complete release inventory must be present: entries outside the
-  // hashed code paths (docs, lockfiles, manifests) previously escaped every
-  // check because releaseFiles was never consulted (issue #72).
+  // The release inventory must be EXACT: every releaseFiles entry present
+  // AND no extra file anywhere in the tree beyond the inventory plus the
+  // embedded manifest itself. Entries outside the hashed code paths (docs,
+  // lockfiles) have no digests in the manifest schema, so their CONTENT
+  // tampering remains undetectable — but additions and deletions anywhere
+  // are not (issue #72).
   if (identity.releaseFiles !== undefined) {
     for (const entry of identity.releaseFiles) {
-      const stat = await readFile(join(repoRoot, entry)).then(
+      const exists = await readFile(join(repoRoot, entry)).then(
         () => true,
         () => false,
       )
-      if (!stat) return invalid(`release file is missing from the tree: ${entry}`)
+      if (!exists) return invalid(`release file is missing from the tree: ${entry}`)
+    }
+    const treeFiles = (await codeFiles(repoRoot, repoRoot)).sort()
+    const declared = [
+      ...new Set([...identity.releaseFiles, '.dsh-self-evolving-source-identity.json']),
+    ].sort()
+    if (JSON.stringify(treeFiles) !== JSON.stringify(declared)) {
+      return invalid('extracted tree contains files outside the declared release inventory')
     }
   }
-  return options.trustedCommit === undefined
-    ? {
-        valid: true,
-        status: 'SELF_CONSISTENT',
-        detail: `self-consistent source archive (no external trust anchor provided); embedded commit ${identity.commit}`,
-      }
-    : {
-        valid: true,
-        status: 'AUTHENTICATED',
-        detail: `authenticated source archive commit ${identity.commit} (matches trusted anchor)`,
-      }
+  if (archiveAuthenticated) {
+    return {
+      valid: true,
+      status: 'AUTHENTICATED',
+      detail: `authenticated source archive (bytes match the trusted digest); embedded commit ${identity.commit}`,
+    }
+  }
+  if (anchoredToCommit) {
+    return {
+      valid: true,
+      status: 'COMMIT_ANCHORED',
+      detail: `commit-anchored source archive ${identity.commit} (whole-release substitution only; not byte-authenticated)`,
+    }
+  }
+  return {
+    valid: true,
+    status: 'SELF_CONSISTENT',
+    detail: `self-consistent source archive (no external trust anchor provided); embedded commit ${identity.commit}`,
+  }
 }

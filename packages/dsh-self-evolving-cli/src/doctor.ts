@@ -189,7 +189,9 @@ export async function runDoctor(config: ProjectConfig): Promise<DoctorReport> {
     check(
       'code-identity',
       currentCommit === config.codeCommit,
-      `source commit ${config.codeCommit}`,
+      gitCommit === null
+        ? `configured commit ${config.codeCommit}; archive-identity status: ${archiveVerification?.status ?? 'MISSING'} (doctor has no external trust anchor — verify the release SHA256SUMS out-of-band for authentication)`
+        : `source commit ${config.codeCommit}`,
     ),
     check('code-worktree', codeClean, codeDetail),
   ]
