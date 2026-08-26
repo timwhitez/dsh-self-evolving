@@ -511,3 +511,37 @@ main 且带回归测试的修复（各 PR 见对应 squash commit）；未列出
   需要 ADR（含容器/cgroup 拓扑与 DBUS/systemd-run 依赖决策）后方可实施；在 ADR 冻结前不动手。
 
 以上未完成项的存在意味着当前仍不能声明这些攻击面已关闭；现有 v0.2 验收口径不变。
+
+## 2026-08-27 第二批 issue 修复（本地门 + 独立 review + 合并）
+
+GitHub Actions 新运行故障（startup_failure，无法重跑），本批全部改为**本地全量门**（build、单测、E2E、lint、typecheck）
+
+- **独立 subagent review**（对每个 PR 出具 APPROVE/REQUEST_CHANGES，blocker 修复后复审）后合并。所有评审发现的新问题均已立 issue。
+
+### 已修复并合并（均带回归测试）
+
+- **#61（PR #182）**：Responses 工具续传保留完整会话（user/assistant 文本 → message item，cached items 就位交错）；system-role fail-closed。
+- **#53/#45（PR #188）**：proposal/build 走 `recoverExternalAction` 持久 saga（PLANNED→RESERVED durable intent →效果→ LAUNCHED→COMMITTED，
+  崩溃窗口按语义完成记录 reconcile-before-retry；状态门控写入；audit 接受终态 FAILED）；realProposal 绑定 idempotency key 进证据束。
+- **#57（PR #189）**：gateway 传输贯通取消（envelope deadlineMs、client abort、socket close→host AbortController→provider fetch）。
+- **#123（PR #192）**：LLM 传输重试逐 attempt 记账（408/5xx ambiguous 分类、丢弃响应 usage 回收并入总额、receipt 携带 attempt 日志；
+  review blocker——cache 双计——已修）。
+- **#72（PR #194）**：source identity 状态分级 SELF_CONSISTENT / COMMIT_ANCHORED / AUTHENTICATED（仅 archive 字节锚定可称认证），
+  releaseFiles 精确清点，doctor 明示无外部锚。
+- **#114（PR #196）**：V011 求解器 overlay 注入经 admission 验证的 candidate digest（双 token 替换 + probe receipt 身份校验 + fail-closed）。
+- **#125（PR #199）**：finish_proposal 终端化并绑定验证字节 digest（mutating 工具拒绝、worker 出口复核、trusted 物化侧强制比对）。
+- **#110（PR #201，部分）**：Gate8 sealed/full 矩阵与 revealed/inventory 列表精确集合相等（按 review 建议保留 open：Merkle/清单认证属 #111 域）。
+- **#113（PR #202）**：invalid-replacement fixture 改为真实可复现负向动作（真实校验器拒绝 + digest 绑定 + audit 重放交叉验证）。
+
+### 评审期间新立 issue（未解决，不宣称闭合）
+
+issue #186（空白/不可序列化消息静默丢弃）、#187（Responses 续传无真实端点 E2E）、#190（生产未接线 deadline/signal；半关死客户端仅窗口兜底）、
+issue #191（budget-stale-lock flaky）、#193（gateway 失败路径丢 attempt 日志）、#195（pruned 目录名清点盲区）、#197（probe 应加载真实打包 overlay）、
+issue #198（V011 capsule c_id 与 controller digest 身份域在 collect 不相交）、#200（slot 元数据绑定 + worker 出口门负测试）、
+issue #203（fixture 记录跨绑定 + schema 身份钉扎）。
+
+### 仍开放（原有）
+
+issue #37、#51、#65、#116（架构级，需 ADR）；issue #56、#78、#79、#82、#83、#85、#87、#108、#111、#121（审计/验证器证据字节化族）。
+
+验收口径不变：以上合并项均为工程加固，不构成任何 benchmark 提升或 sealed 结果声明。
