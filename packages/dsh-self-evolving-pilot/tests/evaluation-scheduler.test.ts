@@ -251,11 +251,14 @@ describe('pilot evaluation scheduling', () => {
     const resumedState = createState()
     const resumed = [...(await run(resumedState, 2)), ...(await run(resumedState, 2))]
 
+    // Golden trace of the exact Beta sampler (issue #76). The load-bearing
+    // properties are below: the interrupted resume reproduces the same trace
+    // and no candidate/task pair is evaluated twice.
     expect(uninterrupted).toEqual([
       'child:task-a',
-      'child:task-b',
       'baseline:task-a',
-      'child:task-c',
+      'baseline:task-b',
+      'baseline:task-c',
     ])
     expect(resumed).toEqual(uninterrupted)
     expect(new Set(uninterrupted)).toHaveLength(uninterrupted.length)
