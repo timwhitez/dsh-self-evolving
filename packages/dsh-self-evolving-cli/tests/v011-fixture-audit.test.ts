@@ -70,13 +70,13 @@ async function realFixture(action: string, runId: string): Promise<void> {
       null,
       2,
     ) + '\n'
-  let reason: string
+  let reason: string | null = null
   try {
     await assertV011('analysis', JSON.parse(analysisBytes))
-    throw new Error('fixture unexpectedly validated')
   } catch (error) {
     reason = error instanceof Error ? error.message : 'unknown'
   }
+  if (reason === null) throw new Error('fixture unexpectedly validated')
   await writeFile(join(action, 'invalid-fixture-proposal.json'), proposalBytes)
   await writeFile(join(action, 'invalid-fixture-analysis.json'), analysisBytes)
   await writeFile(
@@ -135,6 +135,59 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     await writeFile(path, JSON.stringify(record, null, 2) + '\n')
     const reasons = await verifyInvalidReplacementFixture(config())
     expect(reasons.join('\n')).toMatch(/reason is not reproducible/)
+  })
+
+  it('rejects a fixture whose analysis unexpectedly validates', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    // Overwrite the retained analysis with a VALID one, keeping all digests
+    // self-consistent: the replay must catch the semantic impossibility.
+    const citation = {
+      objectDigest: 'sha256:' + 'c'.repeat(64),
+      mediaType: 'application/json',
+      locator: { kind: 'json-pointer', value: '/' },
+      observation: 'fixture observation',
+    }
+    const validAnalysis =
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          failureClusters: [
+            {
+              slug: 'fixture-invalid-cluster',
+              mechanism: 'A mechanism description of sufficient length.',
+              citations: [citation, { ...citation, objectDigest: 'sha256:' + 'd'.repeat(64) }],
+            },
+          ],
+          ancestorReconciliations: [],
+          selectedCluster: 'fixture-invalid-cluster',
+          falsifiableHypothesis: 'fixture hypothesis of sufficient length',
+          expectedBehaviorChange: 'none',
+          preservationRequirements: ['nothing to preserve'],
+          regressionRisks: ['no risks'],
+        },
+        null,
+        2,
+      ) + '\n'
+    await writeFile(join(action, 'invalid-fixture-analysis.json'), validAnalysis)
+    const path = join(action, 'rejection.json')
+    const record = JSON.parse(await readFileText(path)) as Record<string, unknown>
+    record['fixtureAnalysisDigest'] = digestV011(validAnalysis)
+    record['reasonDigest'] = sha('any')
+    await writeFile(path, JSON.stringify(record, null, 2) + '\n')
+    const reasons = await verifyInvalidReplacementFixture(config())
+    expect(reasons.join('\n')).toMatch(/unexpectedly validates/)
+  })
+
+  it('rejects a v2 record missing the binding object without crashing', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const path = join(action, 'rejection.json')
+    const record = JSON.parse(await readFileText(path)) as Record<string, unknown>
+    delete record['binding']
+    await writeFile(path, JSON.stringify(record, null, 2) + '\n')
+    const reasons = await verifyInvalidReplacementFixture(config())
+    expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 
   it('rejects a fixture from a different run binding', async () => {

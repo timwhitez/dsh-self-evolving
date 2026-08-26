@@ -77,7 +77,10 @@ export async function verifyInvalidReplacementFixture(config: V011DemoConfig): P
     if (proposalBytes === null || analysisBytes === null) {
       reasons.push('invalid-replacement fixture artifacts are not retained')
     } else {
-      const binding = rejection.binding as Record<string, unknown> | null
+      const binding =
+        typeof rejection.binding === 'object' && rejection.binding !== null
+          ? (rejection.binding as Record<string, unknown>)
+          : null
       const replayable =
         rejection.schemaVersion === 2 &&
         rejection.classification === 'FIXTURE_VALIDATOR_REJECT' &&
@@ -90,7 +93,10 @@ export async function verifyInvalidReplacementFixture(config: V011DemoConfig): P
         digestV011(proposalBytes) === rejection.fixtureProposalDigest &&
         digestV011(analysisBytes) === rejection.fixtureAnalysisDigest
       if (!replayable) {
-        reasons.push('invalid-replacement fixture record is not digest-bound')
+        reasons.push(
+          'invalid-replacement fixture record is not digest-bound (legacy/synthetic records are not auditable; for an in-complete action delete ' +
+            `${join(fixtureAction, 'rejection.json')} and resume to regenerate)`,
+        )
       } else {
         // Replay the rejection through the real validator.
         try {

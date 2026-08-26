@@ -99,6 +99,16 @@ function diagnosticTail(message: string, maxBytes = 8192): string {
   return clean.slice(low)
 }
 
+/** Publish idempotently: existing identical bytes are reused, any conflict fails. */
+async function writeIdempotent(path: string, bytes: string, mode = 0o600): Promise<void> {
+  const existing = await readFile(path, 'utf8').catch(() => null)
+  if (existing === bytes) return
+  if (existing !== null) {
+    throw new Error(`v0.1.1 fixture: conflicting retained artifact at ${path}`)
+  }
+  await writeExclusive(path, bytes, mode)
+}
+
 async function writeExclusive(path: string, bytes: string, mode = 0o600): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const file = await open(path, 'wx', mode)
@@ -600,10 +610,11 @@ async function exactParentEvidenceBinding(
 
 /**
  * Execute the deterministic invalid-replacement fixture through the real
- * validators and persist its complete lifecycle. The analysis intentionally
- * omits a required field so assertV011 rejects it; the rejection record
- * binds the validator, fixture digests and the reason digest so the audit
- * can replay the rejection independently.
+ * validator and persist its complete lifecycle. The analysis is
+ * intentionally schema-invalid so assertV011 rejects it; the rejection
+ * record binds the validator, both fixture digests (the proposal is
+ * retained for attribution, only the analysis is replayed) and the reason
+ * digest so the audit can reproduce the rejection independently.
  */
 async function executeInvalidReplacementFixture(
   action: string,
@@ -623,7 +634,10 @@ async function executeInvalidReplacementFixture(
     canonicalParentDigest: binding.parentDigest,
     evidenceExport: { manifestDigest: binding.exportManifestDigest },
   }
-  // Schema-invalid on purpose: preservationAssertions is required.
+  // Schema-invalid on purpose on four independent counts (missing
+  // preservationRequirements, empty failureClusters/regressionRisks,
+  // too-short falsifiableHypothesis) so accidental validity requires
+  // loosening the schema itself.
   const fixtureAnalysis = {
     schemaVersion: 1,
     failureClusters: [],
@@ -633,17 +647,21 @@ async function executeInvalidReplacementFixture(
     expectedBehaviorChange: 'none',
     regressionRisks: [],
   }
-  let reason: string
+  let reason: string | null = null
   try {
     await assertV011('analysis', fixtureAnalysis)
-    throw new Error('v0.1.1 fixture: invalid analysis unexpectedly validated')
   } catch (error) {
     reason = error instanceof Error ? error.message : 'unknown fixture rejection'
   }
+  if (reason === null) {
+    // Fail loud OUTSIDE the try: a swallowed sentinel would become
+    // synthesized evidence wearing the real-record shape.
+    throw new Error('v0.1.1 fixture: invalid analysis unexpectedly validated')
+  }
   const proposalBytes = JSON.stringify(fixtureProposal, null, 2) + '\n'
   const analysisBytes = JSON.stringify(fixtureAnalysis, null, 2) + '\n'
-  await writeExclusive(join(action, 'invalid-fixture-proposal.json'), proposalBytes)
-  await writeExclusive(join(action, 'invalid-fixture-analysis.json'), analysisBytes)
+  await writeIdempotent(join(action, 'invalid-fixture-proposal.json'), proposalBytes)
+  await writeIdempotent(join(action, 'invalid-fixture-analysis.json'), analysisBytes)
   await writeExclusive(
     fixturePath,
     JSON.stringify(
