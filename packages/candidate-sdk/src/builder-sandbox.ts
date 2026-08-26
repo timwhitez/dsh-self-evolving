@@ -12,9 +12,9 @@
  * The builder does NOT trust the candidate's declared hashes; it recomputes the
  * source/bundle/capsule hashes and writes them into a build manifest.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import { link, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
@@ -131,7 +131,7 @@ async function processStartTicks(pid: number): Promise<string | null> {
   }
 }
 
-async function acquireBuildLock(sourceRoot: string): Promise<() => Promise<void>> {
+export async function acquireBuildLock(sourceRoot: string): Promise<() => Promise<void>> {
   const lockDir = join(tmpdir(), 'dsh-self-evolving-candidate-build-locks')
   await mkdir(lockDir, { recursive: true, mode: 0o700 })
   const key = createHash('sha256').update(resolve(sourceRoot)).digest('hex')
@@ -141,44 +141,72 @@ async function acquireBuildLock(sourceRoot: string): Promise<() => Promise<void>
   const record = JSON.stringify({ pid: process.pid, processStartTicks: startTicks }) + '\n'
   const deadline = Date.now() + 120_000
 
-  while (Date.now() < deadline) {
-    let file
+  /**
+   * Publish the lock atomically: write the complete owner record to a unique
+   * staging file, fsync it, then hard-link it into the lock path. A crash can
+   * strand staging files (harmless, unique names) but can never leave an
+   * empty or truncated lock at the final path (issue #38).
+   */
+  const tryAcquire = async (): Promise<boolean> => {
+    const staging = `${lockPath}.acquire-${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`
     try {
-      file = await open(lockPath, 'wx', 0o600)
-      await file.writeFile(record)
-      await file.sync()
-      await file.close()
+      const file = await open(staging, 'wx', 0o600)
+      try {
+        await file.writeFile(record)
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+      try {
+        await link(staging, lockPath)
+        return true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        return false
+      }
+    } finally {
+      await rm(staging, { force: true })
+    }
+  }
+
+  while (Date.now() < deadline) {
+    if (await tryAcquire()) {
       return async () => {
         const current = await readFile(lockPath, 'utf8').catch(() => null)
         if (current !== record) throw new Error('builder lock: ownership changed before release')
         await rm(lockPath)
       }
-    } catch (error) {
-      await file?.close().catch(() => {})
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const existing = await readFile(lockPath, 'utf8').catch(() => null)
-      if (existing !== null) {
-        try {
-          const owner = JSON.parse(existing) as {
-            pid?: number
-            processStartTicks?: string
-          }
-          if (typeof owner.pid === 'number' && typeof owner.processStartTicks === 'string') {
-            const ownerStart = await processStartTicks(owner.pid)
-            if (ownerStart !== owner.processStartTicks) {
-              const stalePath = `${lockPath}.stale-${createHash('sha256').update(existing).digest('hex').slice(0, 16)}`
-              await rename(lockPath, stalePath).catch((renameError) => {
-                if ((renameError as NodeJS.ErrnoException).code !== 'ENOENT') throw renameError
-              })
-              continue
-            }
-          }
-        } catch (parseError) {
-          if (!(parseError instanceof SyntaxError)) throw parseError
-        }
-      }
-      await new Promise<void>((done) => setTimeout(done, 50))
     }
+    const existing = await readFile(lockPath, 'utf8').catch(() => null)
+    if (existing !== null && existing.trim() !== '') {
+      try {
+        const owner = JSON.parse(existing) as {
+          pid?: number
+          processStartTicks?: string
+        }
+        if (typeof owner.pid === 'number' && typeof owner.processStartTicks === 'string') {
+          const ownerStart = await processStartTicks(owner.pid)
+          if (ownerStart !== owner.processStartTicks) {
+            const stalePath = `${lockPath}.stale-${createHash('sha256').update(existing).digest('hex').slice(0, 16)}`
+            await rename(lockPath, stalePath).catch((renameError) => {
+              if ((renameError as NodeJS.ErrnoException).code !== 'ENOENT') throw renameError
+            })
+            continue
+          }
+        }
+      } catch (parseError) {
+        if (!(parseError instanceof SyntaxError)) throw parseError
+      }
+    } else if (existing !== null) {
+      // Empty lock file: a legacy crash between exclusive create and the
+      // owner write. No complete owner record exists, so it is reclaimable.
+      const stalePath = `${lockPath}.stale-empty-${Date.now()}`
+      await rename(lockPath, stalePath).catch((renameError) => {
+        if ((renameError as NodeJS.ErrnoException).code !== 'ENOENT') throw renameError
+      })
+      continue
+    }
+    await new Promise<void>((done) => setTimeout(done, 50))
   }
   throw new Error(`builder lock: timed out waiting for ${resolve(sourceRoot)}`)
 }
