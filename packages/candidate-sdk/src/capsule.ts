@@ -14,7 +14,7 @@
  * The Harbor adapter verifies SHA256SUMS before unpack and again after. The
  * runtime user has read-only access to runtime/ and candidate/.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   chmod,
   copyFile,
@@ -23,6 +23,8 @@ import {
   readFile,
   readdir,
   readlink,
+  rename,
+  rm,
   stat,
   symlink,
   writeFile,
@@ -88,6 +90,20 @@ async function writeSha256sums(
         const h = createHash('sha256').update(content).digest('hex')
         entries.push(`${h}  ${rel}`)
         map.set(rel, h)
+      } else if (e.isSymbolicLink()) {
+        // Commit to symlink identity, not just file contents: changing a link
+        // target must invalidate the manifest even though no regular file's
+        // bytes changed (issue #42).
+        const rel = relative(root, abs)
+        if (rel === 'SHA256SUMS' || rel === 'capsule.json') {
+          throw new Error(`capsule sums: control path must not be a symlink: ${rel}`)
+        }
+        const target = await readlink(abs)
+        const h = createHash('sha256').update(target, 'utf8').digest('hex')
+        entries.push(`${h}  symlink:${rel}`)
+        map.set(`symlink:${rel}`, h)
+      } else {
+        throw new Error(`capsule sums: unsupported entry type at ${relative(root, abs)}`)
       }
     }
   }
@@ -510,6 +526,12 @@ async function writeRunnerFiles(root: string, files: Record<string, string>): Pr
 
 /**
  * Pack a complete evaluation capsule. Returns paths and the SHA256SUMS hash.
+ *
+ * The capsule is assembled inside a unique private staging directory and
+ * atomically renamed to `outDir` only after full validation: a previously
+ * crashed or foreign build at the same path can never leak stale files into
+ * the new capsule (issue #41), and a caller reusing an existing output
+ * directory fails closed instead of packaging a mixture of generations.
  */
 export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
   const {
@@ -521,75 +543,101 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
     runtimeClosure,
     runnerFiles = {},
   } = input
-  await mkdir(outDir, { recursive: true })
-
-  // runtime/ — actual pinned bytes. No task-time install or source-checkout
-  // resolution is permitted by the Gate 1 contract.
-  const runtimeDir = join(outDir, 'runtime')
-  await mkdir(runtimeDir, { recursive: true })
-  const runtime = await materializeRuntimeClosure({
-    runtimeDir,
-    closure: runtimeClosure,
-    receipt,
-    runnerOverlay,
-    runnerFiles,
-  })
-
-  // candidate/
-  await copyCandidate(receipt, join(outDir, 'candidate'))
-
-  // runner/
-  const runnerDir = join(outDir, 'runner')
-  await mkdir(runnerDir, { recursive: true })
-  await writeFile(join(runnerDir, 'cordis.patch.yml'), runnerOverlay)
-  await writeRunnerFiles(runnerDir, runnerFiles)
-
-  // provenance.json + generated, content-bound SPDX package inventory. The
-  // caller's scanner SBOM is treated as an input receipt, never copied as an
-  // unverified replacement for the closure inventory.
-  await writeFile(join(outDir, 'provenance.json'), provenanceJson)
-  const generatedSbom = generateSpdx(runtime.packages, receipt, sbomJson)
-  await writeFile(join(outDir, 'sbom.spdx.json'), generatedSbom)
-
-  // SHA256SUMS (written last, covers everything except itself).
-  const sumsPath = join(outDir, 'SHA256SUMS')
-  const { hash } = await writeSha256sums(outDir, sumsPath)
-
-  // capsule.json is written after SHA256SUMS because it records the sums-file
-  // hash. The two are bound by capsuleHash = H(manifest || sums), avoiding a
-  // circular self-hash while still protecting both control files.
-  const capsuleManifest = {
-    schemaVersion: 1,
-    candidateId: receipt.candidateId,
-    runtime: {
-      kind: 'pinned-closure',
-      ref: 'runtime/package-closure.json',
-      hash: runtime.closureHash,
-    },
-    candidate: { bundleHash: receipt.bundleHash },
-    runner: {
-      overlay: 'runner/cordis.patch.yml',
-      hash: await hashDirectory(runnerDir),
-    },
-    provenance: {
-      ref: 'provenance.json',
-      hash: createHash('sha256').update(provenanceJson).digest('hex'),
-    },
-    sbom: {
-      ref: 'sbom.spdx.json',
-      hash: createHash('sha256').update(generatedSbom).digest('hex'),
-    },
-    sha256sums: { ref: 'SHA256SUMS', hash },
+  if (
+    (await stat(outDir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+      return null
+    })) !== null
+  ) {
+    throw new Error(`capsule output directory already exists: ${outDir}`)
   }
-  const manifestPath = join(outDir, 'capsule.json')
-  const manifestBytes = JSON.stringify(capsuleManifest, null, 2) + '\n'
-  await writeFile(manifestPath, manifestBytes)
-  const sumsBytes = await readFile(sumsPath)
-  const capsuleHash = createHash('sha256').update(manifestBytes).update(sumsBytes).digest('hex')
-  return {
-    capsuleDir: outDir,
-    capsuleManifestPath: manifestPath,
-    sha256sumsPath: sumsPath,
-    capsuleHash,
+  const buildDir = join(
+    dirname(resolve(outDir)),
+    `.${resolve(outDir).split('/').pop()}.staging-${process.pid}-${randomBytes(8).toString('hex')}`,
+  )
+  try {
+    await mkdir(buildDir, { recursive: true })
+
+    // runtime/ — actual pinned bytes. No task-time install or source-checkout
+    // resolution is permitted by the Gate 1 contract.
+    const runtimeDir = join(buildDir, 'runtime')
+    await mkdir(runtimeDir, { recursive: true })
+    const runtime = await materializeRuntimeClosure({
+      runtimeDir,
+      closure: runtimeClosure,
+      receipt,
+      runnerOverlay,
+      runnerFiles,
+    })
+
+    // candidate/
+    await copyCandidate(receipt, join(buildDir, 'candidate'))
+
+    // runner/
+    const runnerDir = join(buildDir, 'runner')
+    await mkdir(runnerDir, { recursive: true })
+    await writeFile(join(runnerDir, 'cordis.patch.yml'), runnerOverlay)
+    await writeRunnerFiles(runnerDir, runnerFiles)
+
+    // provenance.json + generated, content-bound SPDX package inventory. The
+    // caller's scanner SBOM is treated as an input receipt, never copied as an
+    // unverified replacement for the closure inventory.
+    await writeFile(join(buildDir, 'provenance.json'), provenanceJson)
+    const generatedSbom = generateSpdx(runtime.packages, receipt, sbomJson)
+    await writeFile(join(buildDir, 'sbom.spdx.json'), generatedSbom)
+
+    // SHA256SUMS (written last, covers everything except itself).
+    const sumsPath = join(buildDir, 'SHA256SUMS')
+    const { hash } = await writeSha256sums(buildDir, sumsPath)
+
+    // capsule.json is written after SHA256SUMS because it records the sums-file
+    // hash. The two are bound by capsuleHash = H(manifest || sums), avoiding a
+    // circular self-hash while still protecting both control files.
+    const capsuleManifest = {
+      schemaVersion: 1,
+      candidateId: receipt.candidateId,
+      runtime: {
+        kind: 'pinned-closure',
+        ref: 'runtime/package-closure.json',
+        hash: runtime.closureHash,
+      },
+      candidate: { bundleHash: receipt.bundleHash },
+      runner: {
+        overlay: 'runner/cordis.patch.yml',
+        hash: await hashDirectory(runnerDir),
+      },
+      provenance: {
+        ref: 'provenance.json',
+        hash: createHash('sha256').update(provenanceJson).digest('hex'),
+      },
+      sbom: {
+        ref: 'sbom.spdx.json',
+        hash: createHash('sha256').update(generatedSbom).digest('hex'),
+      },
+      sha256sums: { ref: 'SHA256SUMS', hash },
+    }
+    const manifestPath = join(buildDir, 'capsule.json')
+    const manifestBytes = JSON.stringify(capsuleManifest, null, 2) + '\n'
+    await writeFile(manifestPath, manifestBytes)
+    const sumsBytes = await readFile(sumsPath)
+    const capsuleHash = createHash('sha256').update(manifestBytes).update(sumsBytes).digest('hex')
+
+    // Atomic publication: the capsule appears at its final path fully built or
+    // not at all. A concurrent creator of the same path fails closed.
+    try {
+      await rename(buildDir, outDir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw error
+      throw new Error(`capsule output directory already exists: ${outDir}`, { cause: error })
+    }
+    return {
+      capsuleDir: outDir,
+      capsuleManifestPath: join(outDir, 'capsule.json'),
+      sha256sumsPath: join(outDir, 'SHA256SUMS'),
+      capsuleHash,
+    }
+  } catch (error) {
+    await rm(buildDir, { recursive: true, force: true })
+    throw error
   }
 }
