@@ -48,19 +48,18 @@ function mk(type: string, payload: Record<string, unknown>): JournalEvent {
   } as JournalEvent
 }
 
-/** Real-journal-backed service double; recordOnce semantics via append-once eventIds. */
-function service(): ExternalActionService & { recorded: string[] } {
-  const recorded: string[] = []
+/**
+ * Real-journal-backed service double mirroring PRODUCTION record semantics:
+ * the underlying append does NOT dedupe by eventId — only the saga's own
+ * state gating may prevent duplicate events.
+ */
+function service(): ExternalActionService {
   return {
     journal: journal!,
     async record(input) {
-      const existing = (await readAll(journal!)).find((event) => event.eventId === input.eventId)
-      if (existing !== undefined) return undefined
-      recorded.push(input.eventId)
       await append(journal!, input as Parameters<typeof append>[1])
       return undefined
     },
-    recorded,
   }
 }
 
@@ -135,24 +134,21 @@ describe('recoverExternalAction', () => {
     const svc = service()
     // Simulate: durable intent recorded, effect completed its semantic record
     // externally, process died before launched/committed.
-    await svc.record({
-      eventId: `${spec.actionId}:planned`,
-      occurredAt: '2026-08-27T00:00:00.000Z',
-      type: 'action.planned',
-      causationId: spec.actionId,
-      correlationId: spec.actionId,
-      actor: 'test',
-      payload: { actionId: spec.actionId, kind: spec.kind, idempotencyKey: spec.idempotencyKey },
-    } as never)
-    await svc.record({
-      eventId: `${spec.actionId}:reserved`,
-      occurredAt: '2026-08-27T00:00:00.000Z',
-      type: 'action.reserved',
-      causationId: spec.actionId,
-      correlationId: spec.actionId,
-      actor: 'test',
-      payload: { actionId: spec.actionId, idempotencyKey: spec.idempotencyKey },
-    } as never)
+    await append(
+      journal!,
+      seedEvent('action.planned', {
+        actionId: spec.actionId,
+        kind: spec.kind,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    await append(
+      journal!,
+      seedEvent('action.reserved', {
+        actionId: spec.actionId,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
     let calls = 0
     const resumed = await recoverExternalAction(
       svc,
@@ -191,18 +187,138 @@ describe('recoverExternalAction', () => {
   it('failExternalAction marks a rejected attempt terminal without double-failing', async () => {
     await seeded()
     const svc = service()
-    await svc.record({
-      eventId: `${spec.actionId}:planned`,
-      occurredAt: '2026-08-27T00:00:00.000Z',
-      type: 'action.planned',
-      causationId: spec.actionId,
-      correlationId: spec.actionId,
-      actor: 'test',
-      payload: { actionId: spec.actionId, kind: spec.kind, idempotencyKey: spec.idempotencyKey },
-    } as never)
+    await append(
+      journal!,
+      seedEvent('action.planned', {
+        actionId: spec.actionId,
+        kind: spec.kind,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
     await failExternalAction(svc, spec.actionId)
     await failExternalAction(svc, spec.actionId) // idempotent
     const events = await readAll(journal!)
     expect(events.filter((event) => event.type === 'action.failed')).toHaveLength(1)
   })
+
+  it('resume after a RESERVED crash with no semantic record re-runs once and converges', async () => {
+    await seeded()
+    // Crash after durable intent, before the semantic completion record.
+    await append(
+      journal!,
+      seedEvent('action.planned', {
+        actionId: spec.actionId,
+        kind: spec.kind,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    await append(
+      journal!,
+      seedEvent('action.reserved', {
+        actionId: spec.actionId,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    const svc = service()
+    let calls = 0
+    const result = await recoverExternalAction(
+      svc,
+      spec,
+      async () => {
+        calls += 1
+        return { value: 'regenerated' }
+      },
+      async () => undefined,
+    )
+    expect(result).toEqual({ value: 'regenerated' })
+    expect(calls).toBe(1)
+    // No duplicate planned/reserved events despite non-dedupe append.
+    const events = await readAll(journal!)
+    expect(events.filter((event) => event.type === 'action.planned')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'action.reserved')).toHaveLength(1)
+    expect(events.some((event) => event.type === 'action.committed')).toBe(true)
+  })
+
+  it('resume converges from a LAUNCHING crash (launched recorded, commit missing)', async () => {
+    await seeded()
+    await append(
+      journal!,
+      seedEvent('action.planned', {
+        actionId: spec.actionId,
+        kind: spec.kind,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    await append(
+      journal!,
+      seedEvent('action.reserved', {
+        actionId: spec.actionId,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    await append(
+      journal!,
+      seedEvent('action.launched', {
+        actionId: spec.actionId,
+        externalJobId: spec.externalJobId,
+      }),
+    )
+    const svc = service()
+    let calls = 0
+    const result = await recoverExternalAction(
+      svc,
+      spec,
+      async () => {
+        calls += 1
+        return { value: 'SHOULD-NOT-RUN' }
+      },
+      async () => ({ value: 'p1' }),
+    )
+    expect(result).toEqual({ value: 'p1' })
+    expect(calls).toBe(0)
+    const events = await readAll(journal!)
+    expect(events.filter((event) => event.type === 'action.launched')).toHaveLength(1)
+    expect(events.some((event) => event.type === 'action.committed')).toBe(true)
+  })
+
+  it('fails closed when the action is terminally FAILED', async () => {
+    await seeded()
+    await append(
+      journal!,
+      seedEvent('action.planned', {
+        actionId: spec.actionId,
+        kind: spec.kind,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    await append(
+      journal!,
+      seedEvent('action.reserved', {
+        actionId: spec.actionId,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    await append(journal!, seedEvent('action.failed', { actionId: spec.actionId }))
+    const svc = service()
+    await expect(
+      recoverExternalAction(
+        svc,
+        spec,
+        async () => ({ value: 'x' }),
+        async () => undefined,
+      ),
+    ).rejects.toThrow(/terminally FAILED/)
+  })
 })
+
+function seedEvent(type: string, payload: Record<string, unknown>): JournalEvent {
+  return {
+    eventId: `${spec.actionId}:${type}`,
+    occurredAt: '2026-08-27T00:00:00.000Z',
+    type,
+    causationId: spec.actionId,
+    correlationId: spec.actionId,
+    actor: 'test',
+    payload,
+  } as JournalEvent
+}

@@ -483,12 +483,12 @@ export async function runStableDemo(
               })
             const attemptEvidenceRefs = [...evidenceRefs, ...rejectionEvidence]
             const proposalEventId = `proposal:${generation}:${attempt}:completed`
-            let proposal = eventPayload<StableProposal>(events, proposalEventId)
-            if (proposal === undefined) {
-              const proposalRejectionId = `proposal:${generation}:${attempt}:rejected`
-              if (eventPayload(events, proposalRejectionId) !== undefined) continue
-              const proposalActionId = `proposal:${generation}:${attempt}`
-              const proposalKey = `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`
+            const proposalRejectionId = `proposal:${generation}:${attempt}:rejected`
+            if (eventPayload(events, proposalRejectionId) !== undefined) continue
+            const proposalActionId = `proposal:${generation}:${attempt}`
+            const proposalKey = `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`
+            let proposal: StableProposal | undefined
+            {
               try {
                 // Durable intent precedes the paid capability; a crash between
                 // the effect and the journal commit reconciles from the
@@ -539,11 +539,12 @@ export async function runStableDemo(
               }
             }
             const buildEventId = `build:${generation}:${attempt}:completed`
-            events = await readAll(service.journal)
-            child = eventPayload<BuiltCandidate>(events, buildEventId)
-            if (child !== undefined) continue
             const rejectionId = `build:${generation}:${attempt}:rejected`
+            events = await readAll(service.journal)
             if (eventPayload(events, rejectionId) !== undefined) continue
+            // The saga runs unconditionally: a completed action fast-paths to
+            // its journal record, a stranded one (crash between effect and
+            // commit) is reconciled and committed without a rebuild.
             try {
               const buildActionId = `build:${generation}:${attempt}`
               const buildKey = `${config.runId}/build/${generation}/${attempt}/${proposal.artifactDigest}`
