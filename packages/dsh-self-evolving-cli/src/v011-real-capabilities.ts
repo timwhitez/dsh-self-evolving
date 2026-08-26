@@ -44,6 +44,7 @@ import {
   startProposalGateway,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
+import { claimStagingDir } from './build-claim.js'
 import type { V011DemoConfig } from './config.js'
 import type {
   BuiltCandidate,
@@ -909,8 +910,11 @@ async function realV011BuildUnretained(
   if (typeof parsed.slot !== 'string')
     throw new Error('v0.1.1 builder: proposal slot binding missing')
   const staging = `${root}.attempt-${input.attempt}.staging`
-  if ((await stat(staging).catch(() => null)) !== null)
-    throw new Error('v0.1.1 builder: incomplete staging exists')
+  await claimStagingDir(
+    staging,
+    { attempt: input.attempt, identity: input.proposal.artifactDigest },
+    async () => dirname(root),
+  )
   await mkdir(staging, { recursive: true, mode: 0o700 })
   await cp(join(parsed.slot, 'tree'), join(staging, 'tree'), { recursive: true })
   const admission = await admitV011Candidate({

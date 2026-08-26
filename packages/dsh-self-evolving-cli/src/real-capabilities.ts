@@ -33,6 +33,7 @@ import type {
   StableProposalInput,
 } from './engine.js'
 import { evaluationReserveUsd } from './engine.js'
+import { claimStagingDir, clearBuildIntent } from './build-claim.js'
 import { loadTrustedRoute } from './trusted-route.js'
 
 const SOURCE_FILES = [
@@ -266,9 +267,24 @@ async function realBuild(
     throw new Error(`real builder: incomplete prior candidate directory ${candidateRoot}`)
   }
   const stagingRoot = `${candidateRoot}.attempt-${input.attempt}.staging`
-  if ((await stat(stagingRoot).catch(() => null)) !== null) {
-    throw new Error(`real builder: incomplete prior staging directory ${stagingRoot}`)
+  // Crash-resumable claim: stale residue is quarantined aside, never fatal
+  // (issue #71). A candidate root without a parseable receipt is likewise a
+  // torn publication — quarantine and rebuild.
+  if (
+    (await stat(candidateRoot).catch(() => null)) !== null &&
+    (await readFile(receiptPath, 'utf8').catch(() => null)) === null
+  ) {
+    await rename(candidateRoot, `${candidateRoot}.incomplete-${Date.now()}`)
   }
+  await claimStagingDir(
+    stagingRoot,
+    {
+      generation: input.generation,
+      attempt: input.attempt,
+      identity: input.proposal.artifactDigest,
+    },
+    async () => join(config.stateDir, 'candidates'),
+  )
   await mkdir(join(stagingRoot, 'src'), { recursive: true, mode: 0o700 })
   for (const relative of SOURCE_FILES) {
     if (relative === 'src/index.ts' || relative === 'tsconfig.json') continue
@@ -328,6 +344,7 @@ async function realBuild(
     join(stagingRoot, 'stable-build.json'),
     JSON.stringify(built, null, 2) + '\n',
   )
+  await clearBuildIntent(stagingRoot)
   await mkdir(join(config.stateDir, 'candidates'), { recursive: true, mode: 0o700 })
   await rename(stagingRoot, candidateRoot)
   return built
