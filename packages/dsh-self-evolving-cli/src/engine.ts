@@ -189,8 +189,8 @@ function isBaselineNonPassingSignal(row: {
 }): boolean {
   return (
     row.candidateId === 'baseline' &&
-    (row.status === 'fail' || row.status === 'invalid') &&
-    row.reward === 0
+    ((row.status === 'fail' && row.reward === 0) ||
+      (row.status === 'invalid' && row.reward === null))
   )
 }
 

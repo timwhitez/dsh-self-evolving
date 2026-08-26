@@ -69,13 +69,15 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
           const row = baselineByTask.get(taskId)
           return (
             row === undefined ||
-            (row.status !== 'fail' && row.status !== 'invalid') ||
-            row.reward !== 0
+            !(
+              (row.status === 'fail' && row.reward === 0) ||
+              (row.status === 'invalid' && row.reward === null)
+            )
           )
         })
       ) {
         reasons.push(
-          'failure pool contains a task without an attributable reward-zero baseline signal',
+          'failure pool contains a task without an attributable non-passing baseline signal',
         )
       }
       if (candidateObservations.some((row) => !taskIds.has(row.taskId))) {

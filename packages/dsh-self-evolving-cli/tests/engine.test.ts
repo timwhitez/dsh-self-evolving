@@ -162,8 +162,8 @@ describe('stable-demo engine', () => {
         candidateId: spec.candidate.candidateId,
         taskId: spec.taskId,
         attemptIndex: 0,
-        status: spec.taskId === 'task-2' ? 'invalid' : 'pass',
-        reward: spec.taskId === 'task-2' ? null : 1,
+        status: 'pass' as const,
+        reward: 1,
         costUsd: 0.001,
       })
       return provider
@@ -175,7 +175,7 @@ describe('stable-demo engine', () => {
     expect(counters.builds).toBe(0)
   })
 
-  it('accepts a reward-zero attributable invalid as a non-passing baseline signal', async () => {
+  it('accepts a null-reward attributable invalid as a non-passing baseline signal', async () => {
     const { config, capabilities } = await fixture()
     const original = capabilities.evaluationProvider
     capabilities.evaluationProvider = (spec) => {
@@ -184,7 +184,7 @@ describe('stable-demo engine', () => {
       provider.collect = async (externalJobId) => {
         const observation = await collect(externalJobId)
         return spec.candidate.candidateId === 'baseline' && spec.taskId === 'task-2'
-          ? { ...observation, status: 'invalid' as const, reward: 0 }
+          ? { ...observation, status: 'invalid' as const, reward: null }
           : observation
       }
       return provider

@@ -88,6 +88,33 @@ await ctx.plugin(SelfEvolvingBundle, {
   runId: 'run-process-crash-e2e',
   segmentMaxBytes: 1_000_000,
 })
+// The protocol requires every observation to reference an admitted candidate,
+// so admit the evaluated candidate before the action saga (idempotently — the
+// resume path replays a journal that may already contain the admission).
+const journal = {
+  journalDir: join(stateDir, 'journal'),
+  runId: 'run-process-crash-e2e',
+  segmentMaxBytes: 1_000_000,
+}
+const admitted = (state) => state !== undefined && state.candidates['c_process_e2e'] !== undefined
+let controllerState
+try {
+  controllerState = SelfEvolvingBundle.replay(await SelfEvolvingBundle.readAll(journal))
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error
+  controllerState = SelfEvolvingBundle.replay([])
+}
+if (!admitted(controllerState)) {
+  await ctx.selfEvolving.record({
+    eventId: 'candidate-process-e2e:admitted',
+    occurredAt: new Date().toISOString(),
+    type: 'candidate.admitted',
+    causationId: 'candidate-process-e2e',
+    correlationId: 'candidate-process-e2e',
+    actor: 'dsh-self-evolving-controller',
+    payload: { candidateId: 'c_process_e2e', canonicalParent: null, donorCandidates: [] },
+  })
+}
 await recoverEvaluationAction(
   ctx.selfEvolving,
   {

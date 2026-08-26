@@ -195,7 +195,7 @@ describe('reducer + snapshot', () => {
     await appendEvent(j, 'candidate.admitted', { candidateId: 'c_a', canonicalParent: null })
     await appendEvent(j, 'candidate.admitted', {
       candidateId: 'c_b',
-      canonicalParent: 'sha256:parent',
+      canonicalParent: 'c_a',
       donorCandidates: [],
     })
     await appendEvent(j, 'evaluation.observed', {
@@ -293,19 +293,11 @@ describe('reducer + snapshot', () => {
 
     let stateA = reduce(genesisState(), candidateEvent)
     stateA = reduce(stateA, observations[0]!)
-    stateA = reduce(stateA, {
-      ...observations[1]!,
-      seq: 3,
-      previousHash: stateA.lastEventHash,
-    })
+    stateA = reduce(stateA, { ...observations[1]!, seq: 3, previousHash: stateA.lastEventHash })
 
     let stateB = reduce(genesisState(), candidateEvent)
     stateB = reduce(stateB, observations[1]!)
-    stateB = reduce(stateB, {
-      ...observations[0]!,
-      seq: 3,
-      previousHash: stateB.lastEventHash,
-    })
+    stateB = reduce(stateB, { ...observations[0]!, seq: 3, previousHash: stateB.lastEventHash })
 
     expect(stateHash(stateA)).not.toBe(stateHash(stateB))
     expect(logicalStateHash(stateA)).toBe(logicalStateHash(stateB))
