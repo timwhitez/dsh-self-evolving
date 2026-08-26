@@ -245,8 +245,36 @@ describe('Gate 8 sealed/full/release evidence', () => {
       ...input.splitReveal!,
       revealedTaskIds: [...input.splitReveal!.revealedTaskIds.slice(1)],
     }
-    const verdict = verifyGate8Evidence(input)
+    let verdict = verifyGate8Evidence(input)
     expect(verdict.reasons.join('\n')).toMatch(/not 29 unique canonical ids/)
+    // Duplicates at the right length are rejected too.
+    input.splitReveal = {
+      ...input.splitReveal!,
+      revealedTaskIds: [
+        input.splitReveal!.revealedTaskIds[0]!,
+        ...input.splitReveal!.revealedTaskIds.slice(0, 28),
+      ],
+    }
+    verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/not 29 unique canonical ids/)
+    // A missing list degrades to a reason, never a TypeError.
+    input.splitReveal = { ...input.splitReveal!, revealedTaskIds: undefined as never }
+    verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/revealed sealed task list is missing/)
+  })
+
+  it('rejects a missing or malformed official inventory list', () => {
+    const input = complete()
+    input.fullSet = { ...input.fullSet!, inventoryTaskIds: undefined as never }
+    let verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/inventory list is missing/)
+    const original = complete().fullSet!.inventoryTaskIds
+    input.fullSet = {
+      ...input.fullSet!,
+      inventoryTaskIds: [original[0]!, ...original.slice(0, 88)],
+    }
+    verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/not 89 unique canonical ids/)
   })
 
   it('rejects a full-set matrix whose tasks are not the official inventory', () => {

@@ -286,9 +286,9 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     // Exact membership, not cardinality: every evaluated task must belong to
     // the canonical one-time revealed set and cover it completely (issue
     // #110). A 29-task matrix of easier substitutes must fail here.
-    if (reveal !== null) {
-      const revealed = [...new Set(reveal.revealedTaskIds)].sort()
+    if (reveal !== null && Array.isArray(reveal.revealedTaskIds)) {
       const uniqueRevealed = new Set(reveal.revealedTaskIds)
+      const revealed = [...uniqueRevealed].sort()
       if (
         reveal.revealedTaskIds.length !== 29 ||
         uniqueRevealed.size !== 29 ||
@@ -300,6 +300,8 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       if (JSON.stringify(evaluated) !== JSON.stringify(revealed)) {
         reasons.push('sealed trial matrix does not match the revealed sealed task set')
       }
+    } else {
+      reasons.push('revealed sealed task list is missing')
     }
     for (const [pairKey, pair] of pairs) {
       if (pair.baseline === undefined || pair.candidate === undefined) {
@@ -401,17 +403,22 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       reasons.push('full-set 89 x >=5 trial matrix is incomplete')
     }
     // Exact membership against the official inventory universe (issue #110).
-    const inventory = [...new Set(full.inventoryTaskIds)].sort()
-    if (
-      full.inventoryTaskIds.length !== 89 ||
-      new Set(full.inventoryTaskIds).size !== 89 ||
-      full.inventoryTaskIds.some((id) => id.length === 0 || id.trim() !== id)
-    ) {
-      reasons.push('official inventory list is not 89 unique canonical ids')
-    }
-    const evaluatedFull = [...tasks].sort()
-    if (JSON.stringify(evaluatedFull) !== JSON.stringify(inventory)) {
-      reasons.push('full-set trial matrix does not match the official inventory')
+    if (!Array.isArray(full.inventoryTaskIds)) {
+      reasons.push('official inventory list is missing')
+    } else {
+      const uniqueInventory = new Set(full.inventoryTaskIds)
+      const inventory = [...uniqueInventory].sort()
+      if (
+        full.inventoryTaskIds.length !== 89 ||
+        uniqueInventory.size !== 89 ||
+        full.inventoryTaskIds.some((id) => id.length === 0 || id.trim() !== id)
+      ) {
+        reasons.push('official inventory list is not 89 unique canonical ids')
+      }
+      const evaluatedFull = [...tasks].sort()
+      if (JSON.stringify(evaluatedFull) !== JSON.stringify(inventory)) {
+        reasons.push('full-set trial matrix does not match the official inventory')
+      }
     }
     if (
       full.verificationStatus === 'LEADERBOARD_VERIFIED' &&
