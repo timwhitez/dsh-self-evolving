@@ -52,7 +52,11 @@ export class ProposalGatewayAdapter extends LlmAdapter {
       route: this.config.route,
       payload,
     }
-    const response = await requestProposalGateway(this.config.socketPath, request)
+    const response = await requestProposalGateway(
+      this.config.socketPath,
+      request,
+      options.signal === undefined ? {} : { signal: options.signal },
+    )
     if (!response.ok) throw new Error(`proposal gateway adapter: ${response.error}`)
     const result = response.result as { chunks?: unknown }
     if (!Array.isArray(result?.chunks)) {
@@ -71,8 +75,8 @@ export class ProposalGatewayAdapter extends LlmAdapter {
 export function createProposalGatewayLlmHandler(
   adapter: LlmAdapter,
   route: ProposalGatewayRoute,
-): (payload: unknown) => Promise<{ chunks: StreamChunk[] }> {
-  return async (payload) => {
+): (payload: unknown, context?: { signal: AbortSignal }) => Promise<{ chunks: StreamChunk[] }> {
+  return async (payload, context) => {
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new Error('proposal gateway handler: invalid payload')
     }
@@ -102,8 +106,16 @@ export function createProposalGatewayLlmHandler(
     ) {
       throw new Error('proposal gateway handler: payload does not match locked route')
     }
+    // The cancellation signal is host-side state, never wire data: it aborts
+    // the trusted provider fetch on gateway teardown, request-window close or
+    // an envelope deadline (issue #57). Direct in-process calls may omit the
+    // context; default to never-abort.
+    const options = {
+      ...(record as unknown as GenerateOptions),
+      ...(context === undefined ? {} : { signal: context.signal }),
+    }
     const chunks: StreamChunk[] = []
-    for await (const chunk of adapter.stream(record as unknown as GenerateOptions)) {
+    for await (const chunk of adapter.stream(options)) {
       chunks.push(chunk)
     }
     return { chunks }

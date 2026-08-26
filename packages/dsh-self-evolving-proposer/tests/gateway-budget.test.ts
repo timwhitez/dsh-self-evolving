@@ -126,4 +126,91 @@ describe('gateway connection budget', () => {
       await gateway.close()
     }
   })
+
+  describe('gateway cancellation (issue #57)', () => {
+    it('aborts the trusted handler when the connection closes mid-request', async () => {
+      // A half-closed-but-silent client is undetectable at the TCP layer, so
+      // the request window (requestTimeoutMs) destroys the socket; that close
+      // MUST abort the in-flight trusted handler (close -> abort wiring).
+      let observedAbort: string | null = null
+      const gateway = await startProposalGateway({
+        socketPath: join(root!, 'cancel.sock'),
+        route,
+        requestTimeoutMs: 150,
+        handle: async (_payload, context) =>
+          new Promise((_resolve, reject) => {
+            context.signal.addEventListener(
+              'abort',
+              () => {
+                observedAbort =
+                  context.signal.reason instanceof Error
+                    ? context.signal.reason.message
+                    : String(context.signal.reason)
+                reject(context.signal.reason)
+              },
+              { once: true },
+            )
+          }),
+      })
+      try {
+        // The window teardown drops the connection; the client sees a transport
+        // failure while the trusted handler observes the abort.
+        await expect(
+          requestProposalGateway(gateway.socketPath, request('cancel-1')),
+        ).rejects.toThrow()
+        const start = Date.now()
+        while (observedAbort === null && Date.now() - start < 5_000) {
+          await new Promise<void>((done) => setTimeout(done, 25))
+        }
+        expect(observedAbort).toMatch(/client disconnected/)
+      } finally {
+        await gateway.close()
+      }
+    })
+
+    it('aborts the trusted handler when the envelope deadline elapses', async () => {
+      const gateway = await startProposalGateway({
+        socketPath: join(root!, 'deadline.sock'),
+        route,
+        handle: async (_payload, context) =>
+          new Promise((_resolve, reject) => {
+            context.signal.addEventListener(
+              'abort',
+              () => {
+                reject(context.signal.reason)
+              },
+              { once: true },
+            )
+          }),
+      })
+      try {
+        const response = await requestProposalGateway(gateway.socketPath, {
+          ...request('deadline-1'),
+          deadlineMs: 120,
+        })
+        expect(response.ok).toBe(false)
+      } finally {
+        await gateway.close()
+      }
+    })
+
+    it('rejects a pre-aborted client call without connecting', async () => {
+      const gateway = await startProposalGateway({
+        socketPath: join(root!, 'preabort.sock'),
+        route,
+        handle: async () => ({}),
+      })
+      try {
+        const controller = new AbortController()
+        controller.abort(new Error('caller cancelled'))
+        await expect(
+          requestProposalGateway(gateway.socketPath, request('pre-1'), {
+            signal: controller.signal,
+          }),
+        ).rejects.toThrow(/caller cancelled/)
+      } finally {
+        await gateway.close()
+      }
+    })
+  })
 })
