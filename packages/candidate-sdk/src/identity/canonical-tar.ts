@@ -13,8 +13,8 @@
  * definition of "canonical" and no dependency on host tar behavior.
  */
 import { createHash } from 'node:crypto'
-import { lstat, readFile } from 'node:fs/promises'
-import { relative, resolve, sep } from 'node:path'
+import { lstat, readFile, realpath } from 'node:fs/promises'
+import { relative, join, resolve, sep } from 'node:path'
 
 /** Limits enforced BEFORE hashing (spec 02 §1). */
 export interface CanonicalLimits {
@@ -148,9 +148,49 @@ function writeEntry(out: number[], path: string, content: Uint8Array): void {
 }
 
 /**
+ * Validate one declared file against the trusted root without trusting any
+ * intermediate path component.
+ *
+ * `lstat` only refuses a symlink in the FINAL component — the kernel still
+ * resolves every intermediate component, so `root/outside/hosts` with
+ * `outside -> /etc` would stat and read `/etc/hosts`. Additionally verify
+ * that every ancestor is a real directory (no symlink component), that the
+ * fully-resolved file lives beneath the fully-resolved root, and that the
+ * file is a regular file with exactly one link (hard links are rejected per
+ * the module contract).
+ */
+async function assertContainedRegularFile(root: string, absPath: string): Promise<void> {
+  // Walk each ancestor component; any symlink/special file at an intermediate
+  // component is rejected before it can redirect resolution.
+  const components = relative(resolve(root), resolve(absPath))
+    .split(sep)
+    .filter((c) => c !== '')
+  let cursor = resolve(root)
+  for (const component of components.slice(0, -1)) {
+    cursor = join(cursor, component)
+    const info = await lstat(cursor)
+    if (!info.isDirectory()) {
+      throw new Error(`canonical: intermediate path component must be a real directory: ${cursor}`)
+    }
+  }
+  const finalInfo = await lstat(absPath)
+  if (finalInfo.isSymbolicLink()) throw new Error(`canonical: symlink rejected: ${absPath}`)
+  if (!finalInfo.isFile()) throw new Error(`canonical: not a regular file: ${absPath}`)
+  if (finalInfo.nlink !== 1) {
+    throw new Error(`canonical: hard-linked file rejected (nlink=${finalInfo.nlink}): ${absPath}`)
+  }
+  const realRoot = await realpath(root)
+  const realFile = await realpath(absPath)
+  if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
+    throw new Error(`canonical: resolved path escapes the trusted root: ${absPath}`)
+  }
+}
+
+/**
  * Build the canonical archive from declared files. Reads each file, validates
- * it is a regular file (no symlinks/devices), enforces limits, then emits the
- * deterministic USTAR stream and its sha256.
+ * it is a regular single-linked file beneath the trusted root (no symlinks at
+ * any component, no devices), enforces limits, then emits the deterministic
+ * USTAR stream and its sha256.
  */
 export async function buildCanonicalArchive(
   files: DeclaredFile[],
@@ -161,14 +201,21 @@ export async function buildCanonicalArchive(
     throw new Error(`canonical: ${files.length} files exceeds max ${limits.maxFileCount}`)
   }
   const sorted = validateAndSort(files)
+  // Containment is enforced against each declared file's source root, derived
+  // as the common prefix (absPath minus its declared relative path). All files
+  // of one build must share that root.
+  const buildRoots = new Set(
+    sorted.map((f) => f.absPath.slice(0, f.absPath.length - f.path.length)),
+  )
+  if (buildRoots.size !== 1) {
+    throw new Error('canonical: declared files span multiple source roots')
+  }
+  const sourceRoot = [...buildRoots][0]!
   const out: number[] = []
   let totalBytes = 0
   for (const f of sorted) {
-    // lstat (not stat) so symlinks are NOT followed — a symlink is rejected
-    // even if its target is a regular file.
+    await assertContainedRegularFile(sourceRoot, f.absPath)
     const st = await lstat(f.absPath)
-    if (st.isSymbolicLink()) throw new Error(`canonical: symlink rejected: ${f.absPath}`)
-    if (!st.isFile()) throw new Error(`canonical: not a regular file: ${f.absPath}`)
     if (st.size > limits.maxFileBytes) {
       throw new Error(`canonical: file ${f.path} size ${st.size} exceeds ${limits.maxFileBytes}`)
     }
