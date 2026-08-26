@@ -155,11 +155,12 @@ export async function verifySourceArchiveIdentity(
     return invalid('source file inventory differs from release manifest')
   }
   // The release inventory must be EXACT: every releaseFiles entry present
-  // AND no extra file anywhere in the tree beyond the inventory plus the
-  // embedded manifest itself. Entries outside the hashed code paths (docs,
-  // lockfiles) have no digests in the manifest schema, so their CONTENT
-  // tampering remains undetectable — but additions and deletions anywhere
-  // are not (issue #72).
+  // AND no extra file in the walked tree beyond the inventory plus the
+  // embedded manifest itself. The walker prunes any directory NAMED
+  // .git/lib/node_modules at any depth, so files planted under such names
+  // are blind to this check (tracked separately); entries outside the hashed
+  // code paths (docs, lockfiles) have no digests in the manifest schema, so
+  // their CONTENT tampering also remains undetectable (issue #72).
   if (identity.releaseFiles !== undefined) {
     for (const entry of identity.releaseFiles) {
       const exists = await readFile(join(repoRoot, entry)).then(

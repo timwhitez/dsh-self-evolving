@@ -113,7 +113,7 @@ describe('source archive identity', () => {
 
     it('reports AUTHENTICATED only when the archive bytes match the trusted digest', async () => {
       const { root, identity } = await fixture()
-      const archivePath = join(root!, '..', 'release.tar.gz')
+      const archivePath = join(root, '..', `release-${Date.now()}.tar.gz`)
       await writeFile(archivePath, 'ARCHIVE-BYTES')
       const trusted = digest('ARCHIVE-BYTES')
       const result = await verifySourceArchiveIdentity(root, identity, {
