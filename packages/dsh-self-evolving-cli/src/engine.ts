@@ -3,11 +3,13 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import * as SelfEvolvingBundle from '@dsh-self-evolving/core'
+import type { EvaluationActionResult } from '@dsh-self-evolving/core'
 import {
   readAll,
   canonicalJson,
   recoverEvaluationAction,
   replay,
+  stateHash,
   type DurableBoundary,
   type EvaluationProvider,
   type JournalEvent,
@@ -90,7 +92,17 @@ export interface StableDemoCapabilities {
 }
 
 export interface StableDemoResult {
-  status: 'STABLE_ITERATION_VERIFIED' | 'NO_REAL_FAILURE_SIGNAL' | 'NO_ADMISSIBLE_CHILD'
+  status:
+    | 'STABLE_ITERATION_VERIFIED'
+    | 'NO_REAL_FAILURE_SIGNAL'
+    | 'NO_ADMISSIBLE_CHILD'
+    /**
+     * One or more durably launched evaluation sagas are still running.
+     * Returned INSTEAD of freezing dependent state: no failure pool,
+     * candidate observation or terminal event exists until every pending
+     * action commits; rerun/resume reconciles them exactly once (issue #70).
+     */
+    | 'PENDING_EVALUATIONS'
   runId: string
   baselineTrials: number
   candidateTrials: number
@@ -249,11 +261,11 @@ async function evaluate(
   service: SelfEvolvingBundle.SelfEvolvingService,
   caps: StableDemoCapabilities,
   spec: StableEvaluationSpec,
-): Promise<void> {
+): Promise<EvaluationActionResult> {
   const reserveUsd =
     caps.reserveUsd?.(spec) ??
     evaluationReserveUsd(config.limits.budgetUsd, config.limits.solverTrialsMax)
-  await recoverEvaluationAction(
+  return await recoverEvaluationAction(
     service,
     {
       actionId: spec.actionId,
@@ -278,6 +290,32 @@ async function evaluate(
       onDurableBoundary: async (boundary) => caps.onEvaluationBoundary?.(spec, boundary),
     },
   )
+}
+
+/**
+ * Honest non-terminal snapshot for a run suspended on still-running
+ * evaluations (issue #70): derived entirely from the durable journal so a
+ * rerun after the pending sagas commit yields the identical numbers.
+ */
+async function suspendedResult(
+  config: ProjectConfig,
+  service: SelfEvolvingBundle.SelfEvolvingService,
+): Promise<StableDemoResult> {
+  const events = await readAll(service.journal)
+  const state = replay(events)
+  const baselineTrials = state.observations.filter((row) => row.candidateId === 'baseline').length
+  const lineage = lineageDepth(events)
+  return {
+    status: 'PENDING_EVALUATIONS',
+    runId: config.runId,
+    baselineTrials,
+    candidateTrials: state.observations.length - baselineTrials,
+    solverTrials: events.filter((event) => event.type === 'proposal.completed').length,
+    admittedChildren: lineage.children,
+    maxLineageDepth: lineage.maxDepth,
+    sealedAccessCount: state.sealedAccessCount,
+    finalStateHash: stateHash(state),
+  }
 }
 
 function doctorFailures(report: DoctorReport): DoctorCheck[] {
@@ -353,7 +391,12 @@ export async function runStableDemo(
               attemptIndex: 0,
               kind: 'baseline-discovery',
             }
-            await evaluate(config, service, caps, spec)
+            const action = await evaluate(config, service, caps, spec)
+            if (action.status === 'pending') {
+              // Still-running durably launched job: suspend WITHOUT freezing
+              // the failure pool or recording any dependent state (issue #70).
+              return await suspendedResult(config, service)
+            }
             evaluated += 1
           }
           events = await readAll(service.journal)
@@ -523,7 +566,10 @@ export async function runStableDemo(
             attemptIndex: 0,
             kind: 'candidate',
           }
-          await evaluate(config, service, caps, spec)
+          const candidateAction = await evaluate(config, service, caps, spec)
+          if (candidateAction.status === 'pending') {
+            return await suspendedResult(config, service)
+          }
           if (caps.afterCandidateEvaluation !== undefined) {
             const outcome = await caps.afterCandidateEvaluation({
               generation,
