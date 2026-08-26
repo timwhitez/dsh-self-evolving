@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { readAll, type EvaluationProvider, type Journal } from '@dsh-self-evolving/core'
+import {
+  readAll,
+  replay as replayAll,
+  type EvaluationProvider,
+  type Journal,
+} from '@dsh-self-evolving/core'
 import {
   createStableDemoConfig,
   createV011DemoConfig,
@@ -187,6 +192,38 @@ describe('stable-demo engine', () => {
     expect(resumed.status).toBe('STABLE_ITERATION_VERIFIED')
     expect(counters.launches).toBe(9)
     expect(counters.collects).toBe(9)
+  })
+
+  it('records durable proposal/build action intent around every side effect', async () => {
+    const { config, capabilities } = await fixture()
+    const result = await runStableDemo(config, capabilities)
+    expect(result.status).toBe('STABLE_ITERATION_VERIFIED')
+    const events = await readAll(serviceJournal(config))
+    const types = events.map((event) => event.type)
+    for (const actionId of ['proposal:1:1', 'build:1:1']) {
+      expect(types).toContain('action.planned')
+      const planned = events.find(
+        (event) =>
+          event.type === 'action.planned' &&
+          (event.payload as { actionId?: string }).actionId === actionId,
+      )
+      expect(planned, actionId).toBeDefined()
+      expect((planned!.payload as { idempotencyKey?: string }).idempotencyKey).toContain(
+        config.runId,
+      )
+      for (const kind of ['action.reserved', 'action.launched', 'action.committed']) {
+        const row = events.find(
+          (event) =>
+            event.type === kind && (event.payload as { actionId?: string }).actionId === actionId,
+        )
+        expect(row, `${actionId} ${kind}`).toBeDefined()
+      }
+    }
+    // Every action in the run is terminal (audit contract).
+    const state = replayAll(events)
+    for (const action of Object.values(state.actions)) {
+      expect(['COMMITTED', 'FAILED', 'CANCELLED', 'ABANDONED']).toContain(action.status)
+    }
   })
 
   it('freezes a batch-discovered failure then creates three children at lineage depth >=2', async () => {

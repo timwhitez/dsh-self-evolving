@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import * as SelfEvolvingBundle from '@dsh-self-evolving/core'
 import type { EvaluationActionResult } from '@dsh-self-evolving/core'
+import { failExternalAction, recoverExternalAction } from '@dsh-self-evolving/core'
 import {
   readAll,
   canonicalJson,
@@ -486,24 +487,48 @@ export async function runStableDemo(
             if (proposal === undefined) {
               const proposalRejectionId = `proposal:${generation}:${attempt}:rejected`
               if (eventPayload(events, proposalRejectionId) !== undefined) continue
+              const proposalActionId = `proposal:${generation}:${attempt}`
+              const proposalKey = `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`
               try {
-                proposal = await caps.propose({
-                  generation,
-                  attempt,
-                  parent,
-                  evidenceRefs: attemptEvidenceRefs,
-                  idempotencyKey: `${config.runId}/proposal/${generation}/${attempt}/${parent.candidateId}`,
-                })
-                if (
-                  proposal.parentCandidateId !== parent.candidateId ||
-                  proposal.evidenceRefs.length === 0
-                ) {
-                  throw new Error('proposer did not bind parent and raw evidence')
-                }
-                await recordOnce(service, proposalEventId, 'proposal.completed', proposal)
+                // Durable intent precedes the paid capability; a crash between
+                // the effect and the journal commit reconciles from the
+                // semantic completion record instead of re-invoking (issue #53).
+                proposal = await recoverExternalAction<StableProposal>(
+                  service,
+                  {
+                    actionId: proposalActionId,
+                    kind: 'proposal',
+                    idempotencyKey: proposalKey,
+                    externalJobId: join(
+                      config.stateDir,
+                      'artifacts',
+                      `proposal-${generation}-${attempt}`,
+                    ),
+                  },
+                  async () => {
+                    const produced = await caps.propose({
+                      generation,
+                      attempt,
+                      parent,
+                      evidenceRefs: attemptEvidenceRefs,
+                      idempotencyKey: proposalKey,
+                    })
+                    if (
+                      produced.parentCandidateId !== parent.candidateId ||
+                      produced.evidenceRefs.length === 0
+                    ) {
+                      throw new Error('proposer did not bind parent and raw evidence')
+                    }
+                    await recordOnce(service, proposalEventId, 'proposal.completed', produced)
+                    return produced
+                  },
+                  async () =>
+                    eventPayload<StableProposal>(await readAll(service.journal), proposalEventId),
+                )
               } catch (error) {
                 const message =
                   error instanceof Error ? error.message : 'unknown proposal rejection'
+                await failExternalAction(service, proposalActionId)
                 await recordOnce(service, proposalRejectionId, 'proposal.rejected', {
                   generation,
                   attempt,
@@ -520,17 +545,34 @@ export async function runStableDemo(
             const rejectionId = `build:${generation}:${attempt}:rejected`
             if (eventPayload(events, rejectionId) !== undefined) continue
             try {
-              child = await caps.build({
-                generation,
-                attempt,
-                parent,
-                proposal,
-                idempotencyKey: `${config.runId}/build/${generation}/${attempt}/${proposal.artifactDigest}`,
-              })
-              assertCandidate(child)
-              await recordOnce(service, buildEventId, 'build.completed', child)
+              const buildActionId = `build:${generation}:${attempt}`
+              const buildKey = `${config.runId}/build/${generation}/${attempt}/${proposal.artifactDigest}`
+              child = await recoverExternalAction<BuiltCandidate>(
+                service,
+                {
+                  actionId: buildActionId,
+                  kind: 'build',
+                  idempotencyKey: buildKey,
+                  externalJobId: join(config.stateDir, 'candidates', `generation-${generation}`),
+                },
+                async () => {
+                  const built = await caps.build({
+                    generation,
+                    attempt,
+                    parent,
+                    proposal,
+                    idempotencyKey: buildKey,
+                  })
+                  assertCandidate(built)
+                  await recordOnce(service, buildEventId, 'build.completed', built)
+                  return built
+                },
+                async () =>
+                  eventPayload<BuiltCandidate>(await readAll(service.journal), buildEventId),
+              )
             } catch (error) {
               const message = error instanceof Error ? error.message : 'unknown build rejection'
+              await failExternalAction(service, `build:${generation}:${attempt}`)
               await recordOnce(service, rejectionId, 'build.rejected', {
                 generation,
                 attempt,

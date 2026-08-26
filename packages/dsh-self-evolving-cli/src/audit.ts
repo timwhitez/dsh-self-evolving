@@ -106,8 +106,12 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
       ? baselineTrials >= 1 && baselineTrials <= config.limits.baselineFailureDiscoveryMax
       : [6, 12].includes(baselineTrials)
   if (!validBaselineTrialCount) reasons.push(`baseline batch is incomplete: ${baselineTrials}`)
-  if (Object.values(state.actions).some((action) => action.status !== 'COMMITTED')) {
-    reasons.push('one or more external actions are not committed')
+  // Terminal (COMMITTED/FAILED/CANCELLED/ABANDONED) actions are settled; only
+  // unresolved in-flight states fail the audit — proposal/build attempts that
+  // were durably planned but rejected end FAILED by design (issue #53).
+  const TERMINAL_ACTIONS = new Set(['COMMITTED', 'FAILED', 'CANCELLED', 'ABANDONED'])
+  if (Object.values(state.actions).some((action) => !TERMINAL_ACTIONS.has(action.status))) {
+    reasons.push('one or more external actions are not terminal')
   }
   const normalizedEvents = events.filter((event) => event.type === 'evaluation.observed')
   if (

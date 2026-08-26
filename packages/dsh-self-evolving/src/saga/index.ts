@@ -7,4 +7,8 @@ export {
   type EvaluationActionSpec,
   type EvaluationActionResult,
   type SagaHooks,
+  recoverExternalAction,
+  failExternalAction,
+  type ExternalActionSpec,
+  type ExternalActionService,
 } from './action.js'

@@ -1,6 +1,6 @@
 /** Crash-resumable evaluation action saga (spec 06 §§12–13). */
 import { release, reserve, spend, type BudgetLedger } from '../budget/index.js'
-import { readAll } from '../journal/index.js'
+import { readAll, type Journal } from '../journal/index.js'
 import { replay } from '../reducer/index.js'
 import type { RecordInput, SelfEvolvingService } from '../service.js'
 
@@ -166,4 +166,112 @@ export async function recoverEvaluationAction(
     await hooks.onDurableBoundary?.('commit')
   }
   return { status: 'committed', externalJobId, observation }
+}
+
+/** Minimal service surface the external-action saga depends on. */
+export interface ExternalActionService {
+  journal: Journal
+  record<P = Record<string, unknown>>(input: RecordInput<P>): Promise<unknown>
+}
+
+export interface ExternalActionSpec {
+  actionId: string
+  kind: 'proposal' | 'build'
+  /** Stable logical identity of the external work; bound into the durable intent. */
+  idempotencyKey: string
+  /** Deterministic durable identity of the external artifact (path or digest). */
+  externalJobId: string
+}
+
+/**
+ * Durable-intent wrapper for proposal/build side effects (issue #53).
+ *
+ * Unified exactly-once lifecycle for non-evaluation capabilities:
+ *   PLANNED → RESERVED (durable intent, BEFORE any external effect) →
+ *   external effect → LAUNCHED (artifact identity) → COMMITTED.
+ *
+ * Reconcile-before-retry: a crash between the external effect and the journal
+ * commit is detected through the caller's semantic completion record
+ * (`reconcile`), re-committing from that record WITHOUT re-invoking the paid
+ * capability. A committed action fast-paths straight to the recorded result.
+ * The capability itself must still key its artifacts by `idempotencyKey` so a
+ * crash before the semantic record falls back to capability-level dedupe.
+ */
+export async function recoverExternalAction<T>(
+  service: ExternalActionService,
+  spec: ExternalActionSpec,
+  effect: () => Promise<T>,
+  reconcile: () => Promise<T | undefined>,
+): Promise<T> {
+  await recordExternal(service, `${spec.actionId}:planned`, 'action.planned', {
+    actionId: spec.actionId,
+    kind: spec.kind,
+    idempotencyKey: spec.idempotencyKey,
+  })
+  const action = replay(await readAll(service.journal)).actions[spec.actionId]
+  if (action === undefined) {
+    throw new Error(`PROTOCOL_INVALID: planned action missing ${spec.actionId}`)
+  }
+  if (action.idempotencyKey !== spec.idempotencyKey) {
+    throw new Error(`PROTOCOL_INVALID: conflicting idempotency key for ${spec.actionId}`)
+  }
+  if (action.status === 'COMMITTED') {
+    const recorded = await reconcile()
+    if (recorded === undefined) {
+      throw new Error(
+        `PROTOCOL_INVALID: committed action lacks a reconcilable result ${spec.actionId}`,
+      )
+    }
+    return recorded
+  }
+  // Crash window between the external effect and the journal commit.
+  const preCompleted = await reconcile()
+  if (preCompleted !== undefined) {
+    await recordExternal(service, `${spec.actionId}:launched`, 'action.launched', {
+      actionId: spec.actionId,
+      externalJobId: spec.externalJobId,
+    })
+    await recordExternal(service, `${spec.actionId}:committed`, 'action.committed', {
+      actionId: spec.actionId,
+      externalJobId: spec.externalJobId,
+    })
+    return preCompleted
+  }
+  if (action.status === 'PLANNED') {
+    await recordExternal(service, `${spec.actionId}:reserved`, 'action.reserved', {
+      actionId: spec.actionId,
+      idempotencyKey: spec.idempotencyKey,
+    })
+  }
+  const result = await effect()
+  await recordExternal(service, `${spec.actionId}:launched`, 'action.launched', {
+    actionId: spec.actionId,
+    externalJobId: spec.externalJobId,
+  })
+  await recordExternal(service, `${spec.actionId}:committed`, 'action.committed', {
+    actionId: spec.actionId,
+    externalJobId: spec.externalJobId,
+  })
+  return result
+}
+
+async function recordExternal<P>(
+  service: ExternalActionService,
+  eventId: string,
+  type: string,
+  payload: P,
+): Promise<void> {
+  const existing = (await readAll(service.journal)).find((event) => event.eventId === eventId)
+  if (existing !== undefined) return
+  await service.record(eventInput(eventId, type, payload))
+}
+
+/** Mark an external action terminally FAILED after a rejected effect. */
+export async function failExternalAction(
+  service: ExternalActionService,
+  actionId: string,
+): Promise<void> {
+  const action = replay(await readAll(service.journal)).actions[actionId]
+  if (action === undefined || action.status === 'COMMITTED' || action.status === 'FAILED') return
+  await recordExternal(service, `${actionId}:failed`, 'action.failed', { actionId })
 }
