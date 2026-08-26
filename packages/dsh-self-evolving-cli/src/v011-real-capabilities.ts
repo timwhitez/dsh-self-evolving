@@ -99,6 +99,16 @@ function diagnosticTail(message: string, maxBytes = 8192): string {
   return clean.slice(low)
 }
 
+/** Publish idempotently: existing identical bytes are reused, any conflict fails. */
+async function writeIdempotent(path: string, bytes: string, mode = 0o600): Promise<void> {
+  const existing = await readFile(path, 'utf8').catch(() => null)
+  if (existing === bytes) return
+  if (existing !== null) {
+    throw new Error(`v0.1.1 fixture: conflicting retained artifact at ${path}`)
+  }
+  await writeExclusive(path, bytes, mode)
+}
+
 async function writeExclusive(path: string, bytes: string, mode = 0o600): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const file = await open(path, 'wx', mode)
@@ -598,6 +608,81 @@ async function exactParentEvidenceBinding(
   return binding
 }
 
+/**
+ * Execute the deterministic invalid-replacement fixture through the real
+ * validator and persist its complete lifecycle. The analysis is
+ * intentionally schema-invalid so assertV011 rejects it; the rejection
+ * record binds the validator, both fixture digests (the proposal is
+ * retained for attribution, only the analysis is replayed) and the reason
+ * digest so the audit can reproduce the rejection independently.
+ */
+async function executeInvalidReplacementFixture(
+  action: string,
+  binding: {
+    runId: string
+    proposalId: string
+    parentDigest: string
+    exportManifestDigest: `sha256:${string}`
+  },
+): Promise<void> {
+  const fixturePath = join(action, 'rejection.json')
+  if ((await stat(fixturePath).catch(() => null)) !== null) return
+  await mkdir(action, { recursive: true, mode: 0o700 })
+  const fixtureProposal = {
+    schemaVersion: 2,
+    proposalId: binding.proposalId,
+    canonicalParentDigest: binding.parentDigest,
+    evidenceExport: { manifestDigest: binding.exportManifestDigest },
+  }
+  // Schema-invalid on purpose on four independent counts (missing
+  // preservationRequirements, empty failureClusters/regressionRisks,
+  // too-short falsifiableHypothesis) so accidental validity requires
+  // loosening the schema itself.
+  const fixtureAnalysis = {
+    schemaVersion: 1,
+    failureClusters: [],
+    ancestorReconciliations: [],
+    selectedCluster: 'fixture-invalid-cluster',
+    falsifiableHypothesis: 'fixture hypothesis',
+    expectedBehaviorChange: 'none',
+    regressionRisks: [],
+  }
+  let reason: string | null = null
+  try {
+    await assertV011('analysis', fixtureAnalysis)
+  } catch (error) {
+    reason = error instanceof Error ? error.message : 'unknown fixture rejection'
+  }
+  if (reason === null) {
+    // Fail loud OUTSIDE the try: a swallowed sentinel would become
+    // synthesized evidence wearing the real-record shape.
+    throw new Error('v0.1.1 fixture: invalid analysis unexpectedly validated')
+  }
+  const proposalBytes = JSON.stringify(fixtureProposal, null, 2) + '\n'
+  const analysisBytes = JSON.stringify(fixtureAnalysis, null, 2) + '\n'
+  await writeIdempotent(join(action, 'invalid-fixture-proposal.json'), proposalBytes)
+  await writeIdempotent(join(action, 'invalid-fixture-analysis.json'), analysisBytes)
+  await writeExclusive(
+    fixturePath,
+    JSON.stringify(
+      {
+        schemaVersion: 2,
+        classification: 'FIXTURE_VALIDATOR_REJECT',
+        validator: 'assertV011:analysis',
+        fixtureProposalDigest: digestV011(proposalBytes),
+        fixtureAnalysisDigest: digestV011(analysisBytes),
+        reasonDigest: sha(reason),
+        reason: diagnosticTail(reason),
+        binding,
+        retained: true,
+        replacedBy: `${binding.runId}/proposal/1/1`,
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+}
+
 async function realV011Proposal(
   config: V011DemoConfig,
   catalog: FrozenCapabilityCatalog,
@@ -613,20 +698,6 @@ async function realV011Proposal(
   const existing = await readFile(cache, 'utf8').catch(() => null)
   if (existing !== null)
     return (JSON.parse(existing) as { stableProposal: StableProposal }).stableProposal
-  if (input.generation === 1 && input.attempt === 1) {
-    await mkdir(action, { recursive: true, mode: 0o700 })
-    const fixturePath = join(action, 'rejection.json')
-    if ((await stat(fixturePath).catch(() => null)) === null) {
-      await writeExclusive(
-        fixturePath,
-        JSON.stringify({
-          schemaVersion: 1,
-          classification: 'UNDECLARED_OUTPUT_FIXTURE',
-          retained: true,
-        }) + '\n',
-      )
-    }
-  }
   const exported = await exportForProposal(config, input.generation, input.attempt)
   const requiredParentEvidence = await exactParentEvidenceBinding(config, input, exported.manifest)
   const exportDigest = digestV011(canonicalV011(exported.manifest))
@@ -638,6 +709,19 @@ async function realV011Proposal(
     exportManifestDigest: exportDigest,
     capabilityCatalogDigest: catalog.digest,
   })
+  if (input.generation === 1 && input.attempt === 1) {
+    // The "deterministic invalid-child replacement" fixture must be a REAL
+    // negative action: a retained invalid proposal/analysis pair pushed
+    // through the same trusted validators, with the rejection record binding
+    // the validator identity, the exact fixture digests and the failure
+    // reason digest — never a free-standing synthesized file (issue #113).
+    await executeInvalidReplacementFixture(action, {
+      runId: config.runId,
+      proposalId,
+      parentDigest: input.parent.sourceDigest,
+      exportManifestDigest: exportDigest,
+    })
+  }
   const parentInput = join(action, 'input', 'parent')
   const archiveInput = join(action, 'input', 'archive')
   const contractsInput = join(action, 'input', 'contracts')

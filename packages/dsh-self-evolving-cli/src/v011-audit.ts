@@ -7,6 +7,7 @@ import {
   type V011Analysis,
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
+import { assertV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import { auditStableRun } from './audit.js'
 import type { V011DemoConfig } from './config.js'
 
@@ -28,6 +29,10 @@ async function json(path: string): Promise<unknown | null> {
     .catch(() => null)
 }
 
+function sha(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
 async function files(root: string): Promise<string[]> {
   const output: string[] = []
   async function walk(directory: string): Promise<void> {
@@ -41,16 +46,79 @@ async function files(root: string): Promise<string[]> {
   return output.sort()
 }
 
+export async function verifyInvalidReplacementFixture(config: V011DemoConfig): Promise<string[]> {
+  const reasons: string[] = [] // The invalid-replacement fixture must be a REAL reproducible negative
+  // action: the audit replays the retained fixture through the same
+  // validator and cross-checks every digest binding (issue #113). A
+  // pre-created two-field file cannot satisfy this.
+  const fixtureAction = join(config.stateDir, 'v011', 'actions', 'proposal-1-1')
+  const rejection = (await json(join(fixtureAction, 'rejection.json'))) as {
+    schemaVersion?: unknown
+    classification?: unknown
+    validator?: unknown
+    fixtureProposalDigest?: unknown
+    fixtureAnalysisDigest?: unknown
+    reasonDigest?: unknown
+    binding?: unknown
+    retained?: unknown
+    replacedBy?: unknown
+  } | null
+  if (rejection === null) {
+    reasons.push('deterministic invalid-child replacement fixture missing')
+  } else {
+    const proposalBytes = await readFile(
+      join(fixtureAction, 'invalid-fixture-proposal.json'),
+      'utf8',
+    ).catch(() => null)
+    const analysisBytes = await readFile(
+      join(fixtureAction, 'invalid-fixture-analysis.json'),
+      'utf8',
+    ).catch(() => null)
+    if (proposalBytes === null || analysisBytes === null) {
+      reasons.push('invalid-replacement fixture artifacts are not retained')
+    } else {
+      const binding =
+        typeof rejection.binding === 'object' && rejection.binding !== null
+          ? (rejection.binding as Record<string, unknown>)
+          : null
+      const replayable =
+        rejection.schemaVersion === 2 &&
+        rejection.classification === 'FIXTURE_VALIDATOR_REJECT' &&
+        rejection.validator === 'assertV011:analysis' &&
+        rejection.retained === true &&
+        typeof rejection.replacedBy === 'string' &&
+        rejection.replacedBy.endsWith('/proposal/1/1') &&
+        binding !== null &&
+        binding['runId'] === config.runId &&
+        digestV011(proposalBytes) === rejection.fixtureProposalDigest &&
+        digestV011(analysisBytes) === rejection.fixtureAnalysisDigest
+      if (!replayable) {
+        reasons.push(
+          'invalid-replacement fixture record is not digest-bound (legacy/synthetic records are not auditable; for an incomplete action delete ' +
+            `${join(fixtureAction, 'rejection.json')} and resume to regenerate)`,
+        )
+      } else {
+        // Replay the rejection through the real validator.
+        try {
+          await assertV011('analysis', JSON.parse(analysisBytes))
+          reasons.push('invalid-replacement fixture unexpectedly validates')
+        } catch (error) {
+          const replayed = error instanceof Error ? error.message : ''
+          if (sha(replayed) !== rejection.reasonDigest) {
+            reasons.push('invalid-replacement fixture reason is not reproducible')
+          }
+        }
+      }
+    }
+  }
+  return reasons
+}
+
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const reasons = [...predecessor.reasons]
-  const rejection = (await json(
-    join(config.stateDir, 'v011', 'actions', 'proposal-1-1', 'rejection.json'),
-  )) as { classification?: unknown; retained?: unknown } | null
-  if (rejection?.classification !== 'UNDECLARED_OUTPUT_FIXTURE' || rejection.retained !== true) {
-    reasons.push('deterministic invalid-child replacement fixture missing')
-  }
+  reasons.push(...(await verifyInvalidReplacementFixture(config)))
   const baselineMigration = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'migration-receipt.json'),
   )) as { inheritedResultsPolicy?: unknown } | null
