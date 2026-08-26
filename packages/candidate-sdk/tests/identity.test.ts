@@ -113,3 +113,35 @@ describe('canonical tar + identity', () => {
     expect(recomputed.hash).toBe(arch.hash)
   })
 })
+
+describe('canonical containment (issue #64)', () => {
+  it('rejects a declared file that reaches outside through an intermediate symlink', async () => {
+    // outside -> /etc : lstat on the FINAL component would happily stat
+    // /etc/hosts as a regular file; every intermediate component must be
+    // resolved without following links.
+    await symlink('/etc', join(root!, 'outside'))
+    await expect(buildCanonicalArchive(declareFiles(root!, ['outside/hosts']))).rejects.toThrow(
+      /intermediate path component|symlink rejected|escapes the trusted root/,
+    )
+  })
+
+  it('rejects hard-linked host files declared inside the tree', async () => {
+    const { link } = await import('node:fs/promises')
+    const externalHostFile = join(root!, '..', `canonical-host-${Date.now()}.txt`)
+    await writeFile(externalHostFile, 'host bytes\n')
+    try {
+      await link(externalHostFile, join(root!, 'linked.ts'))
+      await expect(buildCanonicalArchive(declareFiles(root!, ['linked.ts']))).rejects.toThrow(
+        /hard-linked/,
+      )
+    } finally {
+      await rm(externalHostFile, { force: true })
+    }
+  })
+
+  it('still admits regular single-link files beneath the root', async () => {
+    await writeFile2('a.ts', 'export const a = 1\n')
+    const archive = await buildCanonicalArchive(declareFiles(root!, ['a.ts']))
+    expect(archive.fileCount).toBe(1)
+  })
+})
