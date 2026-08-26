@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { EvaluationProvider } from '@dsh-self-evolving/core'
+import { readAll, type EvaluationProvider, type Journal } from '@dsh-self-evolving/core'
 import {
   createStableDemoConfig,
   createV011DemoConfig,
@@ -14,6 +14,14 @@ import {
   type StableDemoCapabilities,
   type StableProposal,
 } from '../src/index.js'
+
+function serviceJournal(config: { stateDir: string; runId: string }): Journal {
+  return {
+    journalDir: join(config.stateDir, 'journal'),
+    runId: config.runId,
+    segmentMaxBytes: 16 * 1024 * 1024,
+  }
+}
 
 const roots: string[] = []
 afterEach(async () => {
@@ -131,6 +139,54 @@ describe('stable-demo engine', () => {
     expect(evaluationReserveUsd(1.000001, 3)).toBe(0.333333)
     expect(() => evaluationReserveUsd(0.0000001, 15)).toThrow(/invalid USD budget allocation/)
     expect(() => evaluationReserveUsd(Number.NaN, 15)).toThrow(/invalid USD budget allocation/)
+  })
+
+  it('suspends with PENDING_EVALUATIONS while a launched saga is still running', async () => {
+    const { config, counters, capabilities } = await fixture()
+    const original = capabilities.evaluationProvider
+    let firstLaunchInspection = true
+    capabilities.evaluationProvider = (spec) => {
+      const provider = original(spec)
+      const inspect = provider.inspect.bind(provider)
+      provider.inspect = async (key) => {
+        // After the durable launch of the very first discovery trial, the
+        // provider still reports the job running: the saga must return
+        // pending instead of collecting.
+        if (
+          spec.kind === 'baseline-discovery' &&
+          spec.taskId === 'task-1' &&
+          counters.launches >= 1 &&
+          firstLaunchInspection &&
+          (await inspect(key)).status !== undefined
+        ) {
+          firstLaunchInspection = false
+          const real = await inspect(key)
+          return { ...real, status: 'running' as const }
+        }
+        return inspect(key)
+      }
+      return provider
+    }
+
+    const suspended = await runStableDemo(config, capabilities)
+    expect(suspended.status).toBe('PENDING_EVALUATIONS')
+    expect(suspended.baselineTrials).toBe(0)
+    expect(counters.launches).toBe(1)
+    expect(counters.collects).toBe(0)
+
+    const events = await readAll(serviceJournal(config))
+    expect(events.some((event) => event.type === 'failure-pool.frozen')).toBe(false)
+    expect(events.some((event) => event.type === 'run.terminal')).toBe(false)
+    await expect(stat(join(config.stateDir, 'failure-pool.json'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+
+    // The job has now finished: the plain resume reconciles the same action
+    // exactly once and completes the run.
+    const resumed = await runStableDemo(config, capabilities)
+    expect(resumed.status).toBe('STABLE_ITERATION_VERIFIED')
+    expect(counters.launches).toBe(9)
+    expect(counters.collects).toBe(9)
   })
 
   it('freezes a batch-discovered failure then creates three children at lineage depth >=2', async () => {
