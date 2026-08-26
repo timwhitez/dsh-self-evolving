@@ -26,7 +26,12 @@ export interface AdapterFetchAttempt {
   retryable: boolean
   /** True when the provider may already have executed/billed the attempt. */
   ambiguous: boolean
-  /** Usage found on the discarded attempt body, when parseable. */
+  /**
+   * Usage found on the discarded attempt body, when parseable. NOTE:
+   * `inputTokens` here is the provider-raw GROSS value (cached portion
+   * included); adapters net it against `cacheReadTokens` when summing into
+   * the final usage chunk.
+   */
   discardedUsage: AdapterDiscardedUsage | null
   responseId: string | null
 }
@@ -42,9 +47,3 @@ export function classifyStatus(status: number): { retryable: boolean; ambiguous:
   if (status === 408 || status >= 500) return { retryable: true, ambiguous: true }
   return { retryable: false, ambiguous: false }
 }
-
-/**
- * The attempt log assumes the adapter instance is single-flight: one
- * in-flight stream() call at a time. Production creates a fresh adapter per
- * proposal action and drives it from one sequential sandbox worker.
- */
