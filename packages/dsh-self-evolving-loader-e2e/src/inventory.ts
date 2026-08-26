@@ -100,3 +100,32 @@ export function render(inv: Inventory): string {
     `registryServices=[${inv.registryServices.join(',')}]`,
   ].join('\n')
 }
+
+/**
+ * Per-constructor handle-count delta between a pre-load baseline and a
+ * post-disposal probe. Any type whose count grew is a leak — a membership
+ * comparison would hide additional handles of an already-present type.
+ */
+export function leakedHandleDelta(
+  baseline: ReadonlyMap<string, number>,
+  current: ReadonlyMap<string, number>,
+): string[] {
+  const leaked: string[] = []
+  for (const [name, count] of current) {
+    const before = baseline.get(name) ?? 0
+    if (count > before) leaked.push(`${name}(+${count - before})`)
+  }
+  return leaked.sort()
+}
+
+/** Count live Node async handles (timers/sockets/etc) per constructor name. */
+export function activeHandleCounts(): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const handle of (
+    process as unknown as { _getActiveHandles?: () => { constructor?: { name?: string } }[] }
+  )._getActiveHandles?.() ?? []) {
+    const name = handle.constructor?.name ?? 'anon'
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  return counts
+}

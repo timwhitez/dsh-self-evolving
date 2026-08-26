@@ -29,14 +29,15 @@ interface LoaderContext {
   systemPrompt: { assemble: () => Promise<{ sections: Array<{ name: string; text: string }> }> }
 }
 
-function handles(): string[] {
-  return (
-    (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles?.() ?? []
-  )
-    .map(
-      (handle) => (handle as { constructor?: { name?: string } }).constructor?.name ?? 'anonymous',
-    )
-    .sort()
+function handleCounts(): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const handle of (
+    process as unknown as { _getActiveHandles?: () => unknown[] }
+  )._getActiveHandles?.() ?? []) {
+    const name = (handle as { constructor?: { name?: string } }).constructor?.name ?? 'anonymous'
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  return counts
 }
 
 function effects(ctx: Context): string[] {
@@ -55,7 +56,7 @@ function effects(ctx: Context): string[] {
   return output.sort()
 }
 
-const before = handles()
+const before = handleCounts()
 const ctx = new Context()
 let receipt: Record<string, unknown>
 try {
@@ -97,8 +98,13 @@ try {
 } finally {
   await ctx.fiber.dispose()
 }
-const after = handles()
-const leakedHandles = after.filter((handle) => !before.includes(handle))
+const after = handleCounts()
+// Membership-only comparison would hide a leaked handle whose constructor
+// already existed in the baseline (e.g. a probe IPC socket); compare counts.
+const leakedHandles = [...after.entries()]
+  .filter(([name, count]) => count > (before.get(name) ?? 0))
+  .map(([name, count]) => `${name}(+${count - (before.get(name) ?? 0)})`)
+  .sort()
 if (leakedHandles.length > 0) {
   throw new Error(`v0.1.1 Loader probe: leaked handles ${leakedHandles.join(',')}`)
 }

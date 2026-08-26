@@ -27,7 +27,12 @@ import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Group from '@deepseek-ai/cordis-plugin-group'
-import { render, snapshot } from '../src/index.js'
+import {
+  render,
+  snapshot,
+  activeHandleCounts as activeHandleCountsFromInventory,
+  leakedHandleDelta,
+} from '../src/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixturesDir = resolve(here, '..', 'fixtures')
@@ -43,15 +48,15 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // Disposal failures are gate failures: a tree that cannot be torn down is a
+  // leak even when the in-test snapshot assertion already passed.
   try {
     await ctx?.fiber.dispose()
-  } catch {
-    // disposal errors must not mask the test result; the snapshot assertion is
-    // the real gate. We still attempt cleanup.
+  } finally {
+    ctx = undefined
+    if (root !== undefined) await rm(root, { recursive: true, force: true })
+    root = undefined
   }
-  ctx = undefined
-  if (root !== undefined) await rm(root, { recursive: true, force: true })
-  root = undefined
 })
 
 /**
@@ -181,11 +186,11 @@ describe('Gate 0 — real Cordis Loader lifecycle', () => {
     BOOT_TIMEOUT,
     async () => {
       // Capture the ambient handle baseline BEFORE any Cordis boot: the test
-      // runner itself keeps sockets (vitest IPC). The quiescence gate is a DELTA:
-      // whatever handles exist when nothing RSI-owned is loaded must be exactly
-      // what exists again after a full boot+unload. A candidate that leaked a
-      // timer/socket/child process would add a handle that never returns.
-      const baselineHandles = activeHandleNames()
+      // runner itself keeps sockets (vitest IPC). The quiescence gate is a
+      // counted DELTA: per constructor type, the post-unload handle count may
+      // never exceed the pre-boot baseline. A membership test would hide any
+      // leaked handle whose type already existed in the baseline.
+      const baselineHandles = activeHandleCounts()
 
       const c = await bootFixture()
       const lc = c as unknown as Context & LoaderCtx
@@ -210,24 +215,17 @@ describe('Gate 0 — real Cordis Loader lifecycle', () => {
       const remaining = loaderAfter?.entries ? [...loaderAfter.entries()] : []
       expect(remaining.length).toBe(0)
 
-      // The handle set after unload must be a SUBSET of the pre-boot baseline.
-      // Anything new is a resource the candidate/loader failed to release.
-      const afterHandles = activeHandleNames()
-      const leaked = afterHandles.filter((h) => !baselineHandles.includes(h))
+      // Per constructor type, the handle count after unload must not exceed the
+      // pre-boot baseline. Anything counted upward is a resource the
+      // candidate/loader failed to release.
+      const afterHandles = activeHandleCounts()
+      const leaked = leakedHandleDelta(baselineHandles, afterHandles)
       expect(leaked, `handles leaked beyond baseline after unload: ${leaked.join(',')}`).toEqual([])
     },
   )
 })
 
-/** Snapshot the constructor names of live Node async handles (timers/sockets/etc). */
-function activeHandleNames(): string[] {
-  return (
-    (
-      process as unknown as {
-        _getActiveHandles?: () => { constructor?: { name?: string } }[]
-      }
-    )._getActiveHandles?.() ?? []
-  )
-    .map((h) => h.constructor?.name ?? 'anon')
-    .sort()
+/** Count live Node async handles (timers/sockets/etc) per constructor name. */
+function activeHandleCounts(): Map<string, number> {
+  return activeHandleCountsFromInventory()
 }
