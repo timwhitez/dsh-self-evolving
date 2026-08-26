@@ -58,13 +58,42 @@ function overlaps(left: string, right: string): boolean {
   return left === right || left.startsWith(right + sep) || right.startsWith(left + sep)
 }
 
+/**
+ * Lexically canonicalize a sandbox-namespace absolute path and reject any
+ * relative, empty, `.` or `..` component. The kernel resolves these components
+ * at execve time, so an unnormalized prefix match would authorize executables
+ * outside the allowed subtrees.
+ */
+export function normalizeSandboxPath(path: string): string {
+  if (!isAbsolute(path)) throw new Error('proposal sandbox: path must be absolute')
+  if (path.includes('\0')) throw new Error('proposal sandbox: path must not contain NUL')
+  const components = path.split(sep)
+  const normalized: string[] = []
+  // split('/') on '/a/b' yields ['', 'a', 'b']; the leading empty component is
+  // the root and a trailing separator would produce a trailing empty component.
+  for (let index = 1; index < components.length; index += 1) {
+    const component = components[index]!
+    if (component === '' || component === '.') {
+      throw new Error(`proposal sandbox: non-canonical path component in ${path}`)
+    }
+    if (component === '..') {
+      throw new Error(`proposal sandbox: parent traversal rejected in ${path}`)
+    }
+    normalized.push(component)
+  }
+  if (normalized.length === 0) {
+    throw new Error('proposal sandbox: path must not be the root')
+  }
+  return sep + normalized.join('/')
+}
+
 function validateCommand(command: string): void {
-  if (!isAbsolute(command)) throw new Error('proposal sandbox: command must be absolute')
+  const canonical = normalizeSandboxPath(command)
   const allowed = new Set(['/usr/bin/node', '/bin/sh', '/usr/bin/env'])
   if (
-    !allowed.has(command) &&
-    !command.startsWith('/input/contracts/') &&
-    !command.startsWith('/runtime/')
+    !allowed.has(canonical) &&
+    !canonical.startsWith('/input/contracts/') &&
+    !canonical.startsWith('/runtime/')
   ) {
     throw new Error(`proposal sandbox: command is outside the executable allowlist: ${command}`)
   }

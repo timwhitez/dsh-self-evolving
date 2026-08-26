@@ -34,6 +34,7 @@ export {
 } from './catalog.js'
 export {
   runProposalSandbox,
+  normalizeSandboxPath,
   type ProposalSandboxMounts,
   type ProposalSandboxInput,
   type ProposalSandboxResult,
