@@ -94,7 +94,7 @@ export async function verifyInvalidReplacementFixture(config: V011DemoConfig): P
         digestV011(analysisBytes) === rejection.fixtureAnalysisDigest
       if (!replayable) {
         reasons.push(
-          'invalid-replacement fixture record is not digest-bound (legacy/synthetic records are not auditable; for an in-complete action delete ' +
+          'invalid-replacement fixture record is not digest-bound (legacy/synthetic records are not auditable; for an incomplete action delete ' +
             `${join(fixtureAction, 'rejection.json')} and resume to regenerate)`,
         )
       } else {
