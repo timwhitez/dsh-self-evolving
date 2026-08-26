@@ -9,8 +9,8 @@
  * Algorithm: splitmix64 seeded by (masterSeed, streamName) → a 64-bit stream
  * seed; each draw advances a per-stream counter and mixes it. Deterministic
  * across hosts (no BigInt endianness issues — we use BigInt arithmetic over
- * uint64). Beta sampling uses a fixed inverse-CDF approximation so the same
- * (alpha, beta, counter) always yields the same draw.
+ * uint64). Beta sampling uses exact Gamma variates (Marsaglia–Tsang) so the
+ * same (alpha, beta, counter) always yields the same draw.
  */
 
 /** A named counter stream. */
@@ -69,25 +69,43 @@ function hashString(s: string): bigint {
 }
 
 /**
- * Sample from Beta(alpha, beta) via a deterministic inverse-CDF approximation.
- * Uses the Wilson-Hilferty / Gaussian approximation to the Beta CDF so the
- * same RNG state always produces the same draw. This is NOT a high-precision
- * sampler, but it is deterministic and adequate for Thompson selection where
- * only the argmax matters.
+ * Sample from Beta(alpha, beta) using exact Gamma variates.
+ *
+ * Marsaglia–Tsang (2000) generates Gamma(shape) with shape >= 1 via one
+ * standard-normal transform plus a bounded rejection loop, and shape < 1 via
+ * the boost Gamma(shape+1) * U^(1/shape) transformation. The Beta draw is
+ * Gamma(alpha) / (Gamma(alpha) + Gamma(beta)), which is exact for all positive
+ * finite parameters and produces no boundary clipping artifacts. Given the
+ * same stream state and parameters the rejection loop is deterministic, so
+ * resume replay reproduces every draw.
  */
 export function sampleBeta(rng: RngStream, alpha: number, beta: number): number {
-  // Mean and variance of Beta(alpha, beta).
-  const mean = alpha / (alpha + beta)
-  const variance = (alpha * beta) / ((alpha + beta) * (alpha + beta) * (alpha + beta + 1))
-  const std = Math.sqrt(variance)
-  // Inverse normal CDF via the Beasley-Springer-Moro approximation.
+  if (!Number.isFinite(alpha) || alpha <= 0 || !Number.isFinite(beta) || beta <= 0) {
+    throw new Error(`sampleBeta: parameters must be finite and positive (${alpha}, ${beta})`)
+  }
+  const x = sampleGamma(rng, alpha)
+  const y = sampleGamma(rng, beta)
+  return x / (x + y)
+}
+
+/** Deterministic Gamma(shape, 1) sampler (Marsaglia–Tsang). */
+function sampleGamma(rng: RngStream, shape: number): number {
+  if (shape >= 1) {
+    const d = shape - 1 / 3
+    const c = 1 / Math.sqrt(9 * d)
+    for (;;) {
+      const z = invNormalCdf(clamp(rng.nextDouble(), 1e-12, 1 - 1e-12))
+      const v = (1 + c * z) ** 3
+      if (v <= 0) continue
+      const u = clamp(rng.nextDouble(), 1e-12, 1 - 1e-12)
+      if (u < 1 - 0.0331 * z ** 4) return d * v
+      if (Math.log(u) < 0.5 * z * z + d * (1 - v + Math.log(v))) return d * v
+    }
+  }
+  // shape < 1: boost a Gamma(shape + 1) draw with U^(1/shape).
+  const boosted = sampleGamma(rng, shape + 1)
   const u = clamp(rng.nextDouble(), 1e-12, 1 - 1e-12)
-  const z = invNormalCdf(u)
-  let sample = mean + std * z
-  // Clamp to (0,1).
-  if (sample <= 0) sample = 1e-9
-  if (sample >= 1) sample = 1 - 1e-9
-  return sample
+  return boosted * u ** (1 / shape)
 }
 
 function clamp(x: number, lo: number, hi: number): number {
