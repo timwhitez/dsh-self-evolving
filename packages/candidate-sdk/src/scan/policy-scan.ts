@@ -14,6 +14,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
+import ts from 'typescript'
 
 export interface ScanHit {
   rule: string
@@ -117,6 +118,119 @@ function extractImports(src: string): { specifier: string; line: number }[] {
   return out
 }
 
+/** Root identifier of a property/element/optional access chain, if any. */
+function accessRootIdentifier(node: ts.Expression): string | null {
+  let current: ts.Expression = node
+  for (;;) {
+    if (ts.isIdentifier(current)) return current.text
+    if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+      current = current.expression
+      continue
+    }
+    return null
+  }
+}
+
+function lineOfNode(sourceFile: ts.SourceFile, node: ts.Node): number {
+  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+}
+
+/**
+ * Grammar-aware enforcement layer (issue #36).
+ *
+ * The regex layer cannot see through valid syntax variations: re-exports
+ * (`export * from 'node:fs'`), comments inside call positions
+ * (`import/*c*\/('x')`), element access (`process['env']`), absolute module
+ * specifiers, or aliased chain roots. This walk parses the file with the
+ * TypeScript grammar and inspects every relevant node shape directly:
+ *  - ALL module specifiers, from ImportDeclaration AND ExportDeclaration;
+ *  - dynamic `import()` / `require()` / `eval()` / `new Function()` calls
+ *    regardless of formatting/comments;
+ *  - ANY access chain rooted at `process` (dot, bracket, optional);
+ *  - any `globalThis` reference;
+ *  - a parse failure is itself a reject (`parse-failure`) — unparseable
+ *    source must fail closed instead of skipping the semantic layer.
+ */
+export function scanSourceAst(
+  path: string,
+  src: string,
+): { hits: ScanHit[]; imports: { specifier: string; line: number }[] } {
+  const sourceFile = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true)
+  const hits: ScanHit[] = []
+  const imports: { specifier: string; line: number }[] = []
+
+  const diagnostics = (
+    sourceFile as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }
+  ).parseDiagnostics
+  if (diagnostics !== undefined && diagnostics.length > 0) {
+    const first = diagnostics[0]!
+    const pos = typeof first.start === 'number' ? first.start : 0
+    hits.push({
+      rule: 'parse-failure',
+      severity: 'reject',
+      path,
+      line: src.slice(0, pos).split('\n').length,
+      snippet: ts.flattenDiagnosticMessageText(first.messageText, '\n').slice(0, 120),
+    })
+  }
+
+  const push = (rule: string, node: ts.Node, snippetText?: string) => {
+    hits.push({
+      rule,
+      severity: 'reject',
+      path,
+      line: lineOfNode(sourceFile, node),
+      snippet: (snippetText ?? node.getText(sourceFile)).slice(0, 120),
+    })
+  }
+
+  const visit = (node: ts.Node): void => {
+    // Every static module reference, including export-from and namespace re-export.
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const module = node.moduleSpecifier
+      if (module !== undefined && ts.isStringLiteralLike(module)) {
+        imports.push({ specifier: module.text, line: lineOfNode(sourceFile, node) })
+        if (/^\//.test(module.text)) {
+          push('import-absolute-path', node, module.text)
+        }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) push('dynamic-import', node)
+      else if (ts.isIdentifier(node.expression)) {
+        const name = node.expression.text
+        if (name === 'require') push('require-call', node)
+        else if (name === 'eval') push('eval', node)
+      }
+    }
+    if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'Function'
+    ) {
+      push('function-constructor', node)
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      if (accessRootIdentifier(node.expression) === 'process') push('process-global', node)
+    }
+    if (ts.isIdentifier(node) && node.text === 'globalThis') push('global-this', node)
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+
+  // Collapse duplicate (rule, line) rows produced by nested access chains.
+  const seen = new Set<string>()
+  return {
+    hits: hits.filter((hit) => {
+      const key = `${hit.rule}:${hit.line}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }),
+    imports,
+  }
+}
+
 function lineOf(src: string, index: number): number {
   return src.slice(0, index).split('\n').length
 }
@@ -138,6 +252,9 @@ function asGlobal(re: RegExp): RegExp {
 
 /**
  * Scan one file's content. Returns all hits; caller aggregates and decides.
+ *
+ * Layers: literal regex guards (also matching inside non-TS text), plus the
+ * grammar-aware AST layer for syntax-variation evasion, sharing one dedupe.
  */
 export function scanSource(path: string, src: string, opts: ScanOptions = {}): ScanHit[] {
   const dsh = opts.dshAllowlist ?? DEFAULT_DSH_ALLOWLIST
@@ -162,8 +279,16 @@ export function scanSource(path: string, src: string, opts: ScanOptions = {}): S
     }
   }
 
-  // Import allowlist enforcement.
-  for (const { specifier, line } of extractImports(src)) {
+  const ast = scanSourceAst(path, src)
+
+  // Import allowlist enforcement over BOTH collectors: regex extraction keeps
+  // covering non-parseable/text forms; the AST collector adds every syntactic
+  // import/export shape the regex cannot see. Dedupe by specifier+line.
+  const combinedImports = new Map<string, { specifier: string; line: number }>()
+  for (const entry of [...extractImports(src), ...ast.imports]) {
+    combinedImports.set(`${entry.specifier}:${entry.line}`, entry)
+  }
+  for (const { specifier, line } of combinedImports.values()) {
     if (specifier.startsWith('node:')) {
       if (!node.has(specifier)) {
         hits.push({
@@ -189,20 +314,35 @@ export function scanSource(path: string, src: string, opts: ScanOptions = {}): S
       }
       continue
     }
-    if (
-      specifier.startsWith('@dsh-self-evolving/') ||
-      specifier.startsWith('.') ||
-      specifier.startsWith('/')
-    ) {
+    if (specifier.startsWith('@dsh-self-evolving/') || specifier.startsWith('.')) {
       // candidate-relative or self import — allowed.
       continue
     }
-    // Any other bare/external specifier.
+    // Bare/external specifiers AND absolute filesystem specifiers are external
+    // surface: absolute paths bypass every root-relative containment and are
+    // forbidden outright unless pre-registered (issue #36).
     if (!extra.has(specifier)) {
-      hits.push({ rule: 'import-external', severity: 'reject', path, line, snippet: specifier })
+      hits.push({
+        rule: specifier.startsWith('/') ? 'import-absolute-path' : 'import-external',
+        severity: 'reject',
+        path,
+        line,
+        snippet: specifier,
+      })
     }
   }
-  return hits
+
+  hits.push(...ast.hits)
+
+  // One row per (rule, line): the AST layer re-detects what the regexes catch
+  // when the source is plain, which must not double-report.
+  const seen = new Set<string>()
+  return hits.filter((hit) => {
+    const key = `${hit.rule}:${hit.line}:${hit.snippet}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /**
