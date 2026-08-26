@@ -735,31 +735,39 @@ async function realV011Proposal(
     )
     const previousKey = process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
     process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = route.apiKey
-    const adapter = new TrustedResponsesAdapter({
-      route: lockedRoute,
-      apiKeyEnv: 'DSH_SELF_EVOLVING_PROVIDER_API_KEY',
-      expectedResponseModel: config.model.effective,
-      contextWindow: config.model.contextWindow,
-      requestMaxRetries: 12,
-      reasoningContinuationMaxTurns: 1,
-    })
+    // Outer acquisition boundary: EVERY exit path from here restores the
+    // previous environment and closes the gateway, aggregating cleanup
+    // failures instead of letting an evidence-write EEXIST strand a live
+    // socket or a process-global credential (issue #118).
+    let gateway: Awaited<ReturnType<typeof startProposalGateway>> | undefined
     let providerFailure: string | null = null
-    const handler = createProposalGatewayLlmHandler(adapter, lockedRoute)
-    const gateway = await startProposalGateway({
-      socketPath: join(action, 'gateway', 'proposal.sock'),
-      route: lockedRoute,
-      async handle(payload) {
-        try {
-          return await handler(payload)
-        } catch (error) {
-          providerFailure = error instanceof Error ? error.message : 'unknown provider failure'
-          throw error
-        }
-      },
-    })
-    let sandboxResult:
-      { exitCode: number | null; signal: string | null; stderr: string } | undefined
+    const sandboxResultRef: {
+      value: { exitCode: number | null; signal: string | null; stderr: string } | undefined
+    } = { value: undefined }
+    const cleanupErrors: unknown[] = []
+    const bodyErrorRef: { value?: unknown } = {}
     try {
+      const adapter = new TrustedResponsesAdapter({
+        route: lockedRoute,
+        apiKeyEnv: 'DSH_SELF_EVOLVING_PROVIDER_API_KEY',
+        expectedResponseModel: config.model.effective,
+        contextWindow: config.model.contextWindow,
+        requestMaxRetries: 12,
+        reasoningContinuationMaxTurns: 1,
+      })
+      const handler = createProposalGatewayLlmHandler(adapter, lockedRoute)
+      gateway = await startProposalGateway({
+        socketPath: join(action, 'gateway', 'proposal.sock'),
+        route: lockedRoute,
+        async handle(payload) {
+          try {
+            return await handler(payload)
+          } catch (error) {
+            providerFailure = error instanceof Error ? error.message : 'unknown provider failure'
+            throw error
+          }
+        },
+      })
       const result = await runProposalSandbox({
         mounts: {
           parent: parentInput,
@@ -775,16 +783,27 @@ async function realV011Proposal(
         maxOutputBytes: 4 * 1024 * 1024,
         gatewaySocket: gateway.socketPath,
       })
-      sandboxResult = result
+      sandboxResultRef.value = {
+        exitCode: result.exitCode,
+        signal: result.signal,
+        stderr: result.stderr,
+      }
       if (result.exitCode !== 0) {
         const message = `v0.1.1 real proposer failed: ${result.stderr}`
         await retainProposalRejection(action, 'PROPOSAL_SANDBOX_REJECT', message)
         throw new Error(message)
       }
+    } catch (error) {
+      bodyErrorRef.value = error
     } finally {
-      await writeExclusive(
-        join(action, 'gateway-receipts.json'),
-        JSON.stringify(gateway.receipts(), null, 2) + '\n',
+      // Teardown first so the trusted socket never outlives the work; receipt
+      // publication happens independently afterwards.
+      if (gateway !== undefined) {
+        await gateway.close().catch((error) => cleanupErrors.push(error))
+      }
+      const receiptsBytes = JSON.stringify(gateway?.receipts() ?? [], null, 2) + '\n'
+      await writeExclusive(join(action, 'gateway-receipts.json'), receiptsBytes).catch((error) =>
+        cleanupErrors.push(error),
       )
       await writeExclusive(
         join(action, 'proposal-diagnostic.json'),
@@ -792,24 +811,33 @@ async function realV011Proposal(
           {
             schemaVersion: 1,
             providerFailure,
-            gatewayReceiptCount: gateway.receipts().length,
+            gatewayReceiptCount: gateway?.receipts().length ?? 0,
             sandbox:
-              sandboxResult === undefined
+              sandboxResultRef.value === undefined
                 ? null
                 : {
-                    exitCode: sandboxResult.exitCode,
-                    signal: sandboxResult.signal,
-                    stderrSha256: sha(sandboxResult.stderr),
-                    stderrTail: diagnosticTail(sandboxResult.stderr),
+                    exitCode: sandboxResultRef.value.exitCode,
+                    signal: sandboxResultRef.value.signal,
+                    stderrSha256: sha(sandboxResultRef.value.stderr),
+                    stderrTail: diagnosticTail(sandboxResultRef.value.stderr),
                   },
           },
           null,
           2,
         ) + '\n',
-      )
-      await gateway.close()
+      ).catch((error) => cleanupErrors.push(error))
       if (previousKey === undefined) delete process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
       else process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = previousKey
+    }
+    // The original body error keeps priority; cleanup failures surface only
+    // after the environment is restored and never mask it (issue #118).
+    if (bodyErrorRef.value !== undefined) {
+      throw bodyErrorRef.value
+    }
+    if (cleanupErrors.length > 0) {
+      throw cleanupErrors[0] instanceof Error
+        ? cleanupErrors[0]
+        : new Error(String(cleanupErrors[0]))
     }
   }
   const worker = JSON.parse(await readFile(workerOutput, 'utf8')) as {
