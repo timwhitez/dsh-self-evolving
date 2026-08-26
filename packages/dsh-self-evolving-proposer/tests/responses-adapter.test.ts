@@ -309,4 +309,223 @@ describe('trusted Responses proposal adapter', () => {
       for await (const _chunk of adapter.stream(base)) void _chunk
     }).rejects.toThrow(/credential env DEEPSEEK_API_KEY is unavailable/)
   })
+
+  it('keeps ordinary conversation messages in the continuation input', async () => {
+    process.env['DEEPSEEK_API_KEY'] = 'x'
+    const wireBodies: Array<Record<string, unknown>> = []
+    let fetchCalls = 0
+    const adapter = new TrustedResponsesAdapter({
+      route,
+      contextWindow: 1_048_576,
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      async fetchImpl(_input, init) {
+        fetchCalls += 1
+        wireBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return fetchCalls === 1
+          ? Response.json({
+              id: 'response-tool-61',
+              model: route.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'reasoning-61',
+                  type: 'reasoning',
+                  status: 'completed',
+                  content: [{ type: 'reasoning_text', text: 'private' }],
+                },
+                {
+                  id: 'function-61',
+                  type: 'function_call',
+                  status: 'completed',
+                  call_id: 'call-61',
+                  name: 'read_file',
+                  arguments: '{"path":"x"}',
+                },
+              ],
+              usage: { input_tokens: 10, output_tokens: 5 },
+            })
+          : Response.json({
+              id: 'response-final-61',
+              model: route.model,
+              status: 'completed',
+              output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }],
+              usage: { input_tokens: 15, output_tokens: 1 },
+            })
+      },
+    })
+    const tools = [{ name: 'read_file', description: 'Read', parameters: { type: 'object' } }]
+    for await (const _chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: 'UNIQUE-USER-INSTRUCTION-marker' }],
+          source: { kind: 'user' },
+        }),
+      ],
+      tools,
+    })) {
+      void _chunk
+    }
+    const assistant = createAssistantMessage({
+      content: [
+        {
+          type: 'tool-call',
+          id: CallId('call-61'),
+          name: 'read_file',
+          arguments: '{}',
+        },
+      ],
+      source: { provider: route.provider, model: route.model },
+    })
+    const result = createToolResultMessage({
+      callId: CallId('call-61'),
+      content: [{ type: 'text', text: 'contents-61' }],
+      isError: false,
+    })
+    for await (const _chunk of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      // A stateless stateful-equivalent client replays the COMPLETE logical
+      // conversation; the adapter must translate it without dropping any
+      // ordinary message.
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: 'UNIQUE-USER-INSTRUCTION-marker' }],
+          source: { kind: 'user' },
+        }),
+        assistant,
+        result,
+      ],
+      tools,
+    })) {
+      void _chunk
+    }
+    expect(wireBodies).toHaveLength(2)
+    // First turn is a plain string input.
+    expect(wireBodies[0]!['input']).toContain('UNIQUE-USER-INSTRUCTION-marker')
+    // Continuation turn preserves the logical conversation as items:
+    // user instruction, cached reasoning+function_call, then its output.
+    const items = wireBodies[1]!['input'] as Array<Record<string, unknown>>
+    const flattened = JSON.stringify(items)
+    expect(flattened).toContain('UNIQUE-USER-INSTRUCTION-marker')
+    expect(items.some((item) => item['type'] === 'message' && item['role'] === 'user')).toBe(true)
+    expect(items.some((item) => item['type'] === 'function_call')).toBe(true)
+    expect(items.some((item) => item['type'] === 'function_call_output')).toBe(true)
+    // The cached private reasoning item is replayed for protocol pairing but
+    // ordering stays message-first.
+    expect(items[0]!['type']).toBe('message')
+  })
+
+  it('preserves assistant text between tool turns in the continuation input', async () => {
+    process.env['DEEPSEEK_API_KEY'] = 'x'
+    const wireBodies: Array<Record<string, unknown>> = []
+    let phase = 0
+    const adapter = new TrustedResponsesAdapter({
+      route,
+      contextWindow: 1_048_576,
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      async fetchImpl(_input, init) {
+        if (phase === 0) {
+          phase = 1
+          return Response.json({
+            id: 'resp-a',
+            model: route.model,
+            status: 'completed',
+            output: [
+              {
+                id: 'fn-a',
+                type: 'function_call',
+                status: 'completed',
+                call_id: 'call-a',
+                name: 'run',
+                arguments: '{}',
+              },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          })
+        }
+        if (phase === 1) {
+          phase = 2
+          wireBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+          return Response.json({
+            id: 'resp-b',
+            model: route.model,
+            status: 'completed',
+            output: [
+              {
+                id: 'fn-b',
+                type: 'function_call',
+                status: 'completed',
+                call_id: 'call-b',
+                name: 'run2',
+                arguments: '{}',
+              },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          })
+        }
+        return Response.json({
+          id: 'resp-c',
+          model: route.model,
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        })
+      },
+    })
+    const tools = [
+      { name: 'run', description: '', parameters: { type: 'object' } },
+      { name: 'run2', description: '', parameters: { type: 'object' } },
+    ]
+    for await (const c of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [
+        createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }),
+      ],
+      tools,
+    })) {
+      void c
+    }
+    // Turn 2: earlier user text + tool exchange + NEW assistant narration.
+    for await (const c of adapter.stream({
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      maxTokens: route.maxTokens,
+      messages: [
+        createAssistantMessage({
+          content: [
+            { type: 'text', text: 'I will run the tool now' },
+            { type: 'tool-call', id: CallId('call-a'), name: 'run', arguments: '{}' },
+          ],
+          source: { provider: route.provider, model: route.model },
+        }),
+        createToolResultMessage({
+          callId: CallId('call-a'),
+          content: [{ type: 'text', text: 'out' }],
+          isError: false,
+        }),
+      ],
+      tools,
+    })) {
+      void c
+    }
+    const items = wireBodies[0]!['input'] as Array<Record<string, unknown>>
+    expect(
+      items.some(
+        (item) =>
+          item['type'] === 'message' &&
+          item['role'] === 'assistant' &&
+          JSON.stringify(item).includes('I will run the tool now'),
+      ),
+    ).toBe(true)
+  })
 })
