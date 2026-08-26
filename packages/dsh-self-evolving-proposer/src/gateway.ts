@@ -35,6 +35,15 @@ export interface ProposalGatewayOptions {
   route: ProposalGatewayRoute
   handle: (payload: unknown) => Promise<unknown>
   maxRequestBytes?: number
+  /** Maximum concurrent sandbox connections; excess connections are destroyed on accept. */
+  maxConnections?: number
+  /**
+   * Inactivity deadline from accept until the client half-closes with its
+   * full request; a connection that never sends data/EOF is destroyed.
+   */
+  idleTimeoutMs?: number
+  /** Deadline from a complete request until the response is written. */
+  requestTimeoutMs?: number
 }
 
 export interface ProposalGatewayHandle {
@@ -135,47 +144,70 @@ export async function startProposalGateway(
   }
 
   const connections = new Set<Socket>()
+  // Connection-budget defaults bound socket count and lifetime so a single
+  // untrusted sandbox cannot exhaust the trusted gateway's descriptors by
+  // holding sockets open without EOF (issue #86).
+  const maxConnections = options.maxConnections ?? 16
+  const idleTimeoutMs = options.idleTimeoutMs ?? 60_000
+  const requestTimeoutMs = options.requestTimeoutMs ?? 25 * 60_000
   const server = createServer({ allowHalfOpen: true }, (socket) => {
+    if (connections.size >= maxConnections) {
+      socket.destroy()
+      return
+    }
     connections.add(socket)
+    const drop = (): void => {
+      socket.destroy()
+      connections.delete(socket)
+    }
+    // Idle/first-byte deadline: armed from accept and disarmed as soon as the
+    // request arrives; slowloris-style trickled or silent sockets die here.
+    let idleArmed = true
+    const disarmIdle = (): void => {
+      if (idleArmed) {
+        idleArmed = false
+        socket.setTimeout(0)
+      }
+    }
+    socket.setTimeout(idleTimeoutMs, drop)
     socket.once('close', () => connections.delete(socket))
+    socket.once('error', drop)
     const chunks: Buffer[] = []
     let size = 0
-    let overLimit = false
     socket.on('data', (chunk: Buffer) => {
+      disarmIdle()
       size += chunk.byteLength
       if (size > maxRequestBytes) {
-        overLimit = true
+        // Destroy immediately instead of waiting for EOF while buffering.
+        drop()
         return
       }
       chunks.push(chunk)
     })
     socket.once('end', () => {
+      disarmIdle()
       void (async () => {
         let response: ProposalGatewayResponse
-        if (overLimit) {
+        // Bounded handler window: a hung provider call cannot hold the
+        // connection (and its descriptor) open indefinitely.
+        const budget = setTimeout(drop, requestTimeoutMs)
+        try {
+          const raw = Buffer.concat(chunks).toString('utf8')
+          if (raw.split('\n').filter((line) => line.length > 0).length !== 1) {
+            throw new Error('one request required')
+          }
+          response = await request(JSON.parse(raw) as ProposalGatewayRequest)
+        } catch {
           response = {
             schemaVersion: 1,
             requestId: 'invalid',
             ok: false,
-            error: 'request exceeds byte limit',
+            error: 'invalid request JSON',
           }
-        } else {
-          try {
-            const raw = Buffer.concat(chunks).toString('utf8')
-            if (raw.split('\n').filter((line) => line.length > 0).length !== 1) {
-              throw new Error('one request required')
-            }
-            response = await request(JSON.parse(raw) as ProposalGatewayRequest)
-          } catch {
-            response = {
-              schemaVersion: 1,
-              requestId: 'invalid',
-              ok: false,
-              error: 'invalid request JSON',
-            }
-          }
+        } finally {
+          clearTimeout(budget)
         }
-        socket.end(JSON.stringify(response) + '\n')
+        socket.end(`${JSON.stringify(response)}\n`)
       })()
     })
   })
