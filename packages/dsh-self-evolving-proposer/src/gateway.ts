@@ -180,7 +180,15 @@ export async function startProposalGateway(
     })
   })
   await listen(server, socketPath)
-  await chmod(socketPath, 0o600)
+  try {
+    await chmod(socketPath, 0o600)
+  } catch (error) {
+    // A chmod failure must not strand the already-listening server/socket:
+    // tear down before propagating (issue #118).
+    await closeServer(server).catch(() => {})
+    await rm(socketPath, { force: true }).catch(() => {})
+    throw error
+  }
   let closed = false
   return {
     socketPath,
