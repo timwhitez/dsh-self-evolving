@@ -157,17 +157,30 @@ export async function snapshotV011Tree(
   return { root, files, sourceBytes, fixtureBytes, testFiles }
 }
 
-function changedLineCount(parent: string, child: string): number {
-  const counts = new Map<string, number>()
-  for (const line of parent.split('\n')) counts.set(line, (counts.get(line) ?? 0) + 1)
-  let additions = 0
-  for (const line of child.split('\n')) {
-    const remaining = counts.get(line) ?? 0
-    if (remaining === 0) additions += 1
-    else counts.set(line, remaining - 1)
+/**
+ * Order-aware line edit distance: removals plus additions implied by the
+ * longest common subsequence of lines. A pure multiset comparison would count
+ * reordered existing lines as zero changes although reordering can completely
+ * change program behavior.
+ */
+export function changedLineCount(parent: string, child: string): number {
+  const a = parent.split('\n')
+  const b = child.split('\n')
+  // LCS length via rolling rows. Pathological giant files fall back to the
+  // total line count, a strict upper bound on any edit distance (fail closed).
+  if (a.length * b.length > 25_000_000) return a.length + b.length
+  let previous = new Int32Array(b.length + 1)
+  let current = new Int32Array(b.length + 1)
+  for (let i = 1; i <= a.length; i += 1) {
+    const line = a[i - 1]!
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] =
+        line === b[j - 1] ? previous[j - 1]! + 1 : Math.max(previous[j]!, current[j - 1]!)
+    }
+    ;[previous, current] = [current, previous]
   }
-  const removals = [...counts.values()].reduce((total, count) => total + count, 0)
-  return additions + removals
+  const common = previous[b.length]!
+  return a.length - common + (b.length - common)
 }
 
 const behaviorPrinter = ts.createPrinter({
