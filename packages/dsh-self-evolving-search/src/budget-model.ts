@@ -80,6 +80,45 @@ export function buildBudgetModel(
   const targets = opts.targets ?? DEFAULT_TARGETS
   const B_prop_usd = opts.B_prop_usd ?? 40
 
+  const invalid = (reason: string): FrozenBudget => ({
+    B_eval: 0,
+    B_prop_usd,
+    k_sealed,
+    concurrency,
+    reserveFraction: targets.reserveFraction,
+    predictedP90CostUsd: Number.NaN,
+    predictedP90WallSec: Number.NaN,
+    feasible: false,
+    reason,
+  })
+
+  // Every plan/target parameter must satisfy its explicit domain before any
+  // arithmetic: NaN comparisons are false and negatives shrink predictions,
+  // so malformed inputs would otherwise pass the upper-bound gate.
+  if (!isPositiveSafeInteger(K)) return invalid('K must be a positive safe integer')
+  if (!isPositiveSafeInteger(k_sealed)) {
+    return invalid('k_sealed must be a positive safe integer')
+  }
+  if (!isPositiveSafeInteger(concurrency)) {
+    return invalid('concurrency must be a positive safe integer')
+  }
+  if (!Number.isFinite(B_prop_usd) || B_prop_usd < 0) {
+    return invalid('B_prop_usd must be finite and non-negative')
+  }
+  if (!Number.isFinite(targets.maxCostUsd) || targets.maxCostUsd <= 0) {
+    return invalid('targets.maxCostUsd must be finite and positive')
+  }
+  if (!Number.isFinite(targets.maxWallSec) || targets.maxWallSec <= 0) {
+    return invalid('targets.maxWallSec must be finite and positive')
+  }
+  if (
+    !Number.isFinite(targets.reserveFraction) ||
+    targets.reserveFraction < 0 ||
+    targets.reserveFraction >= 1
+  ) {
+    return invalid('targets.reserveFraction must be finite and within [0, 1)')
+  }
+
   if (samples.length === 0) {
     return {
       B_eval: 0,
@@ -91,6 +130,29 @@ export function buildBudgetModel(
       predictedP90WallSec: 0,
       feasible: false,
       reason: 'no calibration samples',
+    }
+  }
+
+  for (const sample of samples) {
+    if (
+      typeof sample.candidateId !== 'string' ||
+      sample.candidateId.length === 0 ||
+      typeof sample.taskId !== 'string' ||
+      sample.taskId.length === 0
+    ) {
+      return invalid('calibration samples must carry non-empty candidate/task identities')
+    }
+    if (!Number.isSafeInteger(sample.attempt) || sample.attempt < 0) {
+      return invalid(`calibration sample attempt must be a non-negative integer: ${sample.taskId}`)
+    }
+    if (sample.reward !== 0 && sample.reward !== 1) {
+      return invalid(`calibration sample reward must be binary: ${sample.taskId}`)
+    }
+    if (!Number.isFinite(sample.costUsd) || sample.costUsd < 0) {
+      return invalid(`calibration sample costUsd must be finite and non-negative: ${sample.taskId}`)
+    }
+    if (!Number.isFinite(sample.wallSec) || sample.wallSec <= 0) {
+      return invalid(`calibration sample wallSec must be finite and positive: ${sample.taskId}`)
     }
   }
 
@@ -139,4 +201,8 @@ function percentile(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 0) return 0
   const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.floor(p * (sortedAsc.length - 1))))
   return sortedAsc[idx]!
+}
+
+function isPositiveSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0
 }
