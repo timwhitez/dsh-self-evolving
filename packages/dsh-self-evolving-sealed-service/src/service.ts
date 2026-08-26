@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { chmod, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
   SPLIT_SIZES,
@@ -194,28 +194,55 @@ async function atomicJson(path: string, value: unknown, mode: number): Promise<v
   await syncDir(dirname(path))
 }
 
+/**
+ * Publish one complete immutable public receipt.
+ *
+ * Bytes are written and fsynced to a unique staging sibling first, then
+ * atomically hard-linked to the final path: readers can only ever observe the
+ * absence of the receipt or a complete fsynced record — never a truncated
+ * final file that a crash would strand forever as an unrecoverable conflict.
+ * An existing final record is reused only when byte-identical; anything else
+ * is a genuine conflict.
+ */
 async function publishJson(path: string, value: unknown, mode: number): Promise<void> {
   const expected = canonical(value) + '\n'
-  const handle = await open(path, 'wx', mode).catch(async (error: NodeJS.ErrnoException) => {
-    if (error.code !== 'EEXIST') throw error
-    if ((await lstat(path)).isSymbolicLink()) {
-      throw new Error(`PUBLIC_RECEIPT_CONFLICT: symlink refused at ${path}`, { cause: error })
-    }
-    const existing = await readFile(path, 'utf8')
-    if (existing !== expected) {
-      throw new Error(`PUBLIC_RECEIPT_CONFLICT: ${path}`, { cause: error })
-    }
+  const existing = await readFile(path, 'utf8').catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
     return null
   })
-  if (handle === null) return
-  try {
-    await handle.writeFile(expected)
-    await handle.sync()
-  } finally {
-    await handle.close()
+  if (existing !== null) {
+    if ((await lstat(path)).isSymbolicLink()) {
+      throw new Error(`PUBLIC_RECEIPT_CONFLICT: symlink refused at ${path}`)
+    }
+    if (existing !== expected) throw new Error(`PUBLIC_RECEIPT_CONFLICT: ${path}`)
+    return
   }
-  await chmod(path, mode)
-  await syncDir(dirname(path))
+  const staging = join(
+    dirname(path),
+    `.${path.split('/').pop()}.staging-${process.pid}-${randomBytes(8).toString('hex')}`,
+  )
+  try {
+    const handle = await open(staging, 'wx', mode)
+    try {
+      await handle.writeFile(expected)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await chmod(staging, mode)
+    try {
+      await link(staging, path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const raced = await readFile(path, 'utf8')
+      if ((await lstat(path)).isSymbolicLink() || raced !== expected) {
+        throw new Error(`PUBLIC_RECEIPT_CONFLICT: ${path}`, { cause: error })
+      }
+    }
+    await syncDir(dirname(path))
+  } finally {
+    await rm(staging, { force: true })
+  }
 }
 
 async function prepareDirs(privateDir: string, publicDir: string): Promise<void> {
@@ -249,46 +276,86 @@ async function validatePrivateDir(privateDir: string): Promise<void> {
   }
 }
 
-async function withServiceLock<T>(privateDir: string, action: () => Promise<T>): Promise<T> {
-  const lockPath = join(privateDir, '.service.lock')
-  let handle: Awaited<ReturnType<typeof open>>
-  try {
-    handle = await open(lockPath, 'wx', 0o600)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    const owner = await readFile(lockPath, 'utf8').catch(() => '')
-    const [pidText, expectedStart] = owner.trim().split(':')
-    const pid = Number(pidText)
-    const actualStart = Number.isSafeInteger(pid) ? await processStartTicks(pid) : null
-    if (actualStart !== null && actualStart === expectedStart) {
-      throw new Error('SERVICE_BUSY: another writer holds the lock', { cause: error })
-    }
-    await rm(lockPath, { force: true })
-    handle = await open(lockPath, 'wx', 0o600)
-  }
-  try {
-    const start = await processStartTicks(process.pid)
-    if (start === null) throw new Error('SERVICE_IDENTITY_UNAVAILABLE')
-    await handle.writeFile(`${process.pid}:${start}\n`)
-    await handle.sync()
-    return await action()
-  } finally {
-    await handle.close()
-    await rm(lockPath, { force: true })
-  }
-}
-
-async function processStartTicks(pid: number): Promise<string | null> {
+/**
+ * Provably-dead, ambiguous, or absent owner probe result.
+ * - `null`: the pid definitely does not exist (ENOENT/ESRCH) — stale.
+ * - `'ambiguous'`: liveness could not be determined (EACCES/EIO/short read) —
+ *   must be treated as BUSY, never reclaimed.
+ */
+async function processStartTicks(pid: number): Promise<string | null | 'ambiguous'> {
   try {
     const raw = await readFile(`/proc/${pid}/stat`, 'utf8')
     const suffix = raw
       .slice(raw.lastIndexOf(') ') + 2)
       .trim()
       .split(/\s+/)
-    return suffix[19] ?? null
-  } catch {
-    return null
+    return suffix[19] ?? 'ambiguous'
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ESRCH') return null
+    return 'ambiguous'
   }
+}
+
+async function withServiceLock<T>(privateDir: string, action: () => Promise<T>): Promise<T> {
+  const lockPath = join(privateDir, '.service.lock')
+  const start = await processStartTicks(process.pid)
+  if (start === null || start === 'ambiguous') throw new Error('SERVICE_IDENTITY_UNAVAILABLE')
+  const ownerRecord = `${process.pid}:${start}\n`
+  let handle: Awaited<ReturnType<typeof open>> | null = null
+  for (let attempt = 0; attempt < 4 && handle === null; attempt += 1) {
+    try {
+      handle = await open(lockPath, 'wx', 0o600)
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    // A lock file exists. Reclaim only a provably stale owner, and delete only
+    // when both the bytes and the inode still match the stale observation —
+    // a fresh replacement lock (different inode or record) must survive.
+    const observed = await readFile(lockPath, 'utf8').catch(() => null)
+    if (observed === null) continue
+    const observedStat = await lstat(lockPath).catch(() => null)
+    const stale = await isProvablyStaleOwner(observed.trim())
+    if (!stale) throw new Error('SERVICE_BUSY: another writer holds the lock')
+    const currentStat = await lstat(lockPath).catch(() => null)
+    const current = await readFile(lockPath, 'utf8').catch(() => null)
+    if (
+      currentStat === null ||
+      observedStat === null ||
+      currentStat.ino !== observedStat.ino ||
+      current !== observed
+    ) {
+      continue
+    }
+    await rm(lockPath, { force: true })
+  }
+  if (handle === null) throw new Error('SERVICE_BUSY: lock acquisition did not converge')
+  try {
+    await handle.writeFile(ownerRecord)
+    await handle.sync()
+    return await action()
+  } finally {
+    await handle.close()
+    // Release only the exact record this process published; a reclaimer may
+    // have already replaced an abandoned lock file owned by someone else.
+    const current = await readFile(lockPath, 'utf8').catch(() => null)
+    if (current === ownerRecord) await rm(lockPath, { force: true })
+  }
+}
+
+async function isProvablyStaleOwner(owner: string): Promise<boolean> {
+  const [pidText, expectedStart] = owner.split(':')
+  const pid = Number(pidText)
+  if (!Number.isSafeInteger(pid) || pid <= 0 || expectedStart === undefined || !expectedStart) {
+    // Crashed between exclusive create and the owner write: no live process
+    // can hold this lock, so it is safe to reclaim.
+    return true
+  }
+  const actualStart = await processStartTicks(pid)
+  if (actualStart === 'ambiguous') return false
+  if (actualStart === null) return true
+  return actualStart !== expectedStart
 }
 
 function sealState(body: PrivateCeremonyStateBody): PrivateCeremonyState {
@@ -316,7 +383,12 @@ async function readState(privateDir: string): Promise<PrivateCeremonyState> {
   const statePath = join(privateDir, 'ceremony-state.json')
   const stateInfo = await lstat(statePath).catch(() => null)
   if (stateInfo?.isSymbolicLink()) throw new Error('EVIDENCE_CORRUPT: private state is a symlink')
-  const raw = await readFile(statePath, 'utf8').catch(() => null)
+  // Only a confirmed ENOENT means "not initialized"; EACCES/EIO must fail
+  // closed instead of being treated as an absent ceremony (issue #95).
+  const raw = await readFile(statePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return null
+  })
   if (raw === null) throw new Error('CEREMONY_NOT_INITIALIZED')
   const state = JSON.parse(raw) as PrivateCeremonyState
   const { stateHash, ...body } = state
@@ -337,8 +409,13 @@ async function ceremony(request: CeremonyRequest): Promise<ServiceResponse> {
   const privateDir = resolve(request.privateDir)
   const publicDir = resolve(request.publicDir)
   return withServiceLock(request.privateDir, async () => {
+    // Only a confirmed ENOENT may initialize; unreadable-but-present state
+    // must fail closed, never be silently regenerated over (issue #95).
     const existing = await readFile(join(request.privateDir, 'ceremony-state.json'), 'utf8').catch(
-      () => null,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+        return null
+      },
     )
     if (existing !== null) {
       const state = await readState(request.privateDir)
