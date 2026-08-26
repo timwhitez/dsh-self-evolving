@@ -75,6 +75,15 @@ function flattenMessages(options: GenerateOptions): string {
     .join('\n\n')
 }
 
+/**
+ * Canonical Responses input for a stateless continuation turn.
+ *
+ * With `store:false` every wire request must carry the COMPLETE logical
+ * conversation: ordinary user/assistant text survives alongside the cached
+ * provider reasoning/function-call items and their outputs, in message
+ * order. Dropping plain messages would orphan the model from its own task
+ * right after the first tool result (issue #61).
+ */
 function continuationInput(
   options: GenerateOptions,
   priorItemsByCallId: ReadonlyMap<string, ResponsesOutputItem[]>,
@@ -82,11 +91,30 @@ function continuationInput(
   const input: Array<Record<string, unknown>> = []
   let sawToolHistory = false
   const includedItems = new Set<string>()
+  const pushMessage = (role: 'user' | 'assistant', text: string): void => {
+    if (!text.trim()) return
+    input.push({
+      type: 'message',
+      role,
+      content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
+    })
+  }
   for (const message of options.messages) {
-    if (message.role === 'assistant') {
-      for (const call of message.content.filter((block) => block.type === 'tool-call')) {
+    const role = message.role === 'assistant' ? 'assistant' : 'user'
+    let pendingText = ''
+    const flush = (): void => {
+      pushMessage(role, pendingText)
+      pendingText = ''
+    }
+    for (const block of message.content) {
+      if (block.type === 'text') {
+        pendingText += (pendingText ? '\n' : '') + block.text
+        continue
+      }
+      if (block.type === 'tool-call') {
         sawToolHistory = true
-        const prior = priorItemsByCallId.get(String(call.id))
+        flush()
+        const prior = priorItemsByCallId.get(String(block.id))
         if (prior === undefined) {
           throw new Error('responses adapter: trusted tool-call state is unavailable')
         }
@@ -96,17 +124,21 @@ function continuationInput(
           includedItems.add(key)
           input.push(item as Record<string, unknown>)
         }
+        continue
       }
-      continue
+      if (block.type === 'tool-result') {
+        sawToolHistory = true
+        flush()
+        input.push({
+          type: 'function_call_output',
+          call_id: String(block.toolCallId),
+          output: textOf(block.content) || '(no output)',
+        })
+        continue
+      }
+      // reasoning / image / extension blocks are not replayed as text.
     }
-    for (const result of message.content.filter((block) => block.type === 'tool-result')) {
-      sawToolHistory = true
-      input.push({
-        type: 'function_call_output',
-        call_id: String(result.toolCallId),
-        output: textOf(result.content) || '(no output)',
-      })
-    }
+    flush()
   }
   return sawToolHistory ? input : null
 }
