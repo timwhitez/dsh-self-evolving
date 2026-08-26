@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, rm, stat } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
+import type { AdapterFetchAttempt } from './fetch-attempts.js'
 import { dirname, resolve } from 'node:path'
 
 export interface ProposalGatewayRoute {
@@ -35,19 +36,7 @@ export interface ProposalGatewayReceipt {
   responseHash: string
   routeHash: string
   /** Transport-retry attempt log for the trusted provider fetch (issue #123). */
-  attempts?: Array<{
-    attemptIndex: number
-    status: number | null
-    retryable: boolean
-    ambiguous: boolean
-    discardedUsage: {
-      inputTokens: number
-      outputTokens: number
-      cacheReadTokens: number
-      reasoningTokens: number
-    } | null
-    responseId: string | null
-  }>
+  attempts?: AdapterFetchAttempt[]
 }
 
 export interface ProposalGatewayHandleContext {
@@ -277,7 +266,13 @@ export async function startProposalGateway(
   return {
     socketPath,
     request,
-    receipts: () => receiptLog.map((receipt) => ({ ...receipt })),
+    receipts: () =>
+      receiptLog.map((receipt) => ({
+        ...receipt,
+        ...(receipt.attempts === undefined
+          ? {}
+          : { attempts: receipt.attempts.map((row) => ({ ...row })) }),
+      })),
     async close() {
       if (closed) return
       closed = true

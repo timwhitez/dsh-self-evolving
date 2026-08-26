@@ -240,4 +240,95 @@ describe('gateway receipts carry attempt logs', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  describe('discarded-cache accounting (review blocker)', () => {
+    it('does not double-count discarded cached tokens into inputTokens', async () => {
+      process.env['DEEPSEEK_API_KEY'] = 'x'
+      let calls = 0
+      const adapter = new TrustedResponsesAdapter({
+        route,
+        contextWindow: 1_048_576,
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        requestMaxRetries: 1,
+        async fetchImpl() {
+          calls += 1
+          return calls === 1
+            ? new Response(
+                JSON.stringify({
+                  id: 'resp-cache-500',
+                  usage: {
+                    input_tokens: 1000,
+                    output_tokens: 200,
+                    input_tokens_details: { cached_tokens: 900 },
+                  },
+                }),
+                { status: 500, headers: { 'content-type': 'application/json' } },
+              )
+            : new Response(
+                JSON.stringify(
+                  okResponsesBody('ok', {
+                    input_tokens: 1000,
+                    output_tokens: 50,
+                    input_tokens_details: { cached_tokens: 900 },
+                    output_tokens_details: { reasoning_tokens: 0 },
+                  }),
+                ),
+                { status: 200, headers: { 'content-type': 'application/json' } },
+              )
+        },
+      })
+      const chunks: Array<Record<string, unknown>> = []
+      for await (const chunk of adapter.stream({
+        provider: route.provider,
+        model: route.model,
+        reasoningEffort: route.reasoningEffort,
+        maxTokens: route.maxTokens,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+      })) {
+        chunks.push(chunk as unknown as Record<string, unknown>)
+      }
+      const usage = chunks.find((chunk) => chunk['type'] === 'usage')?.['usage'] as Record<
+        string,
+        number
+      >
+      // Both attempts bill 100 net input (1000 gross - 900 cached) each.
+      expect(usage['inputTokens']).toBe(200)
+      expect(usage['cacheReadTokens']).toBe(1800)
+      expect(usage['outputTokens']).toBe(250)
+    })
+
+    it('salvages usage from the final failed attempt when retries are exhausted', async () => {
+      process.env['DEEPSEEK_API_KEY'] = 'x'
+      const adapter = new TrustedResponsesAdapter({
+        route,
+        contextWindow: 1_048_576,
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        requestMaxRetries: 1,
+        async fetchImpl() {
+          return new Response(
+            JSON.stringify({
+              id: 'resp-final-fail',
+              usage: { input_tokens: 77, output_tokens: 3 },
+            }),
+            { status: 500, headers: { 'content-type': 'application/json' } },
+          )
+        },
+      })
+      await expect(async () => {
+        for await (const _chunk of adapter.stream({
+          provider: route.provider,
+          model: route.model,
+          reasoningEffort: route.reasoningEffort,
+          maxTokens: route.maxTokens,
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        })) {
+          void _chunk
+        }
+      }).rejects.toThrow(/HTTP 500/)
+      const attempts = adapter.lastFetchAttempts
+      expect(attempts).toHaveLength(2)
+      expect(attempts[1]!.discardedUsage).toMatchObject({ inputTokens: 77, outputTokens: 3 })
+      expect(attempts[1]!.responseId).toBe('resp-final-fail')
+    })
+  })
 })

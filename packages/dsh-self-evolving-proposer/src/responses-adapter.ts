@@ -267,6 +267,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.fetchAttempts = []
     const route = this.config.route
     const effectiveMaxTokens = options.maxTokens ?? route.maxTokens
     if (
@@ -289,7 +290,6 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       throw new Error('responses adapter: request has no model input')
     }
 
-    this.fetchAttempts = []
     const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0 }
     let sawReasoningUsage = false
     const responseIds: string[] = []
@@ -324,8 +324,12 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       )
       body = fetched.body
       // Discarded transport retries may already have been billed: count their
-      // usage into the same totals as the surviving response (issue #123).
-      usage.inputTokens += fetched.discardedUsage.inputTokens
+      // usage into the same totals as the surviving response, NET of cache the
+      // same way the surviving body is counted (issue #123).
+      usage.inputTokens += Math.max(
+        0,
+        fetched.discardedUsage.inputTokens - fetched.discardedUsage.cacheReadTokens,
+      )
       usage.outputTokens += fetched.discardedUsage.outputTokens
       usage.cacheReadTokens += fetched.discardedUsage.cacheReadTokens
       if (fetched.discardedUsage.reasoningTokens > 0) {
@@ -511,14 +515,44 @@ export class TrustedResponsesAdapter extends LlmAdapter {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
       const { retryable, ambiguous } = classifyStatus(response.status)
-      if (response.ok || !retryable || attempt === maxRetries) {
+      if (response.ok) {
         this.fetchAttempts.push({
-          attemptIndex: attempt,
+          attemptIndex: this.fetchAttempts.length,
           status: response.status,
           retryable,
           ambiguous,
           discardedUsage: null,
           responseId: null,
+        })
+        break
+      }
+      if (!retryable || attempt === maxRetries) {
+        // Final failed attempt: salvage any billable usage off its body too —
+        // the provider may have executed before failing (issue #123).
+        let lastDiscardedUsage: AdapterFetchAttempt['discardedUsage'] = null
+        let lastResponseId: string | null = null
+        try {
+          const parsed = JSON.parse(await response.text()) as ResponsesBody
+          if (typeof parsed.id === 'string') lastResponseId = parsed.id
+          const inputTotal = finiteCount(parsed.usage?.input_tokens) ?? 0
+          const cacheRead = finiteCount(parsed.usage?.input_tokens_details?.cached_tokens) ?? 0
+          lastDiscardedUsage = {
+            inputTokens: inputTotal,
+            outputTokens: finiteCount(parsed.usage?.output_tokens) ?? 0,
+            cacheReadTokens: cacheRead,
+            reasoningTokens:
+              finiteCount(parsed.usage?.output_tokens_details?.reasoning_tokens) ?? 0,
+          }
+        } catch {
+          // Non-JSON failure body: recorded without salvaged usage.
+        }
+        this.fetchAttempts.push({
+          attemptIndex: this.fetchAttempts.length,
+          status: response.status,
+          retryable,
+          ambiguous,
+          discardedUsage: lastDiscardedUsage,
+          responseId: lastResponseId,
         })
         break
       }
@@ -548,7 +582,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
         // Non-JSON error body: the attempt is still recorded as ambiguous.
       }
       this.fetchAttempts.push({
-        attemptIndex: attempt,
+        attemptIndex: this.fetchAttempts.length,
         status: response.status,
         retryable,
         ambiguous,

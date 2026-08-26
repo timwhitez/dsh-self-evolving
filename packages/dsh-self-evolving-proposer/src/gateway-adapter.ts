@@ -6,7 +6,7 @@ import {
   type ProposalGatewayRequest,
   type ProposalGatewayRoute,
 } from './gateway.js'
-import type { TrustedAdapterAttemptSource } from './fetch-attempts.js'
+import type { AdapterFetchAttempt, TrustedAdapterAttemptSource } from './fetch-attempts.js'
 
 export interface ProposalGatewayAdapterConfig {
   socketPath: string
@@ -76,7 +76,10 @@ export class ProposalGatewayAdapter extends LlmAdapter {
 export function createProposalGatewayLlmHandler(
   adapter: LlmAdapter,
   route: ProposalGatewayRoute,
-): (payload: unknown, context?: { signal: AbortSignal }) => Promise<{ chunks: StreamChunk[] }> {
+): (
+  payload: unknown,
+  context?: { signal: AbortSignal },
+) => Promise<{ chunks: StreamChunk[]; attempts?: AdapterFetchAttempt[] }> {
   return async (payload, context) => {
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new Error('proposal gateway handler: invalid payload')

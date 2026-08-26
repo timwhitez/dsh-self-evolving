@@ -16,7 +16,10 @@ export interface AdapterDiscardedUsage {
 }
 
 export interface AdapterFetchAttempt {
-  /** Zero-based index within this logical fetch. */
+  /**
+   * Monotonic sequence within one stream() call — continues across
+   * reasoning-continuation turns so every transport attempt stays distinct.
+   */
   attemptIndex: number
   /** HTTP status, or null when the attempt failed before a status was read. */
   status: number | null
@@ -39,3 +42,9 @@ export function classifyStatus(status: number): { retryable: boolean; ambiguous:
   if (status === 408 || status >= 500) return { retryable: true, ambiguous: true }
   return { retryable: false, ambiguous: false }
 }
+
+/**
+ * The attempt log assumes the adapter instance is single-flight: one
+ * in-flight stream() call at a time. Production creates a fresh adapter per
+ * proposal action and drives it from one sequential sandbox worker.
+ */

@@ -434,14 +434,43 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
         request,
       )
       const { retryable, ambiguous } = classifyStatus(response.status)
-      if (response.ok || !retryable || attempt === maxRetries) {
+      if (response.ok) {
         this.fetchAttempts.push({
-          attemptIndex: attempt,
+          attemptIndex: this.fetchAttempts.length,
           status: response.status,
           retryable,
           ambiguous,
           discardedUsage: null,
           responseId: null,
+        })
+        break
+      }
+      if (!retryable || attempt === maxRetries) {
+        // Final failed attempt: salvage any billable usage off its body too.
+        let lastDiscardedUsage: AdapterFetchAttempt['discardedUsage'] = null
+        let lastResponseId: string | null = null
+        try {
+          const parsed = JSON.parse(await response.text()) as ChatCompletionsBody
+          if (typeof parsed.id === 'string') lastResponseId = parsed.id
+          const inputTotal = finiteCount(parsed.usage?.prompt_tokens) ?? 0
+          const cacheRead = finiteCount(parsed.usage?.prompt_tokens_details?.cached_tokens) ?? 0
+          lastDiscardedUsage = {
+            inputTokens: inputTotal,
+            outputTokens: finiteCount(parsed.usage?.completion_tokens) ?? 0,
+            cacheReadTokens: cacheRead,
+            reasoningTokens:
+              finiteCount(parsed.usage?.completion_tokens_details?.reasoning_tokens) ?? 0,
+          }
+        } catch {
+          // Non-JSON failure body: recorded without salvaged usage.
+        }
+        this.fetchAttempts.push({
+          attemptIndex: this.fetchAttempts.length,
+          status: response.status,
+          retryable,
+          ambiguous,
+          discardedUsage: lastDiscardedUsage,
+          responseId: lastResponseId,
         })
         break
       }
@@ -471,7 +500,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
         // Non-JSON error body: still recorded as an ambiguous attempt.
       }
       this.fetchAttempts.push({
-        attemptIndex: attempt,
+        attemptIndex: this.fetchAttempts.length,
         status: response.status,
         retryable,
         ambiguous,
