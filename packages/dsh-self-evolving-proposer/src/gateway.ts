@@ -17,6 +17,12 @@ export interface ProposalGatewayRequest {
   requestId: string
   route: ProposalGatewayRoute
   payload: unknown
+  /**
+   * Remaining request budget in milliseconds, measured from gateway receipt.
+   * The trusted host aborts the in-flight provider fetch when it elapses so a
+   * sandbox timeout bounds cost on BOTH sides of the socket (issue #57).
+   */
+  deadlineMs?: number
 }
 
 export type ProposalGatewayResponse =
@@ -30,10 +36,15 @@ export interface ProposalGatewayReceipt {
   routeHash: string
 }
 
+export interface ProposalGatewayHandleContext {
+  /** Aborts when the client disconnects or the request deadline elapses. */
+  signal: AbortSignal
+}
+
 export interface ProposalGatewayOptions {
   socketPath: string
   route: ProposalGatewayRoute
-  handle: (payload: unknown) => Promise<unknown>
+  handle: (payload: unknown, context: ProposalGatewayHandleContext) => Promise<unknown>
   maxRequestBytes?: number
   /** Maximum concurrent sandbox connections; excess connections are destroyed on accept. */
   maxConnections?: number
@@ -96,7 +107,10 @@ export async function startProposalGateway(
   const completed = new Map<string, { requestHash: string; response: ProposalGatewayResponse }>()
   const receiptLog: ProposalGatewayReceipt[] = []
 
-  const request = async (candidate: ProposalGatewayRequest): Promise<ProposalGatewayResponse> => {
+  const request = async (
+    candidate: ProposalGatewayRequest,
+    context?: ProposalGatewayHandleContext,
+  ): Promise<ProposalGatewayResponse> => {
     const requestId =
       typeof candidate?.requestId === 'string' && candidate.requestId.length > 0
         ? candidate.requestId
@@ -121,7 +135,7 @@ export async function startProposalGateway(
     }
     let result: unknown
     try {
-      result = await options.handle(candidate.payload)
+      result = await options.handle(candidate.payload, context ?? { signal: neverSignal() })
     } catch {
       return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }
     }
@@ -188,15 +202,31 @@ export async function startProposalGateway(
       disarmIdle()
       void (async () => {
         let response: ProposalGatewayResponse
-        // Bounded handler window: a hung provider call cannot hold the
-        // connection (and its descriptor) open indefinitely.
+        // Cancellation reaches the trusted provider fetch: the controller
+        // aborts on client disconnect or the envelope's deadlineMs budget,
+        // whichever fires first (issue #57).
+        const cancellation = new AbortController()
+        let deadlineTimer: NodeJS.Timeout | undefined
+        socket.once('close', () => cancellation.abort(new Error('client disconnected')))
         const budget = setTimeout(drop, requestTimeoutMs)
         try {
           const raw = Buffer.concat(chunks).toString('utf8')
           if (raw.split('\n').filter((line) => line.length > 0).length !== 1) {
             throw new Error('one request required')
           }
-          response = await request(JSON.parse(raw) as ProposalGatewayRequest)
+          const candidate = JSON.parse(raw) as ProposalGatewayRequest
+          if (
+            typeof candidate?.deadlineMs === 'number' &&
+            Number.isFinite(candidate.deadlineMs) &&
+            candidate.deadlineMs > 0 &&
+            candidate.deadlineMs <= 3_600_000
+          ) {
+            deadlineTimer = setTimeout(
+              () => cancellation.abort(new Error('request deadline elapsed')),
+              candidate.deadlineMs,
+            )
+          }
+          response = await request(candidate, { signal: cancellation.signal })
         } catch {
           response = {
             schemaVersion: 1,
@@ -206,6 +236,7 @@ export async function startProposalGateway(
           }
         } finally {
           clearTimeout(budget)
+          if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
         }
         socket.end(`${JSON.stringify(response)}\n`)
       })()
@@ -252,17 +283,48 @@ function closeServer(server: Server): Promise<void> {
   })
 }
 
+function neverSignal(): AbortSignal {
+  return new AbortController().signal
+}
+
+export interface ProposalGatewayClientOptions {
+  /** Caller cancellation: destroys the connection and rejects promptly. */
+  signal?: AbortSignal
+  /**
+   * Remaining request budget sent in the envelope; the trusted host aborts
+   * its provider fetch when the budget elapses even if this client hangs.
+   */
+  deadlineMs?: number
+}
+
 export function requestProposalGateway(
   socketPath: string,
   request: ProposalGatewayRequest,
+  options: ProposalGatewayClientOptions = {},
 ): Promise<ProposalGatewayResponse> {
   return new Promise((done, reject) => {
+    if (options.signal?.aborted) {
+      reject(options.signal.reason ?? new Error('request aborted before connect'))
+      return
+    }
     const socket = createConnection(socketPath)
     const chunks: Buffer[] = []
-    socket.once('connect', () => socket.end(JSON.stringify(request) + '\n'))
+    const onAbort = (): void => {
+      socket.destroy()
+      reject(options.signal?.reason ?? new Error('request aborted'))
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    const envelope: ProposalGatewayRequest =
+      options.deadlineMs === undefined ? request : { ...request, deadlineMs: options.deadlineMs }
+    socket.once('connect', () => socket.end(`${JSON.stringify(envelope)}\n`))
     socket.on('data', (chunk: Buffer) => chunks.push(chunk))
-    socket.once('error', reject)
+    socket.once('error', (error) => {
+      options.signal?.removeEventListener('abort', onAbort)
+      reject(error)
+    })
+    socket.once('close', () => options.signal?.removeEventListener('abort', onAbort))
     socket.once('end', () => {
+      options.signal?.removeEventListener('abort', onAbort)
       try {
         done(JSON.parse(Buffer.concat(chunks).toString('utf8')) as ProposalGatewayResponse)
       } catch (error) {

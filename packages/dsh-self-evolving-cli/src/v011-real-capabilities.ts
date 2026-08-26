@@ -760,9 +760,9 @@ async function realV011Proposal(
       gateway = await startProposalGateway({
         socketPath: join(action, 'gateway', 'proposal.sock'),
         route: lockedRoute,
-        async handle(payload) {
+        async handle(payload, context) {
           try {
-            return await handler(payload)
+            return await handler(payload, context)
           } catch (error) {
             providerFailure = error instanceof Error ? error.message : 'unknown provider failure'
             throw error
