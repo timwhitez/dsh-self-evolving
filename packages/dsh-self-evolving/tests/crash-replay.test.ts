@@ -64,7 +64,10 @@ describe('crash/replay fault-injection', () => {
     // Each append is durable; a "crash" after launch means only the launched
     // event is on disk. Resume replays from disk and the external job id is
     // already recorded — a re-launch is refused by idempotency.
-    await append(j, mk('action.planned', { actionId: 'act1', kind: 'evaluation' }))
+    await append(
+      j,
+      mk('action.planned', { actionId: 'act1', kind: 'evaluation', idempotencyKey: 'k1' }),
+    )
     await append(j, mk('action.reserved', { actionId: 'act1', idempotencyKey: 'k1' }))
     await append(j, mk('action.launched', { actionId: 'act1', externalJobId: 'job-xyz' }))
 
@@ -86,7 +89,12 @@ describe('crash/replay fault-injection', () => {
 
   it('resume after a crash at the COLLECT boundary does not double-count the score', async () => {
     const j = journal()
-    await append(j, mk('action.planned', { actionId: 'act2', kind: 'evaluation' }))
+    await append(j, mk('run.preflight', {}))
+    await append(j, mk('candidate.admitted', { candidateId: 'c_x', canonicalParent: null }))
+    await append(
+      j,
+      mk('action.planned', { actionId: 'act2', kind: 'evaluation', idempotencyKey: 'k2' }),
+    )
     await append(j, mk('action.reserved', { actionId: 'act2', idempotencyKey: 'k2' }))
     await append(j, mk('action.launched', { actionId: 'act2', externalJobId: 'job-abc' }))
     // Crash BEFORE the observation is committed: no evaluation.observed event.

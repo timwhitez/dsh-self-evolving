@@ -156,7 +156,9 @@ function assertMutableRun(state: ControllerState, eventType: string): void {
   }
 }
 
-function observationKey(row: Pick<ObservationRecord, 'candidateId' | 'taskId' | 'attemptIndex'>): string {
+function observationKey(
+  row: Pick<ObservationRecord, 'candidateId' | 'taskId' | 'attemptIndex'>,
+): string {
   return canonicalJson([row.candidateId, row.taskId, row.attemptIndex])
 }
 
@@ -235,7 +237,8 @@ export function reduce(state: ControllerState, event: JournalEvent): ControllerS
       const canonicalParent = parentValue as string | null
       if (canonicalParent !== null) {
         requiredString(canonicalParent, 'canonicalParent')
-        if (canonicalParent === candidateId) throw new Error('reducer: candidate cannot parent itself')
+        if (canonicalParent === candidateId)
+          throw new Error('reducer: candidate cannot parent itself')
         if (state.candidates[canonicalParent] === undefined) {
           throw new Error(`reducer: lineage parent is unknown: ${canonicalParent}`)
         }
@@ -247,7 +250,8 @@ export function reduce(state: ControllerState, event: JournalEvent): ControllerS
         throw new Error('reducer: duplicate donor candidate')
       }
       for (const donorCandidate of donorCandidates) {
-        if (donorCandidate === candidateId) throw new Error('reducer: candidate cannot donate to itself')
+        if (donorCandidate === candidateId)
+          throw new Error('reducer: candidate cannot donate to itself')
         if (state.candidates[donorCandidate] === undefined) {
           throw new Error(`reducer: donor candidate is unknown: ${donorCandidate}`)
         }
@@ -442,7 +446,9 @@ export function logicalStateProjection(state: ControllerState): LogicalControlle
 export function logicalStateHash(state: ControllerState): string {
   return (
     'sha256:' +
-    createHash('sha256').update(canonicalJson(logicalStateProjection(state))).digest('hex')
+    createHash('sha256')
+      .update(canonicalJson(logicalStateProjection(state)))
+      .digest('hex')
   )
 }
 

@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import {
-  genesisState,
-  reduce,
-  type ControllerState,
-  type JournalEvent,
-} from '../src/index.js'
+import { genesisState, reduce, type ControllerState, type JournalEvent } from '../src/index.js'
 
-function event(state: ControllerState, type: string, payload: Record<string, unknown>): JournalEvent {
+function event(
+  state: ControllerState,
+  type: string,
+  payload: Record<string, unknown>,
+): JournalEvent {
   const seq = state.lastSeq + 1
   return {
     schemaVersion: 1,
@@ -130,9 +129,7 @@ describe('reducer protocol state machine', () => {
     expect(() => admit(baseline, 'child', 'baseline', ['baseline', 'baseline'])).toThrow(
       /duplicate donor candidate/,
     )
-    expect(() => admit(baseline, 'child', 'baseline', ['child'])).toThrow(
-      /cannot donate to itself/,
-    )
+    expect(() => admit(baseline, 'child', 'baseline', ['child'])).toThrow(/cannot donate to itself/)
   })
 
   it('rejects unknown, malformed, inactive, and duplicate observations', () => {
