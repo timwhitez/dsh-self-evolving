@@ -355,7 +355,11 @@ async function runLoaderProbe(input: {
   const receipt = JSON.parse(
     line.slice('DSH_SELF_EVOLVING_V011_LOADER_RECEIPT='.length),
   ) as V011LoaderProbeReceipt
-  if (receipt.mode !== input.mode || receipt.leakedHandles.length !== 0) {
+  if (
+    receipt.mode !== input.mode ||
+    receipt.leakedHandles.length !== 0 ||
+    receipt.candidateId !== input.candidateId
+  ) {
     throw new Error('v0.1.1 admission: Loader receipt identity/quiescence mismatch')
   }
   return receipt
@@ -445,10 +449,9 @@ export async function admitV011Candidate(input: {
     const capsule = await packCapsule({
       outDir: input.capsuleOutDir,
       receipt: buildReceipt,
-      runnerOverlay: input.runnerOverlay.replaceAll(
-        '__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__',
-        runtimeSource.packageName,
-      ),
+      runnerOverlay: input.runnerOverlay
+        .replaceAll('__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__', runtimeSource.packageName)
+        .replaceAll('__DSH_SELF_EVOLVING_CANDIDATE_ID__', candidateDigest),
       ...(input.runnerFiles === undefined ? {} : { runnerFiles: input.runnerFiles }),
       provenanceJson: input.provenanceJson,
       sbomJson: input.sbomJson,
