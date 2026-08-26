@@ -448,3 +448,66 @@ Terminal-Bench 提分、sealed promotion、leaderboard 或 SOTA。
 
 v0.2 已达到本地开源 release-candidate 完成口径。发布到 GitHub 仍等待 maintainer 授权。Gate 8
 benchmark profile、K=10/K=80、sealed/full-set 和持续提分属于发布后的独立开发范围，不阻塞本次验收。
+
+## 2026-08-26 远端 issue/PR 修复批次（timwhitez/dsh-self-evolving）
+
+以逐项"先契约测试、后最小修复、单 PR 单门"的方式处理远端 open issues。以下状态仅报告已合并进
+main 且带回归测试的修复（各 PR 见对应 squash commit）；未列出的 issue 仍保持 open，不做任何完成宣称。
+
+### 已修复并关闭（合并至 main）
+
+- #31 / #32：reducer exact/logical 状态哈希分离 + 协议状态机强制（动作转移表、lineage/donor 校验、
+  observation 唯一性、run-phase 单调、lock/reveal 次序）。E2E crash worker 同步补齐 admission。
+- #36：policy scanner 以 TypeScript AST 层强化——`export * from`、注释内 dynamic import、
+  `process['env']`、绝对路径 specifier、parse 失败即 reject；regex 层保留为纵深防御。
+- #38 / #43 / #95 / #96：sealed-service 与 builder 锁/发布恢复——公共 receipt 改为 staging+link
+  原子发布；初始化仅接受确认 ENOENT；锁回收按 inode+字节 compare-and-delete、模糊存活判 BUSY；
+  builder 锁原子发布并可安全回收空锁。
+- #40 / #119：quiescence 门从构造器名成员比较改为每类型计数 delta，可检同型泄漏；
+  afterEach 不再吞 dispose 失败。
+- #41 / #42：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed；
+  SHA256SUMS 覆盖 symlink 目标并要求条目集严格相等（缺失/多余/硬链接/特殊文件全拒）。
+- #54：changed-line 预算改用 LCS 顺序感知编辑距离，重排不再零成本；超界文件 fail closed。
+- #55：proposal+gateway-receipts 以 manifest 提交点原子成束发布；resume 仅经 manifest 加载，
+  未提交目录视为未完成 publication；每次加载重新校验 sha256 绑定。（#45 的崩溃窗口部分
+  已由 v011 recovery 的 staging+link 关闭；重复外部工作残余归入 #53。）
+- #61：Responses 工具续传按 message 序保留完整会话（user/assistant 文本 → message item，
+  cached reasoning/function_call + function_call_output 就位交错）。
+- #64：canonical archive 对每个中间路径组件做 no-follow 校验，realpath 全局 containment，
+  nlink≠1 硬链接拒绝。
+- #70：evaluation saga `pending` 时引擎挂起为 `PENDING_EVALUATIONS`（计数全部派生自 journal），
+  不再冻结 failure pool 或写 terminal 事件；恢复经既有幂等路径 exactly-once 完成。
+- #71：builder staging 改为独占 mkdir 认领 + 持久 owner intent；死主/前缀残留隔离到
+  `reclaimed-*` 后重试，活主 BUSY，torn candidate 根同样隔离重建。
+- #73：cost reconciliation 采用与 normalizer 相同的 agent/ 目录布局优先解析，双份不一致记冲突；
+  corrupt 来源显式失败而非当作 missing；consistent 要求 input/output/cache/USD 四字段全一致。
+- #74：TB 幂等预留改为 per-key 排他 marker + fsync（16 并发恰一胜出）；ledger 校验 fail closed，
+  record 必须绑定 (candidate, task, attempt) 身份。
+- #75 / #76：预算模型对样本与参数全域校验后fail-closed；Thompson 采样改为精确 Beta
+  （Marsaglia–Tsang Gamma 组合），固定流确定性保留并刷新 scheduler golden。
+- #77 / #81：Gate 6 用 SDK 规范 `c_<base32>` 身份校验器替换 sha256 形状误用；runtime intent
+  按 kind 解析到冻结能力行，跨类替代 disable/unknown 一律拒绝，返回解析绑定供 admission。
+- #86：proposal gateway 增加 maxConnections、idleTimeoutMs、requestTimeoutMs，超限主体即刻销毁。
+- #92：sandbox 可执行 allowlist 先做组件级规范化（拒绝 `.`/`..`/空/NUL），再匹配规范化路径。
+- #105 / #107：summary 复用须与 run-intent 及请求任务集完全对账，provider 不再把 caller 身份
+  盖到旧 evidence 上；trial 目录↔任务交叉绑定、attempt 唯一性、既有 sidecar 必须与计划身份一致。
+- #118：V0.1.1 proposal 外层 acquire→try/finally 全程恢复 provider key；gateway 先关停后收据，
+  清理错误聚合不掩盖原异常；gateway 启动 chmod 失败自清理监听 server。
+
+### 待合并 PR（CI 通过后 merge）
+
+- PR #182（#61 续传保序）、PR #183（#55 原子成束）、PR #184（#71 staging 回收）。
+
+### 明确未完成、保持 open（不构成任何验收声明）
+
+- **大范围审计硬化族**（#78 #79 #82 #83 #85 #87 #110 #111 #113 #114 #121 #125）：共同前提是
+  把各 gate verifier 的输入从 caller 断言（hash 形状字符串/布尔）换成可信 object store 中
+  artifact 字节的重建与交叉绑定；需按 spec 06 统一设计 receipt schema 与 audit 重放，属多 PR 工程。
+- **#53 / #45 残余**：proposal/build 路径尚未走 evaluation 同款 action saga（持久 intent→外部效果→
+  durable receipt）；完成后 #45 的重复工作面随之闭合。
+- **Provider 传输**（#57 AbortSignal 贯通、#123 重试计费对账）需协议层扩展（deadline/token 入封包）
+  并配套 gateway/adapter E2E。
+- **架构级**（#37 tsconfig 执行边界、#51 cgroup 配额、#65 构建期单一快照、#116 凭证与候选同进程）
+  需要 ADR（含容器/cgroup 拓扑与 DBUS/systemd-run 依赖决策）后方可实施；在 ADR 冻结前不动手。
+
+以上未完成项的存在意味着当前仍不能声明这些攻击面已关闭；现有 v0.2 验收口径不变。
