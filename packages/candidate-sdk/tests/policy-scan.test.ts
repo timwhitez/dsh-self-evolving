@@ -6,7 +6,7 @@
  * rejections; the Loader default-export rejection is in the loader-e2e package.
  */
 import { describe, expect, it } from 'vitest'
-import { scanSource } from '../src/index.js'
+import { scanFiles, scanSource } from '../src/index.js'
 
 describe('policy scanner — rejection fixtures', () => {
   it('rejects dynamic import()', () => {
@@ -119,5 +119,64 @@ describe('policy scanner — allowlist acceptance', () => {
   it('allows candidate-relative imports', () => {
     const hits = scanSource('a.ts', "import { x } from './helper.js'")
     expect(hits.some((h) => h.rule === 'import-external')).toBe(false)
+  })
+})
+
+describe('scanner syntax-variation evasion (issue #36)', () => {
+  const scan = (src: string): ReturnType<typeof scanFiles> =>
+    scanFiles([{ path: 'bypass.ts', content: src }])
+
+  it('flags re-export forms of forbidden modules', () => {
+    expect(scan(`export * from 'node:fs'\n`).passed).toBe(false)
+    expect(
+      scan(`export { readFile } from 'node:fs'\n`).hits.some(
+        (h) => h.rule === 'import-node-disallowed',
+      ),
+    ).toBe(true)
+    expect(
+      scan(`export * as fs from 'node:child_process'\n`).hits.some(
+        (h) => h.rule === 'import-node-disallowed' || h.rule === 'child-process',
+      ),
+    ).toBe(true)
+  })
+
+  it('flags dynamic import behind comments and odd spacing', () => {
+    const hit = scan("const fs = await import/*comment*/('node:fs')\n")
+    expect(hit.hits.some((h) => h.rule === 'dynamic-import')).toBe(true)
+    expect(
+      scan('const m = await\n  import\n  ("node:vm")\n').hits.some(
+        (h) => h.rule === 'dynamic-import',
+      ),
+    ).toBe(true)
+  })
+
+  it('flags element-access process escapes', () => {
+    for (const src of [
+      "const env = process['env']\n",
+      'const token = process[`${"e"}nv`]?.TOKEN\n',
+      'void process?.env?.PATH\n',
+    ]) {
+      expect(
+        scan(src).hits.some((h) => h.rule === 'process-global'),
+        src,
+      ).toBe(true)
+    }
+  })
+
+  it('rejects absolute module specifiers outright', () => {
+    const res = scan("import helper from '/etc/helpers.js'\n")
+    expect(res.passed).toBe(false)
+    expect(res.hits.some((h) => h.rule === 'import-absolute-path')).toBe(true)
+  })
+
+  it('fails closed on unparseable source', () => {
+    const res = scan('export default function {{{broken')
+    expect(res.hits.some((h) => h.rule === 'parse-failure')).toBe(true)
+    expect(res.passed).toBe(false)
+  })
+
+  it('keeps clean code accepted through the AST layer', () => {
+    const res = scan("import { section } from './prompt.ts'\nexport const run = (): number => 1\n")
+    expect(res.passed).toBe(true)
   })
 })
