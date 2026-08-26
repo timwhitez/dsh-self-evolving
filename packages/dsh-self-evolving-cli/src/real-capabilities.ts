@@ -21,6 +21,7 @@ import {
   startProposalGateway,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
+import { loadPublishedBundle, PUBLISH_MANIFEST, publishBundle } from './publish.js'
 import { runDoctor } from './doctor.js'
 import type { StableDemoConfig } from './config.js'
 import type {
@@ -32,6 +33,7 @@ import type {
   StableProposalInput,
 } from './engine.js'
 import { evaluationReserveUsd } from './engine.js'
+import { claimStagingDir, clearBuildIntent } from './build-claim.js'
 import { loadTrustedRoute } from './trusted-route.js'
 
 const SOURCE_FILES = [
@@ -130,8 +132,21 @@ async function realProposal(
     `proposal-${input.generation}-${input.attempt}`,
   )
   const outputPath = join(artifactDir, 'proposal.json')
-  const existing = await readFile(outputPath, 'utf8').catch(() => null)
-  if (existing !== null) return JSON.parse(existing) as StableProposal
+  // Resume gates on the bundle commit marker, not bare proposal.json: a crash
+  // between the proposal write and its receipts used to be adopted as a
+  // complete evidenced result (issue #55).
+  const published = await loadPublishedBundle(artifactDir)
+  if (published !== null) {
+    return JSON.parse(published['proposal.json']!) as StableProposal
+  }
+  if (
+    (await stat(outputPath).catch(() => null)) !== null ||
+    (await stat(join(artifactDir, PUBLISH_MANIFEST)).catch(() => null)) !== null
+  ) {
+    throw new Error(
+      `real proposer: incomplete prior proposal publication without commit manifest: ${artifactDir}`,
+    )
+  }
   await mkdir(artifactDir, { recursive: true, mode: 0o700 })
   const runtimeRoot = await prepareProposalRuntime(config)
   const scratch = await mkdtemp(
@@ -225,11 +240,10 @@ async function realProposal(
         evidenceRefs: input.evidenceRefs,
         artifactDigest: sha256(JSON.stringify(child)),
       }
-      await writeExclusive(outputPath, JSON.stringify(proposal, null, 2) + '\n')
-      await writeExclusive(
-        join(artifactDir, 'gateway-receipts.json'),
-        JSON.stringify(gateway.receipts(), null, 2) + '\n',
-      )
+      await publishBundle(artifactDir, {
+        'proposal.json': JSON.stringify(proposal, null, 2) + '\n',
+        'gateway-receipts.json': JSON.stringify(gateway.receipts(), null, 2) + '\n',
+      })
       return proposal
     } finally {
       await gateway.close()
@@ -253,9 +267,24 @@ async function realBuild(
     throw new Error(`real builder: incomplete prior candidate directory ${candidateRoot}`)
   }
   const stagingRoot = `${candidateRoot}.attempt-${input.attempt}.staging`
-  if ((await stat(stagingRoot).catch(() => null)) !== null) {
-    throw new Error(`real builder: incomplete prior staging directory ${stagingRoot}`)
+  // Crash-resumable claim: stale residue is quarantined aside, never fatal
+  // (issue #71). A candidate root without a parseable receipt is likewise a
+  // torn publication — quarantine and rebuild.
+  if (
+    (await stat(candidateRoot).catch(() => null)) !== null &&
+    (await readFile(receiptPath, 'utf8').catch(() => null)) === null
+  ) {
+    await rename(candidateRoot, `${candidateRoot}.incomplete-${Date.now()}`)
   }
+  await claimStagingDir(
+    stagingRoot,
+    {
+      generation: input.generation,
+      attempt: input.attempt,
+      identity: input.proposal.artifactDigest,
+    },
+    async () => join(config.stateDir, 'candidates'),
+  )
   await mkdir(join(stagingRoot, 'src'), { recursive: true, mode: 0o700 })
   for (const relative of SOURCE_FILES) {
     if (relative === 'src/index.ts' || relative === 'tsconfig.json') continue
@@ -315,6 +344,7 @@ async function realBuild(
     join(stagingRoot, 'stable-build.json'),
     JSON.stringify(built, null, 2) + '\n',
   )
+  await clearBuildIntent(stagingRoot)
   await mkdir(join(config.stateDir, 'candidates'), { recursive: true, mode: 0o700 })
   await rename(stagingRoot, candidateRoot)
   return built
