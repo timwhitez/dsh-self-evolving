@@ -21,6 +21,7 @@ import {
   startProposalGateway,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
+import { loadPublishedBundle, PUBLISH_MANIFEST, publishBundle } from './publish.js'
 import { runDoctor } from './doctor.js'
 import type { StableDemoConfig } from './config.js'
 import type {
@@ -130,8 +131,21 @@ async function realProposal(
     `proposal-${input.generation}-${input.attempt}`,
   )
   const outputPath = join(artifactDir, 'proposal.json')
-  const existing = await readFile(outputPath, 'utf8').catch(() => null)
-  if (existing !== null) return JSON.parse(existing) as StableProposal
+  // Resume gates on the bundle commit marker, not bare proposal.json: a crash
+  // between the proposal write and its receipts used to be adopted as a
+  // complete evidenced result (issue #55).
+  const published = await loadPublishedBundle(artifactDir)
+  if (published !== null) {
+    return JSON.parse(published['proposal.json']!) as StableProposal
+  }
+  if (
+    (await stat(outputPath).catch(() => null)) !== null ||
+    (await stat(join(artifactDir, PUBLISH_MANIFEST)).catch(() => null)) !== null
+  ) {
+    throw new Error(
+      `real proposer: incomplete prior proposal publication without commit manifest: ${artifactDir}`,
+    )
+  }
   await mkdir(artifactDir, { recursive: true, mode: 0o700 })
   const runtimeRoot = await prepareProposalRuntime(config)
   const scratch = await mkdtemp(
@@ -225,11 +239,10 @@ async function realProposal(
         evidenceRefs: input.evidenceRefs,
         artifactDigest: sha256(JSON.stringify(child)),
       }
-      await writeExclusive(outputPath, JSON.stringify(proposal, null, 2) + '\n')
-      await writeExclusive(
-        join(artifactDir, 'gateway-receipts.json'),
-        JSON.stringify(gateway.receipts(), null, 2) + '\n',
-      )
+      await publishBundle(artifactDir, {
+        'proposal.json': JSON.stringify(proposal, null, 2) + '\n',
+        'gateway-receipts.json': JSON.stringify(gateway.receipts(), null, 2) + '\n',
+      })
       return proposal
     } finally {
       await gateway.close()
