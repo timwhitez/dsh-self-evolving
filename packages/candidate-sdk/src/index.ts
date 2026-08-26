@@ -8,6 +8,7 @@ export {
   buildCanonicalArchive,
   candidateIdFromArchive,
   declareFiles,
+  isValidCandidateId,
   DEFAULT_LIMITS,
   type CanonicalArchive,
   type CanonicalLimits,

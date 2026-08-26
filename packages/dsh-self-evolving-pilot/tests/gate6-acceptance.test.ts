@@ -3,9 +3,13 @@ import { verifyGate6Acceptance, type Gate6AcceptanceInput } from '../src/index.j
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`
 
+/** Canonical Candidate SDK identity: c_ + 26 lowercase base32 characters. */
+const candidateId = (index: number) =>
+  `c_${'abcdefghijklmnopqrstuvwxyz234567'[index % 32]!}${'abcdefghijklmnopqrstuvwxyz'[index % 26]!.repeat(25)}`
+
 function complete(): Gate6AcceptanceInput {
   const candidates = Array.from({ length: 10 }, (_, index) => ({
-    candidateId: hash(index.toString(16)),
+    candidateId: candidateId(index),
     sourceDigest: hash(index.toString(16)),
     capsuleDigest: hash(((index + 1) % 16).toString(16)),
     buildManifestDigest: hash(((index + 2) % 16).toString(16)),
@@ -68,5 +72,23 @@ describe('Gate 6 fail-closed acceptance', () => {
     expect(verdict.reasons.join('\n')).toMatch(/no attributable observation/)
     expect(verdict.reasons.join('\n')).toMatch(/cost\/raw evidence invalid/)
     expect(verdict.reasons.join('\n')).toMatch(/unique source digests/)
+  })
+
+  it('rejects digest-shaped candidate IDs that are not SDK-issued identities', () => {
+    const input = complete()
+    // A sha256 source digest relabeled as the candidate ID must fail: the
+    // canonical identity is c_<base32>, never a digest (issue #77).
+    const remap = new Map(input.candidates.map((row) => [row.candidateId, row.sourceDigest]))
+    input.candidates = input.candidates.map((candidate) => ({
+      ...candidate,
+      candidateId: candidate.sourceDigest,
+    }))
+    input.observations = input.observations.map((observation) => ({
+      ...observation,
+      candidateId: remap.get(observation.candidateId)!,
+    }))
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/lacks full immutable identity/)
   })
 })
