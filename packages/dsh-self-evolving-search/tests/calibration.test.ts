@@ -7,6 +7,7 @@ import {
   deterministicSplit,
   sampleCalibrationStratum,
   buildBudgetModel,
+  DEFAULT_TARGETS,
   type TaskMeta,
   type CalibrationSample,
 } from '../src/index.js'
@@ -129,5 +130,50 @@ describe('budget model + CALIBRATION_INFEASIBLE gate (spec 07 §7)', () => {
     const budget = buildBudgetModel([])
     expect(budget.feasible).toBe(false)
     expect(budget.reason).toMatch(/no calibration samples/)
+  })
+
+  it('rejects NaN, infinite and negative calibration inputs', () => {
+    const nanSamples = samples(0.05, 60, 20).map((sample, index) =>
+      index === 0 ? { ...sample, costUsd: Number.NaN, wallSec: Number.NaN } : sample,
+    )
+    expect(buildBudgetModel(nanSamples).feasible).toBe(false)
+
+    for (const bad of [
+      { ...samples(0.05, 60, 20)[0]!, costUsd: -1 },
+      { ...samples(0.05, 60, 20)[0]!, wallSec: 0 },
+      { ...samples(0.05, 60, 20)[0]!, wallSec: -5 },
+      { ...samples(0.05, 60, 20)[0]!, costUsd: Number.POSITIVE_INFINITY },
+      { ...samples(0.05, 60, 20)[0]!, reward: 0.5 },
+      { ...samples(0.05, 60, 20)[0]!, attempt: -1 },
+      { ...samples(0.05, 60, 20)[0]!, candidateId: '' },
+      { ...samples(0.05, 60, 20)[0]!, taskId: '' },
+    ]) {
+      const budget = buildBudgetModel([...samples(0.05, 60, 20).slice(1), bad])
+      expect(budget.feasible).toBe(false)
+      expect(budget.reason).toMatch(/must be|binary|non-negative integer|non-empty/)
+    }
+  })
+
+  it('rejects invalid plan parameters and targets', () => {
+    const valid = samples(0.05, 60, 20)
+    expect(buildBudgetModel(valid, { K: Number.NaN }).reason).toMatch(/K must be/)
+    expect(buildBudgetModel(valid, { K: -1 }).reason).toMatch(/K must be/)
+    expect(buildBudgetModel(valid, { k_sealed: 0 }).reason).toMatch(/k_sealed must be/)
+    expect(buildBudgetModel(valid, { concurrency: 0 }).reason).toMatch(/concurrency must be/)
+    expect(buildBudgetModel(valid, { B_prop_usd: -1 }).reason).toMatch(/B_prop_usd must be/)
+    expect(buildBudgetModel(valid, { B_prop_usd: Number.NaN }).reason).toMatch(/B_prop_usd must be/)
+    expect(
+      buildBudgetModel(valid, { targets: { ...DEFAULT_TARGETS, maxCostUsd: 0 } }).reason,
+    ).toMatch(/maxCostUsd must be/)
+    expect(
+      buildBudgetModel(valid, {
+        targets: { ...DEFAULT_TARGETS, maxWallSec: Number.POSITIVE_INFINITY },
+      }).reason,
+    ).toMatch(/maxWallSec must be/)
+    for (const reserveFraction of [-0.1, 1, Number.NaN]) {
+      expect(
+        buildBudgetModel(valid, { targets: { ...DEFAULT_TARGETS, reserveFraction } }).reason,
+      ).toMatch(/reserveFraction must be/)
+    }
   })
 })
