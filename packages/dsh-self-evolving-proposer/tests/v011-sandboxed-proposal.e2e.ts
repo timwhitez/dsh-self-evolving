@@ -364,6 +364,11 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
         ['finish_proposal', {}],
         ['write_file', { path: 'analysis.json', content: JSON.stringify(analysis) + '\n' }],
         ['finish_proposal', {}],
+        // Adversarial tail (issue #125): after a SUCCESSFUL finish the model
+        // tries to replace a validated file. The mutating tool must refuse,
+        // the validated tree must remain intact, and the worker must still
+        // succeed with the digest bound to the validated bytes.
+        ['write_file', { path: 'analysis.json', content: JSON.stringify(invalidAnalysis) + '\n' }],
       ]
       let turn = 0
       const gateway = await startProposalGateway({
@@ -395,6 +400,7 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
           toolCallCount: number
           transcript: { toolTrace: unknown[] }
         }
+        expect(output.finishedTreeDigest).toMatch(/^sha256:[0-9a-f]{64}$/)
         expect(output.parentLoader).toEqual({
           entryId: 'dsh-self-evolving-selected-parent',
           package: '@dsh-self-evolving/selected-parent',
@@ -402,15 +408,22 @@ describe('v0.1.1 sandboxed trajectory-grounded proposer', () => {
           entryDigest: request['parentEntryDigest'],
           runtimeDigest: request['parentRuntimeDigest'],
         })
+        // The refused post-finish call never reaches the budget counter.
         expect(output.toolCallCount).toBe(12)
-        expect(output.transcript.toolTrace.length).toBeGreaterThanOrEqual(20)
+        // The post-finish mutation was refused: the validated analysis is
+        // still on disk byte-for-byte.
+        expect(await readFile(join(mounts.childrenRoot, proposalId, 'analysis.json'), 'utf8')).toBe(
+          JSON.stringify(analysis) + '\n',
+        )
+        // +1 tool/result pair from the refused post-finish call.
+        expect(output.transcript.toolTrace.length).toBeGreaterThanOrEqual(22)
         expect(
           await readFile(
             join(mounts.childrenRoot, proposalId, 'tree', 'src/retry/bounded-retry.ts'),
             'utf8',
           ),
         ).toContain('boundedRetryLimit')
-        expect(gateway.receipts()).toHaveLength(13)
+        expect(gateway.receipts()).toHaveLength(14)
       } finally {
         await gateway.close()
       }
