@@ -88,6 +88,7 @@ function complete(): Gate8EvidenceInput {
       revealReceiptHash: digest('reveal'),
       revealCount: 1,
       preLockSealedAccessCount: 0,
+      revealedTaskIds: Array.from({ length: 29 }, (_, task) => `sealed-task-${task}`),
     },
     sealedPlan: {
       taskCount: 29,
@@ -110,6 +111,7 @@ function complete(): Gate8EvidenceInput {
     reportedPromotionState: 'SEALED_PROMOTED',
     fullSet: {
       verificationStatus: 'FULL_SET_VERIFIED_LOCAL',
+      inventoryTaskIds: Array.from({ length: 89 }, (_, task) => `full-task-${task}`),
       officialMaintainerReceiptHash: null,
       taskCount: 89,
       attemptsPerTask: 5,
@@ -224,5 +226,67 @@ describe('Gate 8 sealed/full/release evidence', () => {
     expect(verdict.fullSetEligible).toBe(false)
     expect(verdict.fullSetVerified).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/without SEALED_PROMOTED eligibility/)
+  })
+
+  it('rejects a sealed matrix whose tasks are not the revealed set (issue #110)', () => {
+    const input = complete()
+    // Substitute one evaluated task with an easier impostor: counts stay 29.
+    input.sealedTrials = input.sealedTrials.map((trial) =>
+      trial.taskId === 'sealed-task-0' ? { ...trial, taskId: 'easy-impostor-task' } : trial,
+    )
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/does not match the revealed sealed task set/)
+  })
+
+  it('rejects a malformed revealed list (wrong count or duplicates)', () => {
+    const input = complete()
+    input.splitReveal = {
+      ...input.splitReveal!,
+      revealedTaskIds: [...input.splitReveal!.revealedTaskIds.slice(1)],
+    }
+    let verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/not 29 unique canonical ids/)
+    // Duplicates at the right length are rejected too.
+    input.splitReveal = {
+      ...input.splitReveal!,
+      revealedTaskIds: [
+        input.splitReveal!.revealedTaskIds[0]!,
+        ...input.splitReveal!.revealedTaskIds.slice(0, 28),
+      ],
+    }
+    verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/not 29 unique canonical ids/)
+    // A missing list degrades to a reason, never a TypeError.
+    input.splitReveal = { ...input.splitReveal!, revealedTaskIds: undefined as never }
+    verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/revealed sealed task list is missing/)
+  })
+
+  it('rejects a missing or malformed official inventory list', () => {
+    const input = complete()
+    input.fullSet = { ...input.fullSet!, inventoryTaskIds: undefined as never }
+    let verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/inventory list is missing/)
+    const original = complete().fullSet!.inventoryTaskIds
+    input.fullSet = {
+      ...input.fullSet!,
+      inventoryTaskIds: [original[0]!, ...original.slice(0, 88)],
+    }
+    verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/not 89 unique canonical ids/)
+  })
+
+  it('rejects a full-set matrix whose tasks are not the official inventory', () => {
+    const input = complete()
+    input.fullSet = {
+      ...input.fullSet!,
+      trials: input.fullSet!.trials.map((trial) =>
+        trial.taskId === 'full-task-0' ? { ...trial, taskId: 'substituted-task' } : trial,
+      ),
+    }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.fullSetVerified).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/does not match the official inventory/)
   })
 })
