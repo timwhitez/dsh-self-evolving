@@ -137,6 +137,18 @@ async function realProposal(
   // complete evidenced result (issue #55).
   const published = await loadPublishedBundle(artifactDir)
   if (published !== null) {
+    const keyBytes = published['idempotency-key.json']
+    if (keyBytes === undefined) {
+      throw new Error(
+        `real proposer: published proposal predates idempotency-key binding and cannot be reused: ${artifactDir}`,
+      )
+    }
+    const recordedKey = JSON.parse(keyBytes) as { idempotencyKey?: string }
+    if (recordedKey.idempotencyKey !== input.idempotencyKey) {
+      throw new Error(
+        `real proposer: published proposal binds a different idempotency key: ${artifactDir}`,
+      )
+    }
     return JSON.parse(published['proposal.json']!) as StableProposal
   }
   if (
@@ -243,6 +255,7 @@ async function realProposal(
       await publishBundle(artifactDir, {
         'proposal.json': JSON.stringify(proposal, null, 2) + '\n',
         'gateway-receipts.json': JSON.stringify(gateway.receipts(), null, 2) + '\n',
+        'idempotency-key.json': `${JSON.stringify({ idempotencyKey: input.idempotencyKey }, null, 2)}\n`,
       })
       return proposal
     } finally {

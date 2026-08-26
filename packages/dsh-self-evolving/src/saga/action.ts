@@ -1,6 +1,6 @@
 /** Crash-resumable evaluation action saga (spec 06 §§12–13). */
 import { release, reserve, spend, type BudgetLedger } from '../budget/index.js'
-import { readAll } from '../journal/index.js'
+import { readAll, type Journal } from '../journal/index.js'
 import { replay } from '../reducer/index.js'
 import type { RecordInput, SelfEvolvingService } from '../service.js'
 
@@ -166,4 +166,159 @@ export async function recoverEvaluationAction(
     await hooks.onDurableBoundary?.('commit')
   }
   return { status: 'committed', externalJobId, observation }
+}
+
+/** Minimal service surface the external-action saga depends on. */
+export interface ExternalActionService {
+  journal: Journal
+  record<P = Record<string, unknown>>(input: RecordInput<P>): Promise<unknown>
+}
+
+export interface ExternalActionSpec {
+  actionId: string
+  kind: 'proposal' | 'build'
+  /** Stable logical identity of the external work; bound into the durable intent. */
+  idempotencyKey: string
+  /** Deterministic durable identity of the external artifact (path or digest). */
+  externalJobId: string
+}
+
+/**
+ * Durable-intent wrapper for proposal/build side effects (issue #53).
+ *
+ * Unified exactly-once lifecycle for non-evaluation capabilities:
+ *   PLANNED → RESERVED (durable intent, BEFORE any external effect) →
+ *   external effect → LAUNCHED (artifact identity) → COMMITTED.
+ *
+ * Every write is gated on the REPLAYED action state (the journal append does
+ * not dedupe by eventId), mirroring recoverEvaluationAction. Reconcile-before-
+ * retry: a crash between the external effect and the journal commit is
+ * detected through the caller's semantic completion record (`reconcile`) and
+ * re-committed WITHOUT re-invoking the paid capability. A committed action
+ * fast-paths to its recorded result; terminal-but-uncommitted actions fail
+ * closed; conflicting idempotency keys fail closed. The capability itself
+ * must still key its artifacts by `idempotencyKey` so a crash before the
+ * semantic record falls back to capability-level dedupe.
+ */
+export async function recoverExternalAction<T>(
+  service: ExternalActionService,
+  spec: ExternalActionSpec,
+  effect: () => Promise<T>,
+  reconcile: () => Promise<T | undefined>,
+): Promise<T> {
+  let state = replay(await readAll(service.journal))
+  if (state.actions[spec.actionId] === undefined) {
+    await service.record(
+      eventInput(spec.actionId, 'action.planned', {
+        actionId: spec.actionId,
+        kind: spec.kind,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+    state = replay(await readAll(service.journal))
+  }
+  let action = state.actions[spec.actionId]
+  if (action === undefined) {
+    throw new Error(`PROTOCOL_INVALID: planned action missing ${spec.actionId}`)
+  }
+  if (action.idempotencyKey !== spec.idempotencyKey) {
+    throw new Error(`PROTOCOL_INVALID: conflicting idempotency key for ${spec.actionId}`)
+  }
+  if (action.status === 'COMMITTED') {
+    const recorded = await reconcile()
+    if (recorded === undefined) {
+      throw new Error(
+        `PROTOCOL_INVALID: committed action lacks a reconcilable result ${spec.actionId}`,
+      )
+    }
+    return recorded
+  }
+  if (
+    action.status === 'FAILED' ||
+    action.status === 'CANCELLED' ||
+    action.status === 'ABANDONED'
+  ) {
+    throw new Error(`PROTOCOL_INVALID: ${spec.actionId} is terminally ${action.status}`)
+  }
+  // Crash window between the external effect and the journal commit.
+  const preCompleted = await reconcile()
+  if (preCompleted !== undefined) {
+    if (action.status === 'PLANNED') {
+      await service.record(
+        eventInput(spec.actionId, 'action.reserved', {
+          actionId: spec.actionId,
+          idempotencyKey: spec.idempotencyKey,
+        }),
+      )
+      action = replay(await readAll(service.journal)).actions[spec.actionId]!
+    }
+    if (action.status === 'RESERVED') {
+      await service.record(
+        eventInput(spec.actionId, 'action.launched', {
+          actionId: spec.actionId,
+          externalJobId: spec.externalJobId,
+        }),
+      )
+      action = replay(await readAll(service.journal)).actions[spec.actionId]!
+    }
+    if (action.status === 'LAUNCHING') {
+      await service.record(
+        eventInput(spec.actionId, 'action.committed', {
+          actionId: spec.actionId,
+          externalJobId: spec.externalJobId,
+        }),
+      )
+    }
+    return preCompleted
+  }
+  if (action.status === 'PLANNED') {
+    await service.record(
+      eventInput(spec.actionId, 'action.reserved', {
+        actionId: spec.actionId,
+        idempotencyKey: spec.idempotencyKey,
+      }),
+    )
+  }
+  const result = await effect()
+  action = replay(await readAll(service.journal)).actions[spec.actionId]!
+  if (action.status === 'RESERVED') {
+    await service.record(
+      eventInput(spec.actionId, 'action.launched', {
+        actionId: spec.actionId,
+        externalJobId: spec.externalJobId,
+      }),
+    )
+    action = replay(await readAll(service.journal)).actions[spec.actionId]!
+  }
+  if (action.status === 'LAUNCHING') {
+    await service.record(
+      eventInput(spec.actionId, 'action.committed', {
+        actionId: spec.actionId,
+        externalJobId: spec.externalJobId,
+      }),
+    )
+  }
+  const final = replay(await readAll(service.journal)).actions[spec.actionId]
+  if (final?.status !== 'COMMITTED') {
+    throw new Error(`PROTOCOL_INVALID: ${spec.actionId} did not reach COMMITTED (${final?.status})`)
+  }
+  return result
+}
+
+/** Mark an external action terminally FAILED after a rejected effect. */
+export async function failExternalAction(
+  service: ExternalActionService,
+  actionId: string,
+): Promise<void> {
+  const action = replay(await readAll(service.journal)).actions[actionId]
+  if (
+    action === undefined ||
+    action.status === 'COMMITTED' ||
+    action.status === 'FAILED' ||
+    action.status === 'CANCELLED' ||
+    action.status === 'ABANDONED'
+  ) {
+    return
+  }
+  await service.record(eventInput(actionId, 'action.failed', { actionId }))
 }
