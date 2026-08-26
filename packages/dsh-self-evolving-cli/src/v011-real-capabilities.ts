@@ -844,6 +844,17 @@ async function realV011Proposal(
   const worker = JSON.parse(await readFile(workerOutput, 'utf8')) as {
     transcript: { assistantText: string; toolTrace: unknown[]; eventCount: number }
     toolCallCount: number
+    finishedTreeDigest?: unknown
+  }
+  // The sandbox finish receipt is bound to the exact policy/test-validated
+  // bytes; the trusted side must publish the SAME tree (issue #125): the
+  // materializer recomputes the canonical archive hash, so compare domains
+  // match and any drift fails closed here.
+  if (
+    typeof worker['finishedTreeDigest'] !== 'string' ||
+    !/^sha256:[0-9a-f]{64}$/.test(worker['finishedTreeDigest'])
+  ) {
+    throw new Error('v0.1.1 proposal: worker output lacks a valid finished tree digest')
   }
   const store: ObjectStore = { root: join(config.stateDir, 'v011', 'object-store') }
   let materialized: Awaited<ReturnType<typeof materializeV011Proposal>>
@@ -876,6 +887,14 @@ async function realV011Proposal(
     const message = error instanceof Error ? error.message : 'unknown semantic rejection'
     await retainProposalRejection(action, 'PROPOSAL_SEMANTIC_REJECT', message)
     throw error
+  }
+  // End-to-end binding: the published tree must be the exact bytes the
+  // sandbox validated (policy scan + candidate tests run only sandbox-side;
+  // this comparison is what carries their verdict into trusted publication).
+  if (materialized.receipt.sourceDigest !== worker['finishedTreeDigest']) {
+    throw new Error(
+      'v0.1.1 proposal: materialized tree differs from the finished validation digest',
+    )
   }
   const analysis = JSON.parse(await readFile(join(slot, 'analysis.json'), 'utf8')) as {
     falsifiableHypothesis: string
