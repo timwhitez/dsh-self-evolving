@@ -40,3 +40,8 @@ export {
   type V011ProposalTurnInput,
   type V011ProposalTurnResult,
 } from './v011-runner.js'
+export {
+  type AdapterFetchAttempt,
+  type AdapterDiscardedUsage,
+  type TrustedAdapterAttemptSource,
+} from './fetch-attempts.js'

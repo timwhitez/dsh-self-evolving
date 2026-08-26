@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, rm, stat } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
+import type { AdapterFetchAttempt } from './fetch-attempts.js'
 import { dirname, resolve } from 'node:path'
 
 export interface ProposalGatewayRoute {
@@ -34,6 +35,8 @@ export interface ProposalGatewayReceipt {
   requestHash: string
   responseHash: string
   routeHash: string
+  /** Transport-retry attempt log for the trusted provider fetch (issue #123). */
+  attempts?: AdapterFetchAttempt[]
 }
 
 export interface ProposalGatewayHandleContext {
@@ -148,11 +151,18 @@ export async function startProposalGateway(
       responseHash,
     }
     completed.set(requestId, { requestHash, response })
+    const attempts =
+      result !== null &&
+      typeof result === 'object' &&
+      Array.isArray((result as { attempts?: unknown }).attempts)
+        ? ((result as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ?? undefined)
+        : undefined
     receiptLog.push({
       requestId,
       requestHash,
       responseHash,
       routeHash: sha256(stableJson(options.route)),
+      ...(attempts === undefined ? {} : { attempts }),
     })
     return response
   }
@@ -256,7 +266,13 @@ export async function startProposalGateway(
   return {
     socketPath,
     request,
-    receipts: () => receiptLog.map((receipt) => ({ ...receipt })),
+    receipts: () =>
+      receiptLog.map((receipt) => ({
+        ...receipt,
+        ...(receipt.attempts === undefined
+          ? {}
+          : { attempts: receipt.attempts.map((row) => ({ ...row })) }),
+      })),
     async close() {
       if (closed) return
       closed = true

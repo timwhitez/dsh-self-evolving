@@ -6,6 +6,7 @@ import {
   type ProposalGatewayRequest,
   type ProposalGatewayRoute,
 } from './gateway.js'
+import type { AdapterFetchAttempt, TrustedAdapterAttemptSource } from './fetch-attempts.js'
 
 export interface ProposalGatewayAdapterConfig {
   socketPath: string
@@ -75,7 +76,10 @@ export class ProposalGatewayAdapter extends LlmAdapter {
 export function createProposalGatewayLlmHandler(
   adapter: LlmAdapter,
   route: ProposalGatewayRoute,
-): (payload: unknown, context?: { signal: AbortSignal }) => Promise<{ chunks: StreamChunk[] }> {
+): (
+  payload: unknown,
+  context?: { signal: AbortSignal },
+) => Promise<{ chunks: StreamChunk[]; attempts?: AdapterFetchAttempt[] }> {
   return async (payload, context) => {
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new Error('proposal gateway handler: invalid payload')
@@ -118,6 +122,11 @@ export function createProposalGatewayLlmHandler(
     for await (const chunk of adapter.stream(options)) {
       chunks.push(chunk)
     }
-    return { chunks }
+    // Surface the trusted adapter's transport-retry attempt log on the
+    // handler result so the gateway receipt records every possibly-billed
+    // attempt (issue #123). Non-attempt adapters simply omit it.
+    const attemptSource = adapter as Partial<TrustedAdapterAttemptSource>
+    const attempts = attemptSource.lastFetchAttempts
+    return attempts === undefined ? { chunks } : { chunks, attempts: [...attempts] }
   }
 }
