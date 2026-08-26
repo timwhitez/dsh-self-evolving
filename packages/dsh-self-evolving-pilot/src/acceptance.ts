@@ -1,4 +1,6 @@
 /** Fail-closed Gate 6 real-pilot evidence verifier. */
+import { isValidCandidateId } from '@dsh-self-evolving/candidate-sdk'
+
 export interface Gate6CandidateEvidence {
   candidateId: string
   sourceDigest: string
@@ -55,8 +57,10 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
   }
   const sourceDigests = new Set<string>()
   for (const candidate of input.candidates) {
+    // The candidate ID is the SDK-issued canonical identity (c_<base32>),
+    // distinct from every sha256 digest field (issue #77).
     if (
-      !digest.test(candidate.candidateId) ||
+      !isValidCandidateId(candidate.candidateId) ||
       !digest.test(candidate.sourceDigest) ||
       !digest.test(candidate.capsuleDigest) ||
       !digest.test(candidate.buildManifestDigest)

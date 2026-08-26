@@ -202,6 +202,17 @@ export function candidateIdFromArchive(bytes: Uint8Array): { hash: string; candi
 }
 
 /**
+ * Canonical Candidate SDK identity: `c_` + 26 unpadded lowercase base32
+ * characters (RFC 4648 alphabet). Distinct from any sha256 digest shape so
+ * evidence cannot mislabel a source digest as a candidate ID.
+ */
+const CANDIDATE_ID_PATTERN = /^c_[a-z2-7]{26}$/
+
+export function isValidCandidateId(id: string): boolean {
+  return CANDIDATE_ID_PATTERN.test(id)
+}
+
+/**
  * Helper: given a candidate source root and a manifest-declared relative path
  * list, build the DeclaredFile[] with absolute paths resolved under root.
  */

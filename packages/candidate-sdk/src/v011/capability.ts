@@ -47,22 +47,43 @@ export async function freezeCapabilityCatalog(
   return { catalog: normalized, digest: digestV011(canonicalV011(normalized)) }
 }
 
+export interface RuntimeCapabilityBindings {
+  requiredServices: ExactCapability[]
+  optionalServices: ExactCapability[]
+  newTools: ExactCapability[]
+}
+
+/**
+ * Resolve a candidate's runtime intent against the frozen catalog.
+ *
+ * Every intent field must resolve to an *enabled* catalog entry of the exact
+ * semantic kind: services for required/optional services and tools for new
+ * tool names. A same-ID capability of a different kind (issue #81) fails
+ * closed instead of silently satisfying a service/tool contract.
+ */
 export function assertRuntimeIntentAgainstCatalog(
   intent: { requiredServices: string[]; optionalServices: string[]; newToolNames: string[] },
   frozen: FrozenCapabilityCatalog,
-): void {
-  const enabled = new Set(
-    frozen.catalog.capabilities
-      .filter((capability) => capability.enabled)
-      .map((capability) => capability.id),
-  )
-  for (const id of [
-    ...intent.requiredServices,
-    ...intent.optionalServices,
-    ...intent.newToolNames,
-  ]) {
-    if (!enabled.has(id))
-      throw new Error(`v0.1.1 catalog: candidate requests unavailable capability ${id}`)
+): RuntimeCapabilityBindings {
+  const byId = new Map(frozen.catalog.capabilities.map((row) => [row.id, row]))
+  const resolve = (ids: string[], kind: 'service' | 'tool', field: string): ExactCapability[] =>
+    ids.map((id) => {
+      const row = byId.get(id)
+      if (row === undefined) {
+        throw new Error(`v0.1.1 catalog: candidate requests unavailable capability ${id}`)
+      }
+      if (!row.enabled) {
+        throw new Error(`v0.1.1 catalog: candidate requests disabled capability ${id}`)
+      }
+      if (row.kind !== kind) {
+        throw new Error(`v0.1.1 catalog: ${field} ${id} is a ${row.kind}, not a ${kind}`)
+      }
+      return row
+    })
+  return {
+    requiredServices: resolve(intent.requiredServices, 'service', 'requiredServices'),
+    optionalServices: resolve(intent.optionalServices, 'service', 'optionalServices'),
+    newTools: resolve(intent.newToolNames, 'tool', 'newToolNames'),
   }
 }
 

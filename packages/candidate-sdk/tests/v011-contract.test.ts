@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assertDeclaredOperations,
+  assertRuntimeIntentAgainstCatalog,
   assertV011,
   deriveV011Operations,
   freezeCapabilityCatalog,
@@ -163,6 +164,14 @@ describe('v0.1.1 contract and containment', () => {
           enabled: false,
           fixtureDigest: null,
         },
+        {
+          id: 'filesystem.read',
+          tier: 'T1',
+          kind: 'tool',
+          signature: 'filesystem.read(path): Promise<Uint8Array>',
+          enabled: true,
+          fixtureDigest: `sha256:${'3'.repeat(64)}`,
+        },
       ],
     }
     const frozen = await freezeCapabilityCatalog(catalog)
@@ -175,5 +184,82 @@ describe('v0.1.1 contract and containment', () => {
         ],
       }),
     ).rejects.toThrow(/privileged capability/)
+  })
+
+  it('runtime intent resolves exact kinds and rejects cross-kind substitutions', async () => {
+    const catalog: CapabilityCatalog = {
+      schemaVersion: 1,
+      protocol: V011_PROTOCOL,
+      dshCommit: '4'.repeat(40),
+      capabilities: [
+        {
+          id: 'systemPrompt',
+          tier: 'T0',
+          kind: 'service',
+          signature: 'systemPrompt.section(input): disposer',
+          enabled: true,
+          fixtureDigest: `sha256:${'1'.repeat(64)}`,
+        },
+        {
+          id: 'filesystem.read',
+          tier: 'T1',
+          kind: 'tool',
+          signature: 'filesystem.read(path): Promise<Uint8Array>',
+          enabled: true,
+          fixtureDigest: `sha256:${'3'.repeat(64)}`,
+        },
+        {
+          id: 'disabled.service',
+          tier: 'T1',
+          kind: 'service',
+          signature: 'disabled',
+          enabled: false,
+          fixtureDigest: null,
+        },
+      ],
+    }
+    const frozen = await freezeCapabilityCatalog(catalog)
+
+    // Correct kinds resolve to the exact frozen rows.
+    const bindings = assertRuntimeIntentAgainstCatalog(
+      {
+        requiredServices: ['systemPrompt'],
+        optionalServices: [],
+        newToolNames: ['filesystem.read'],
+      },
+      frozen,
+    )
+    expect(bindings.requiredServices.map((row) => row.id)).toEqual(['systemPrompt'])
+    expect(bindings.newTools.map((row) => row.kind)).toEqual(['tool'])
+
+    // A tool ID cannot satisfy a required service (issue #81).
+    expect(() =>
+      assertRuntimeIntentAgainstCatalog(
+        { requiredServices: ['filesystem.read'], optionalServices: [], newToolNames: [] },
+        frozen,
+      ),
+    ).toThrow(/requiredServices filesystem\.read is a tool, not a service/)
+
+    // A service ID cannot satisfy a new tool name either.
+    expect(() =>
+      assertRuntimeIntentAgainstCatalog(
+        { requiredServices: [], optionalServices: [], newToolNames: ['systemPrompt'] },
+        frozen,
+      ),
+    ).toThrow(/newToolNames systemPrompt is a service, not a tool/)
+
+    // Disabled and unknown capabilities still fail closed.
+    expect(() =>
+      assertRuntimeIntentAgainstCatalog(
+        { requiredServices: ['disabled.service'], optionalServices: [], newToolNames: [] },
+        frozen,
+      ),
+    ).toThrow(/disabled capability/)
+    expect(() =>
+      assertRuntimeIntentAgainstCatalog(
+        { requiredServices: [], optionalServices: ['absent.service'], newToolNames: [] },
+        frozen,
+      ),
+    ).toThrow(/unavailable capability/)
   })
 })
