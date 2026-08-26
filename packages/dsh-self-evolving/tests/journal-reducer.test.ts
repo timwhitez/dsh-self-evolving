@@ -24,6 +24,7 @@ import {
   reduce,
   replay,
   stateHash,
+  logicalStateHash,
   writeSnapshot,
   loadLatestSnapshot,
 } from '../src/index.js'
@@ -242,72 +243,72 @@ describe('reducer + snapshot', () => {
     expect(loaded).toBeNull() // rejected → caller falls back to full replay
   })
 
-  it('event-completion-order permutation within a wave yields the same state hash', async () => {
-    // Two independent observations in one wave: reducing them in either order
-    // must produce the same canonical state hash. The observations array is
-    // order-sensitive, so we canonicalize by sorting observations by a stable
-    // key before hashing — this test proves that canonicalization.
-    const baseEvents = [
+  it('separates exact completion order from order-independent logical facts', () => {
+    const candidateEvent: JournalEvent = {
+      schemaVersion: 1,
+      runId: 'r',
+      seq: 1,
+      eventId: 'admit',
+      occurredAt: '2026-08-14T00:00:00.000Z',
+      type: 'candidate.admitted',
+      causationId: null,
+      correlationId: 'wave',
+      actor: 'test',
+      payload: { candidateId: 'c_a', canonicalParent: null, donorCandidates: [] },
+      previousHash: null,
+      eventHash: `sha256:${'1'.repeat(64)}`,
+    }
+    const observations: JournalEvent[] = [
       {
-        schemaVersion: 1 as const,
-        runId: 'r',
-        seq: 0,
-        eventId: '',
-        occurredAt: '',
+        ...candidateEvent,
+        seq: 2,
+        eventId: 'observation-a',
         type: 'evaluation.observed',
-        causationId: null,
-        correlationId: null,
-        actor: 'test',
         payload: {
           candidateId: 'c_a',
           taskId: 't2',
           attemptIndex: 0,
-          status: 'pass' as const,
-          reward: 1.0,
+          status: 'pass',
+          reward: 1,
         },
-        previousHash: null,
-        eventHash: '',
+        previousHash: candidateEvent.eventHash,
+        eventHash: `sha256:${'2'.repeat(64)}`,
       },
       {
-        schemaVersion: 1 as const,
-        runId: 'r',
-        seq: 0,
-        eventId: '',
-        occurredAt: '',
+        ...candidateEvent,
+        seq: 2,
+        eventId: 'observation-b',
         type: 'evaluation.observed',
-        causationId: null,
-        correlationId: null,
-        actor: 'test',
         payload: {
           candidateId: 'c_a',
           taskId: 't1',
           attemptIndex: 0,
-          status: 'fail' as const,
-          reward: 0.0,
+          status: 'fail',
+          reward: 0,
         },
-        previousHash: null,
-        eventHash: '',
+        previousHash: candidateEvent.eventHash,
+        eventHash: `sha256:${'3'.repeat(64)}`,
       },
     ]
-    // Order A: t2 then t1.
-    let stateA = genesisState()
-    for (const e of baseEvents)
-      stateA = reduce(stateA, { ...e, seq: stateA.lastSeq + 1, eventHash: 'sha256:x' })
-    // Order B: t1 then t2.
-    let stateB = genesisState()
-    for (const e of [baseEvents[1]!, baseEvents[0]!]) {
-      stateB = reduce(stateB, { ...e, seq: stateB.lastSeq + 1, eventHash: 'sha256:x' })
-    }
-    // The observations array order differs, BUT for a real wave the canonical
-    // state hash must be order-independent. We sort observations by key.
-    const canonical = (s: typeof stateA) =>
-      stateHash({
-        ...s,
-        observations: [...s.observations].sort((x, y) =>
-          `${x.candidateId}/${x.taskId}`.localeCompare(`${y.candidateId}/${y.taskId}`),
-        ),
-      })
-    expect(canonical(stateA)).toBe(canonical(stateB))
+
+    let stateA = reduce(genesisState(), candidateEvent)
+    stateA = reduce(stateA, observations[0]!)
+    stateA = reduce(stateA, {
+      ...observations[1]!,
+      seq: 3,
+      previousHash: stateA.lastEventHash,
+    })
+
+    let stateB = reduce(genesisState(), candidateEvent)
+    stateB = reduce(stateB, observations[1]!)
+    stateB = reduce(stateB, {
+      ...observations[0]!,
+      seq: 3,
+      previousHash: stateB.lastEventHash,
+    })
+
+    expect(stateHash(stateA)).not.toBe(stateHash(stateB))
+    expect(logicalStateHash(stateA)).toBe(logicalStateHash(stateB))
   })
 })
 
