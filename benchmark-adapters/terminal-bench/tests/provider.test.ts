@@ -207,4 +207,96 @@ describe('idempotency store', () => {
       idempotencyKey('c_a', 'extract-elf', 1),
     )
   })
+
+  it('reserves the same key exactly once under concurrency', async () => {
+    const store = { ledgerDir: dir! }
+    const key = idempotencyKey('c_race', 'extract-elf', 0)
+    const record = (submittedAt: string) => ({
+      key,
+      candidateId: 'c_race',
+      taskId: 'extract-elf',
+      attemptIndex: 0,
+      submittedAt,
+    })
+    const results = await Promise.all(
+      Array.from({ length: 16 }, (_, index) => reserveKey(store, record(`t${index}`))),
+    )
+    expect(results.filter((won) => won)).toHaveLength(1)
+    expect(results.filter((won) => !won)).toHaveLength(15)
+    expect(await isReserved(store, key)).toBe(true)
+  })
+
+  it('fails closed on a corrupt ledger instead of authorizing duplicates', async () => {
+    const store = { ledgerDir: dir! }
+    const record = {
+      key: idempotencyKey('c_x', 'extract-elf', 0),
+      candidateId: 'c_x',
+      taskId: 'extract-elf',
+      attemptIndex: 0,
+      submittedAt: 't',
+    }
+    expect(await reserveKey(store, record)).toBe(true)
+    // Truncate the ledger mid-line: the durable marker still refuses the
+    // duplicate, and a fresh reservation attempt surfaces the corruption
+    // instead of treating the store as empty.
+    const ledger = join(dir!, 'idempotency.jsonl')
+    const bytes = await readFile(ledger, 'utf8')
+    await writeFile(ledger, bytes.slice(0, Math.max(1, bytes.length - 10)))
+    await expect(reserveKey(store, record)).resolves.toBe(false)
+    await expect(
+      reserveKey(store, {
+        key: idempotencyKey('c_fresh', 'extract-elf', 0),
+        candidateId: 'c_fresh',
+        taskId: 'extract-elf',
+        attemptIndex: 0,
+        submittedAt: 't',
+      }),
+    ).rejects.toThrow(/corrupt|malformed/)
+    await expect(isReserved(store, record.key)).resolves.toBe(true)
+  })
+
+  it('rejects a record whose key does not bind its trial identity', async () => {
+    const store = { ledgerDir: dir! }
+    const record = {
+      key: idempotencyKey('c_a', 'extract-elf', 0),
+      candidateId: 'c_B',
+      taskId: 'extract-elf',
+      attemptIndex: 0,
+      submittedAt: 't',
+    }
+    await expect(reserveKey(store, record)).rejects.toThrow(/does not bind/)
+  })
+
+  it('fails closed when a reserved key is replayed with a different trial', async () => {
+    const store = { ledgerDir: dir! }
+    const key = idempotencyKey('c_a', 'extract-elf', 0)
+    await reserveKey(store, {
+      key,
+      candidateId: 'c_a',
+      taskId: 'extract-elf',
+      attemptIndex: 0,
+      submittedAt: 't',
+    })
+    // A forged record cannot claim the same key for another candidate/task.
+    await mkdir(join(dir!, 'keys'), { recursive: true })
+    await writeFile(
+      join(dir!, 'keys', `${key}.json`),
+      JSON.stringify({
+        key,
+        candidateId: 'c_impostor',
+        taskId: 'extract-elf',
+        attemptIndex: 0,
+        submittedAt: 't',
+      }),
+    )
+    await expect(
+      reserveKey(store, {
+        key,
+        candidateId: 'c_a',
+        taskId: 'extract-elf',
+        attemptIndex: 0,
+        submittedAt: 't2',
+      }),
+    ).rejects.toThrow(/does not bind|conflicting trial identity/)
+  })
 })
