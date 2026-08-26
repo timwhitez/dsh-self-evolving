@@ -109,10 +109,19 @@ describe('capsule packing', () => {
     expect(sums.some((line) => line.endsWith('  SHA256SUMS'))).toBe(false)
     expect(sums.some((line) => line.endsWith('  capsule.json'))).toBe(false)
     for (const line of sums) {
-      const match = /^([0-9a-f]{64}) {2}(.+)$/.exec(line)
+      const match = /^([0-9a-f]{64}) {2}(symlink:)?(.+)$/.exec(line)
       expect(match).not.toBeNull()
+      if (match![2] !== undefined) {
+        // Symlink entries commit to the literal target string.
+        const { readlink } = await import('node:fs/promises')
+        const actual = createHash('sha256')
+          .update(await readlink(join(capsuleDir, match![3]!)))
+          .digest('hex')
+        expect(actual).toBe(match![1])
+        continue
+      }
       const actual = createHash('sha256')
-        .update(await readFile(join(capsuleDir, match![2]!)))
+        .update(await readFile(join(capsuleDir, match![3]!)))
         .digest('hex')
       expect(actual).toBe(match![1])
     }
