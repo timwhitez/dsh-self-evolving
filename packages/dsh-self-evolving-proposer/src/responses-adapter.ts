@@ -100,6 +100,12 @@ function continuationInput(
     })
   }
   for (const message of options.messages) {
+    // The Responses protocol's message items only accept user/assistant.
+    // System text belongs to the instructions slot; silently re-attributing a
+    // system message as a user turn would misplace authority.
+    if (message.role === 'system') {
+      throw new Error('responses adapter: system role is not replayable in message history')
+    }
     const role = message.role === 'assistant' ? 'assistant' : 'user'
     let pendingText = ''
     const flush = (): void => {
