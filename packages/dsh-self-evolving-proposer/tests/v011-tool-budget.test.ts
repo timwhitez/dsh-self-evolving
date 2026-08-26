@@ -4,6 +4,7 @@ import { consumeV011ToolBudget, type V011ToolState } from '../src/v011-tools.js'
 function state(): V011ToolState {
   return {
     finished: false,
+    finishedTreeDigest: null,
     callCount: 0,
     authoringCallCount: 0,
     correctionCallCount: 0,

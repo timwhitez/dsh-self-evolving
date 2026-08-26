@@ -21,6 +21,8 @@ import {
 } from 'typescript'
 import {
   assertV011,
+  canonicalizeV011Tree,
+  digestV011,
   scanPaths,
   snapshotV011Tree,
   type FrozenCapabilityCatalog,
@@ -60,6 +62,13 @@ export interface V011ToolRoots {
 
 export interface V011ToolState {
   finished: boolean
+  /**
+   * Digest of the exact child tree that passed the finish_proposal
+   * validation; the worker re-verifies the tree against it after the agent
+   * turn ends so post-finish mutation cannot reach trusted materialization
+   * (issue #125).
+   */
+  finishedTreeDigest: string | null
   callCount: number
   authoringCallCount: number
   correctionCallCount: number
@@ -366,6 +375,7 @@ export function installV011Tools(
 ): V011ToolState {
   const state: V011ToolState = {
     finished: false,
+    finishedTreeDigest: null,
     callCount: 0,
     authoringCallCount: 0,
     correctionCallCount: 0,
@@ -374,6 +384,9 @@ export function installV011Tools(
   }
   const counted = <T extends (...args: never[]) => unknown>(fn: T): T =>
     (async (...args: Parameters<T>) => {
+      if (state.finished) {
+        throw new Error('v0.1.1 tool: the proposal is finished — no further authoring is allowed')
+      }
       consumeV011ToolBudget(state, 'content')
       return fn(...args)
     }) as T
@@ -570,6 +583,9 @@ export function installV011Tools(
         const snapshot = await snapshotV011Tree(roots.childTree)
         await validateV011CandidatePolicy(snapshot)
         await runCandidateTests(roots.childTree)
+        // Atomically bind the finish receipt to the exact validated bytes.
+        const canonical = await canonicalizeV011Tree(snapshot)
+        state.finishedTreeDigest = digestV011(canonical.bytes)
         state.finished = true
         return render({ status: 'PROPOSAL_SEMANTICS_VALID', proposalId: bindings.proposalId })
       }, true),
