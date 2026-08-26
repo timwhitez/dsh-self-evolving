@@ -129,10 +129,15 @@ describe('v0.1.1 generated-plugin admission', () => {
       // placeholder (issue #114): the overlay is rewritten with the digest
       // before it lands in the capsule.
       const packedOverlay = await readFile(join(outputRoot, 'runner', 'cordis.patch.yml'), 'utf8')
+      // The launcher boots runtime/cordis.yml; pin BOTH copies to the
+      // admitted identity.
+      const bootedOverlay = await readFile(join(outputRoot, 'runtime', 'cordis.yml'), 'utf8')
       expect(packedOverlay).not.toContain('__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__')
       expect(packedOverlay).not.toContain('__DSH_SELF_EVOLVING_CANDIDATE_ID__')
       expect(packedOverlay).not.toContain('v011-runtime-candidate')
       expect(packedOverlay).toContain(`candidateId: sha256:${result.buildReceipt.sourceHash}`)
+      expect(bootedOverlay).toContain(`candidateId: sha256:${result.buildReceipt.sourceHash}`)
+      expect(bootedOverlay).not.toContain('__DSH_SELF_EVOLVING_')
       expect(result.loader.solve.candidateId).toBe(`sha256:${result.buildReceipt.sourceHash}`)
       expect(result.loader.propose.candidateId).toBe(`sha256:${result.buildReceipt.sourceHash}`)
       expect(result.buildReceipt.runtimePackageName).toMatch(/^@dsh-self-evolving\/candidate-/)
