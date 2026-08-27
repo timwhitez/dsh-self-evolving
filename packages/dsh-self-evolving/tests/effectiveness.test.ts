@@ -215,7 +215,7 @@ describe('engineering-effect evidence binding (issue #87)', () => {
 
   it('rejects a receipt set collected against a different locked route (issue #214)', () => {
     const input = baseInput()
-    const otherRoute: EffectRoute = { ...effectRoute, model: 'deepseek-v4-lite' }
+    const otherRoute = { ...effectRoute, model: 'deepseek-v4-lite' } as const
     input.proposalGatewayReceipts = [
       {
         requestId: 'r1',
