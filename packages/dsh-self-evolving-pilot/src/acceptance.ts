@@ -1,5 +1,9 @@
 /** Fail-closed Gate 6 real-pilot evidence verifier. */
-import { isValidCandidateId } from '@dsh-self-evolving/candidate-sdk'
+import {
+  canonicalV011,
+  digestV011,
+  isValidCandidateId,
+} from '@dsh-self-evolving/candidate-sdk'
 
 export interface Gate6CandidateEvidence {
   candidateId: string
@@ -15,6 +19,12 @@ export interface Gate6ObservationEvidence {
   normalizedRecordHash: string
   rawEvidenceDigests: string[]
   costUsd: number
+  /**
+   * The normalized trial record itself (issue #121): the verifier recomputes
+   * its canonical digest and requires equality with normalizedRecordHash
+   * instead of trusting any hash-shaped string.
+   */
+  normalizedRecord: unknown
 }
 
 export interface Gate6AcceptanceInput {
@@ -23,6 +33,12 @@ export interface Gate6AcceptanceInput {
   capabilityMode: 'real' | 'stub'
   candidates: Gate6CandidateEvidence[]
   observations: Gate6ObservationEvidence[]
+  /**
+   * Canonical digest over the complete evidence envelope (issue #121):
+   * recorded with the verdict so post-hoc edits to any evidence field
+   * (booleans included) diverge from the recorded commitment.
+   */
+  evidenceCommitment: `sha256:${string}`
   allActionsTerminalAndReconciled: boolean
   journalReplayMatches: boolean
   realCrashResumeReceipt: boolean
@@ -51,6 +67,9 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
     reasons.push('fresh successor pilot run id missing')
   if (input.targetK !== 10) reasons.push(`pilot target K must equal 10; got ${input.targetK}`)
   if (input.capabilityMode !== 'real') reasons.push('pilot capabilities are not real')
+  if (input.evidenceCommitment !== gate6EvidenceCommitment(input)) {
+    reasons.push('evidence envelope does not match its recorded commitment')
+  }
   const ids = new Set(input.candidates.map((candidate) => candidate.candidateId))
   if (ids.size !== input.targetK || ids.size !== input.candidates.length) {
     reasons.push(`unique admitted candidate matrix incomplete: ${ids.size}/${input.targetK}`)
@@ -86,6 +105,40 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
       reasons.push(
         `observation lacks normalized record: ${observation.candidateId}/${observation.taskId}`,
       )
+    } else if (
+      observation.normalizedRecord === undefined ||
+      observation.normalizedRecord === null
+    ) {
+      // A claimed digest without the record content it covers is unfalsifiable
+      // (issue #121); fail closed instead of trusting the claim.
+      reasons.push(
+        `observation normalized record missing: ${observation.candidateId}/${observation.taskId}`,
+      )
+    } else {
+      // Recompute from the record itself: a hash-shaped string alone proves
+      // nothing (issue #121).
+      const recomputed = digestV011(canonicalV011(observation.normalizedRecord))
+      if (recomputed !== observation.normalizedRecordHash) {
+        reasons.push(
+          `observation normalized record digest mismatch: ${observation.candidateId}/${observation.taskId}`,
+        )
+      }
+      // The record must also be attributable: a correctly-hashed blob that
+      // names another candidate/task/attempt — or nothing — is not evidence
+      // for this observation (issue #121).
+      const record = observation.normalizedRecord as unknown
+      if (
+        typeof record !== 'object' ||
+        record === null ||
+        Array.isArray(record) ||
+        (record as Record<string, unknown>).candidateId !== observation.candidateId ||
+        (record as Record<string, unknown>).taskId !== observation.taskId ||
+        (record as Record<string, unknown>).attemptIndex !== observation.attemptIndex
+      ) {
+        reasons.push(
+          `observation record identity mismatch: ${observation.candidateId}/${observation.taskId}/${observation.attemptIndex}`,
+        )
+      }
     }
     if (
       !Number.isFinite(observation.costUsd) ||
@@ -122,4 +175,30 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
   }
   if (input.sealedAccessCount !== 0) reasons.push('pilot accessed sealed state')
   return { accepted: reasons.length === 0, reasons: [...new Set(reasons)].sort() }
+}
+
+/**
+ * Canonical digest over the complete Gate 6 evidence envelope (issue #121):
+ * recorded with the verdict so post-hoc evidence edits diverge from the
+ * journal-recorded run.
+ */
+export function gate6EvidenceCommitment(input: Gate6AcceptanceInput): `sha256:${string}` {
+  return digestV011(
+    canonicalV011({
+      schemaVersion: 1,
+      runId: input.runId,
+      targetK: input.targetK,
+      capabilityMode: input.capabilityMode,
+      candidates: input.candidates,
+      observations: input.observations,
+      allActionsTerminalAndReconciled: input.allActionsTerminalAndReconciled,
+      journalReplayMatches: input.journalReplayMatches,
+      realCrashResumeReceipt: input.realCrashResumeReceipt,
+      fixtures: input.fixtures,
+      proposerRawEvidenceReferences: input.proposerRawEvidenceReferences,
+      auditCriticalFindings: input.auditCriticalFindings,
+      costPredictionErrorFraction: input.costPredictionErrorFraction,
+      sealedAccessCount: input.sealedAccessCount,
+    }),
+  )
 }

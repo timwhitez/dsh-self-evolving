@@ -12,6 +12,7 @@ export {
   type PilotArchive,
 } from './loop.js'
 export {
+  gate6EvidenceCommitment,
   verifyGate6Acceptance,
   type Gate6CandidateEvidence,
   type Gate6ObservationEvidence,
