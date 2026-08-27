@@ -795,6 +795,7 @@ async function realV011Proposal(
       throw new Error('v0.1.1 proposer: incomplete or conflicting selected-parent runtime')
     }
     const route = await loadTrustedRoute()
+    const sandboxTimeoutMs = 1_800_000
     const lockedRoute: ProposalGatewayRoute = {
       provider: 'deepseek',
       endpoint: route.baseUrl,
@@ -807,7 +808,7 @@ async function realV011Proposal(
       JSON.stringify({
         route: lockedRoute,
         proposalId,
-        llmDeadlineMs: Math.max(60_000, 1_800_000 - 120_000),
+        llmDeadlineMs: Math.max(60_000, sandboxTimeoutMs - 120_000),
         parentDigest: input.parent.sourceDigest,
         parentEntryDigest,
         parentRuntimeDigest,
@@ -847,6 +848,7 @@ async function realV011Proposal(
       gateway = await startProposalGateway({
         socketPath: join(action, 'gateway', 'proposal.sock'),
         route: lockedRoute,
+        requestTimeoutMs: sandboxTimeoutMs,
         async handle(payload, context) {
           try {
             return await handler(payload, context)
@@ -867,7 +869,7 @@ async function realV011Proposal(
         runtimeRoot,
         command: '/runtime/node',
         args: ['/runtime/node_modules/@dsh-self-evolving/proposer/lib/v011-sandbox-worker.js'],
-        timeoutMs: 1_800_000,
+        timeoutMs: sandboxTimeoutMs,
         maxOutputBytes: 4 * 1024 * 1024,
         gatewaySocket: gateway.socketPath,
       })

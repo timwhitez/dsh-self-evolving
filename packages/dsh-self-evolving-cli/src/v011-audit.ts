@@ -47,7 +47,7 @@ async function files(root: string): Promise<string[]> {
 }
 
 export interface FixtureCrossBinding {
-  /** Parent digest from the successor action's materialization receipt. */
+  /** Parent digest from the baseline receipt (fallback: action materialization). */
   parentDigest?: string | undefined
   /** Reserved proposalId from the successor action's materialization receipt. */
   proposalId?: string | undefined
@@ -130,14 +130,13 @@ export async function verifyInvalidReplacementFixture(
   return reasons
 }
 
-export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
-  const predecessor = await auditStableRun(config)
-  const controller = await readControllerStatus(config as never)
-  const reasons = [...predecessor.reasons]
-  // Cross-bind the fixture (issues #203/#208): parentDigest against the
-  // trusted generation-1 parent identity (baseline stable-build receipt —
-  // available even when attempt 1 failed), and proposalId against the
-  // successor action's materialization receipt when that attempt succeeded.
+/**
+ * Derive the fixture cross-binding (issues #203/#208): parentDigest from the
+ * trusted baseline stable-build receipt (present even when attempt 1 failed),
+ * falling back to the action's own materialization receipt; proposalId only
+ * when that attempt's materialization exists.
+ */
+export async function deriveFixtureCross(config: V011DemoConfig): Promise<FixtureCrossBinding> {
   const baseline = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'stable-build.json'),
   )) as { sourceDigest?: unknown } | null
@@ -154,7 +153,14 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   if (typeof materializationRecord?.proposalId === 'string') {
     cross.proposalId = materializationRecord.proposalId
   }
-  reasons.push(...(await verifyInvalidReplacementFixture(config, cross)))
+  return cross
+}
+
+export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
+  const predecessor = await auditStableRun(config)
+  const controller = await readControllerStatus(config as never)
+  const reasons = [...predecessor.reasons]
+  reasons.push(...(await verifyInvalidReplacementFixture(config, await deriveFixtureCross(config))))
   const baselineMigration = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'migration-receipt.json'),
   )) as { inheritedResultsPolicy?: unknown } | null

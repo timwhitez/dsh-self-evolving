@@ -93,7 +93,7 @@ export class ProposalGatewayAdapter extends LlmAdapter {
  * adapter instance must not interleave (issue #206).
  */
 function serialized<T>(fn: () => Promise<T>, gate: { tail: Promise<unknown> }): Promise<T> {
-  const run = gate.tail.then(fn, fn)
+  const run = gate.tail.then(fn)
   gate.tail = run.catch(() => undefined)
   return run
 }

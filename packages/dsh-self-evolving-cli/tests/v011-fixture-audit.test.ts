@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { verifyInvalidReplacementFixture } from '../src/v011-audit.js'
+import { deriveFixtureCross, verifyInvalidReplacementFixture } from '../src/v011-audit.js'
 import type { V011DemoConfig } from '../src/config.js'
 import { assertV011, digestV011, v011SchemaDigest } from '@dsh-self-evolving/candidate-sdk'
 
@@ -104,6 +104,16 @@ async function realFixture(action: string, runId: string): Promise<void> {
       },
       null,
       2,
+    ) + '\n',
+  )
+  await writeFile(
+    join(action, 'materialization.json'),
+    JSON.stringify(
+      {
+        stableProposal: {},
+        materialization: { proposalId: 'p-fixture', parentDigest: PARENT_DIGEST },
+      },
+      null,
     ) + '\n',
   )
 }
@@ -271,3 +281,32 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
 function readFileText(path: string): Promise<string> {
   return import('node:fs/promises').then((fs) => fs.readFile(path, 'utf8'))
 }
+
+describe('deriveFixtureCross chain (issue #208)', () => {
+  it('prefers the baseline receipt and adds proposalId when materialization exists', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(join(root!, 'candidates', 'v011-baseline'), { recursive: true })
+    await writeFile(
+      join(root!, 'candidates', 'v011-baseline', 'stable-build.json'),
+      JSON.stringify({ sourceDigest: PARENT_DIGEST }) + '\n',
+    )
+    const cross = await deriveFixtureCross(config())
+    expect(cross.parentDigest).toBe(PARENT_DIGEST)
+    expect(cross.proposalId).toBe('p-fixture')
+  })
+
+  it('falls back to the materialization parentDigest when no baseline receipt exists', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const cross = await deriveFixtureCross(config())
+    expect(cross.parentDigest).toBe(PARENT_DIGEST)
+    expect(cross.proposalId).toBe('p-fixture')
+  })
+
+  it('returns an empty cross when neither receipt exists', async () => {
+    const cross = await deriveFixtureCross(config())
+    expect(cross).toEqual({})
+  })
+})
