@@ -326,10 +326,13 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       // is always 48/12/29 over the pinned 89-task inventory. Checked
       // independently of the recommit so a fabricated small ceremony cannot
       // slip through on a throw.
+      const commitment = reveal.commitment as
+        | { sizes?: { devObserved?: unknown; devGuard?: unknown; sealed?: unknown } }
+        | undefined
       if (
-        reveal.commitment.sizes.devObserved !== SPLIT_SIZES.devObserved ||
-        reveal.commitment.sizes.devGuard !== SPLIT_SIZES.devGuard ||
-        reveal.commitment.sizes.sealed !== SPLIT_SIZES.sealed ||
+        commitment?.sizes?.devObserved !== SPLIT_SIZES.devObserved ||
+        commitment?.sizes?.devGuard !== SPLIT_SIZES.devGuard ||
+        commitment?.sizes?.sealed !== SPLIT_SIZES.sealed ||
         reveal.inventoryTaskIds.length !== 89
       ) {
         reasons.push('split commitment sizes/inventory do not match the frozen protocol')
