@@ -499,12 +499,20 @@ async function collectRun(input: {
       expectedAttemptIndex: attemptIndex,
       requireAcpEvidence: true,
     })
-    const usage = await readDshUsage(trialDir).catch(() => null)
+    const usage = await readDshUsage(trialDir).catch(
+      (error: unknown) => error as Error | null,
+    )
+    const usageError = usage instanceof Error ? usage : null
+    const usageTotal = usageError === null ? (usage as never) : null
     normalized.push({
       ...record,
-      usage,
-      costUsd: usage === null ? 0 : priceUsage(usage),
-      priced: usage !== null,
+      usage: usageTotal,
+      costUsd: usageTotal === null ? 0 : priceUsage(usageTotal),
+      priced: usageTotal !== null,
+      // The specific failure mode (0 sessions / >1 session / parse error /
+      // 0 events) survives into the summary so downstream pricing state can
+      // name the cause instead of a generic reason (issue #223).
+      ...(usageError === null ? {} : { pricingReason: String(usageError.message) }),
     })
   }
   const candidateId = input.candidateIdHint

@@ -558,6 +558,7 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
           reward: number | null
           costUsd: number
           priced?: boolean
+          pricingReason?: string
         }>
       }
       const row = summary.normalized[0]
@@ -593,7 +594,10 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
             ? { state: 'priced' }
             : {
                 state: 'unknown',
-                reason: 'DSH usage evidence missing, unreadable, or without usage events',
+                reason:
+                  typeof row.pricingReason === 'string' && row.pricingReason.length > 0
+                    ? row.pricingReason
+                    : 'DSH usage evidence missing, unreadable, or without usage events',
               },
         rawEvidenceDigests: [sha256(bytes)],
       } as EvaluationObservation

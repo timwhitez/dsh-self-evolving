@@ -34,13 +34,17 @@ export interface EvaluationObservation {
  * conservatively instead of as a measured zero (issue #108).
  */
 export function observationPricing(observation: EvaluationObservation): EvaluationPricing {
+  if (observation === null || typeof observation !== 'object') {
+    return { state: 'unknown', reason: 'pricing state absent or invalid in recorded observation' }
+  }
   const pricing = (observation as { pricing?: unknown }).pricing
   if (
     typeof pricing === 'object' &&
     pricing !== null &&
     (pricing as EvaluationPricing).state === 'priced' &&
     Number.isFinite(observation.costUsd) &&
-    observation.costUsd >= 0
+    observation.costUsd >= 0 &&
+    !Object.is(observation.costUsd, -0)
   ) {
     return { state: 'priced' }
   }
