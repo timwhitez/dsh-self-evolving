@@ -379,4 +379,60 @@ describe('gateway receipts carry attempt logs', () => {
       }
     })
   })
+
+  describe('per-invocation attempt isolation (issue #206)', () => {
+    it('concurrent streams keep isolated collectors and the final log reflects one invocation', async () => {
+      process.env['DEEPSEEK_API_KEY'] = 'x'
+      let calls = 0
+      const adapter = new TrustedResponsesAdapter({
+        route,
+        contextWindow: 1_048_576,
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        requestMaxRetries: 1,
+        async fetchImpl() {
+          calls += 1
+          const mine = calls
+          // First two wire calls (each stream's first attempt) fail with a
+          // delay so both streams are in flight concurrently; later calls 200.
+          if (mine <= 2) {
+            await new Promise((done) => setTimeout(done, 30))
+            return new Response(
+              JSON.stringify({ id: `r-fail-${mine}`, usage: { input_tokens: mine } }),
+              { status: 500, headers: { 'content-type': 'application/json' } },
+            )
+          }
+          return new Response(JSON.stringify(okResponsesBody('ok', { input_tokens: mine })), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        },
+      })
+      const run = async (): Promise<{ inputTokens: number }> => {
+        let usage: { inputTokens: number } | undefined
+        for await (const chunk of adapter.stream({
+          provider: route.provider,
+          model: route.model,
+          reasoningEffort: route.reasoningEffort,
+          maxTokens: route.maxTokens,
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+        })) {
+          if ((chunk as { type?: string }).type === 'usage') {
+            usage = (chunk as { usage: { inputTokens: number } }).usage
+          }
+        }
+        return usage!
+      }
+      const [usageA, usageB] = await Promise.all([run(), run()])
+      // Each invocation's usage counted ONLY its own discarded attempt + its
+      // own success: with mine<=2 failing (inputs 1 and 2) and successes
+      // carrying inputs 3 and 4, no cross-accumulation means each usage is
+      // (its fail input + its success input), totalling 1+2+3+4 = 10 across
+      // both.
+      expect(usageA.inputTokens + usageB.inputTokens).toBe(10)
+      // The shared read slot reflects exactly ONE invocation's two attempts —
+      // not a 4-row interleave.
+      expect(adapter.lastFetchAttempts).toHaveLength(2)
+      expect(calls).toBe(4)
+    })
+  })
 })

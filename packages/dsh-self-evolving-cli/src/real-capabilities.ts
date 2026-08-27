@@ -201,6 +201,7 @@ async function realProposal(
       join(mounts.contracts, 'request.json'),
       JSON.stringify({
         route: lockedRoute,
+        llmDeadlineMs: Math.max(60_000, 600_000 - 120_000),
         parentDigest: input.parent.sourceDigest,
         candidateId: input.parent.candidateId,
         width: 3,

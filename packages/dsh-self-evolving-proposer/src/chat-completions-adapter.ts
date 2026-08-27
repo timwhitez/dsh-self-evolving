@@ -8,6 +8,7 @@ import {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import {
+  AttemptCollector,
   classifyStatus,
   type AdapterDiscardedUsage,
   type AdapterFetchAttempt,
@@ -105,6 +106,21 @@ function messagesOf(
   const messages: ChatMessage[] = []
   if (options.system) messages.push({ role: 'system', content: options.system })
   for (const message of options.messages) {
+    const serializable = message.content.filter(
+      (block) =>
+        block.type === 'text' || block.type === 'tool-call' || block.type === 'tool-result',
+    )
+    if (serializable.length === 0 && message.content.length > 0) {
+      // A message with NO serializable content cannot be faithfully replayed;
+      // refuse instead of silently dropping it (issue #206, mirroring the
+      // Responses adapter's #186 refusal).
+      const kinds = [...new Set(message.content.map((block) => String(block.type)))]
+        .sort()
+        .join('+')
+      throw new Error(
+        `chat adapter: history contains a message with no serializable content (${kinds})`,
+      )
+    }
     const content = message.content
       .filter((block) => block.type === 'text')
       .map((block) => block.text)
@@ -227,7 +243,8 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    this.fetchAttempts = []
+    const collector = new AttemptCollector()
+    this.fetchAttempts = collector.attempts
     const route = this.config.route
     const effectiveMaxTokens = options.maxTokens ?? route.maxTokens
     if (
@@ -276,6 +293,7 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
               }),
         },
         options.signal,
+        collector,
       )
       body = fetched.body
       // Count any usage salvaged from discarded transport retries into the
@@ -407,7 +425,8 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
 
   private async fetchBody(
     body: unknown,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    collector: AttemptCollector,
   ): Promise<{ body: ChatCompletionsBody; discardedUsage: AdapterDiscardedUsageTotal }> {
     const route = this.config.route
     const request: RequestInit = {
@@ -435,8 +454,8 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
       )
       const { retryable, ambiguous } = classifyStatus(response.status)
       if (response.ok) {
-        this.fetchAttempts.push({
-          attemptIndex: this.fetchAttempts.length,
+        collector.attempts.push({
+          attemptIndex: collector.attempts.length,
           status: response.status,
           retryable,
           ambiguous,
@@ -464,8 +483,8 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
         } catch {
           // Non-JSON failure body: recorded without salvaged usage.
         }
-        this.fetchAttempts.push({
-          attemptIndex: this.fetchAttempts.length,
+        collector.attempts.push({
+          attemptIndex: collector.attempts.length,
           status: response.status,
           retryable,
           ambiguous,
@@ -499,8 +518,8 @@ export class TrustedChatCompletionsAdapter extends LlmAdapter {
       } catch {
         // Non-JSON error body: still recorded as an ambiguous attempt.
       }
-      this.fetchAttempts.push({
-        attemptIndex: this.fetchAttempts.length,
+      collector.attempts.push({
+        attemptIndex: collector.attempts.length,
         status: response.status,
         retryable,
         ambiguous,

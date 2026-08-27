@@ -230,6 +230,29 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 
+  it('accepts a fixture when attempt 1 failed (baseline-only cross, issue #208)', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    // No materialization.json (attempt failed); the baseline receipt carries
+    // the trusted parent digest.
+    await writeFile(
+      join(root!, 'candidates', 'v011-baseline', 'stable-build.json'),
+      JSON.stringify({ sourceDigest: PARENT_DIGEST }) + '\n',
+      { flag: 'wx' },
+    ).catch(async () => {
+      const { mkdir } = await import('node:fs/promises')
+      await mkdir(join(root!, 'candidates', 'v011-baseline'), { recursive: true })
+      await writeFile(
+        join(root!, 'candidates', 'v011-baseline', 'stable-build.json'),
+        JSON.stringify({ sourceDigest: PARENT_DIGEST }) + '\n',
+      )
+    })
+    const reasons = await verifyInvalidReplacementFixture(config(), {
+      parentDigest: PARENT_DIGEST,
+    })
+    expect(reasons).toEqual([])
+  })
+
   it('fails closed when the fixture exists but the cross-binding is missing', async () => {
     const action = join(root!, 'v011', 'actions', 'proposal-1-1')
     await realFixture(action, 'fixture-audit-run')

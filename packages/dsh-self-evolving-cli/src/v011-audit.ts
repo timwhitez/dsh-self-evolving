@@ -102,9 +102,8 @@ export async function verifyInvalidReplacementFixture(
         binding !== null &&
         binding['runId'] === config.runId &&
         typeof cross.parentDigest === 'string' &&
-        typeof cross.proposalId === 'string' &&
         binding['parentDigest'] === cross.parentDigest &&
-        binding['proposalId'] === cross.proposalId &&
+        (cross.proposalId === undefined || binding['proposalId'] === cross.proposalId) &&
         typeof rejection.analysisSchemaDigest === 'string' &&
         rejection.analysisSchemaDigest === (await v011SchemaDigest('analysis')) &&
         digestV011(proposalBytes) === rejection.fixtureProposalDigest &&
@@ -135,16 +134,21 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const reasons = [...predecessor.reasons]
-  // Cross-bind the fixture to the successor action's OWN materialization
-  // receipt: the same trusted source that produced the fixture's binding
-  // (issue #203). The action's idempotency-key tail is a candidateId, not a
-  // digest, and must not be compared against binding.parentDigest.
+  // Cross-bind the fixture (issues #203/#208): parentDigest against the
+  // trusted generation-1 parent identity (baseline stable-build receipt —
+  // available even when attempt 1 failed), and proposalId against the
+  // successor action's materialization receipt when that attempt succeeded.
+  const baseline = (await json(
+    join(config.stateDir, 'candidates', 'v011-baseline', 'stable-build.json'),
+  )) as { sourceDigest?: unknown } | null
   const materialization = (await json(
     join(config.stateDir, 'v011', 'actions', 'proposal-1-1', 'materialization.json'),
   )) as { materialization?: { proposalId?: unknown; parentDigest?: unknown } } | null
   const materializationRecord = materialization?.materialization
   const cross: FixtureCrossBinding = {}
-  if (typeof materializationRecord?.parentDigest === 'string') {
+  if (typeof baseline?.sourceDigest === 'string') {
+    cross.parentDigest = baseline.sourceDigest
+  } else if (typeof materializationRecord?.parentDigest === 'string') {
     cross.parentDigest = materializationRecord.parentDigest
   }
   if (typeof materializationRecord?.proposalId === 'string') {

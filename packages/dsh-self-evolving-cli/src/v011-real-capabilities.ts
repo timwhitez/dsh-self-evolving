@@ -807,6 +807,7 @@ async function realV011Proposal(
       JSON.stringify({
         route: lockedRoute,
         proposalId,
+        llmDeadlineMs: Math.max(60_000, 1_800_000 - 120_000),
         parentDigest: input.parent.sourceDigest,
         parentEntryDigest,
         parentRuntimeDigest,

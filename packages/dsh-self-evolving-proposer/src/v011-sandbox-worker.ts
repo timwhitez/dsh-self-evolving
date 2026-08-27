@@ -28,6 +28,8 @@ interface WorkerRequest {
     preservedModes: Array<'solve' | 'propose'>
   }
   requiredParentEvidence?: V011ParentEvidenceBinding
+  /** Per-request LLM wire budget; the trusted host aborts stale fetches (issue #190). */
+  llmDeadlineMs?: number
 }
 
 const request = JSON.parse(await readFile('/input/contracts/request.json', 'utf8')) as WorkerRequest
@@ -130,7 +132,11 @@ try {
   })
   ctx.llm.registerAdapter(
     [request.route.provider],
-    new ProposalGatewayAdapter({ socketPath: '/run/proposer-gateway.sock', route: request.route }),
+    new ProposalGatewayAdapter({
+      socketPath: '/run/proposer-gateway.sock',
+      route: request.route,
+      ...(request.llmDeadlineMs === undefined ? {} : { defaultDeadlineMs: request.llmDeadlineMs }),
+    }),
   )
   await ctx.plugin(AgentDefaultModel, {
     provider: request.route.provider,
