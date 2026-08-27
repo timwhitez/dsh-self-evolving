@@ -76,11 +76,43 @@ export async function assertV011(kind: V011SchemaKind, value: unknown): Promise<
   if (!result.valid) throw new Error(`v0.1.1 ${kind} schema rejected:\n${result.errors.join('\n')}`)
 }
 
+/**
+ * Canonical JSON for the V011 hash root (issue #218 hardening):
+ *
+ * - Keys sort by UTF-16 code unit, never `localeCompare` — identical output
+ *   to the previous sort for every ASCII key set (all production schemas),
+ *   and locale/ICU-independent for arbitrary keys.
+ * - `undefined`-valued keys are SKIPPED, matching JSON.stringify semantics:
+ *   an in-memory envelope now digests identically to its JSON round-trip
+ *   (previously they diverged via a non-JSON `"key":undefined` emission).
+ *   No production digest ever contained an undefined-valued key
+ *   (exactOptionalPropertyTypes; JSON.parse cannot produce one).
+ * - Non-plain-object leaves (Date/Map/class instances, typed arrays) are
+ *   REJECTED instead of silently digesting as `{}` — their content was
+ *   unbound. JSON-derived payloads are unaffected; a rejection is a
+ *   fail-closed signal, not a compatibility break.
+ *
+ * Compatibility: byte-stable for every production shape EXCEPT the Gate8
+ * splitReveal key set, where 'revealReceiptHash' and the 'revealed*' keys
+ * order differently under the two sorts — that canonical form (and any
+ * gate8EvidenceCommitment containing a splitReveal) intentionally moved with
+ * this hardening. No recorded gate8 evidence commitment predates the change
+ * (gate8 evidence status is BLOCKED_NOT_STARTED), so no archived digest
+ * diverges. The stable shapes are pinned in contract-canonical.test.ts;
+ * the moved shape is pinned there with its old value recorded in a comment.
+ */
 export function canonicalV011(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map(canonicalV011).join(',')}]`
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(
+      'v0.1.1 canonicalization: non-plain-object leaf — content would be unbound',
+    )
+  }
   return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .filter(([, child]) => child !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalV011(child)}`)
     .join(',')}}`
 }
