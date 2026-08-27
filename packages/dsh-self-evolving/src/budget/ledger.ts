@@ -12,6 +12,15 @@
  *
  * A hard-limit denial produces an event; increasing the budget requires
  * terminating the run and creating a new signed manifest.
+ *
+ * UPGRADE NOTE (issue #223): an action settled by pre-#108 code — a missing
+ * usage record was spent as 0 and the full reservation released — is NOT
+ * re-settleable by post-#108 code, which settles unpriced usage at the full
+ * reservation: re-driving such an action throws `budget: conflicting spend
+ * replay` (amount mismatch on the same (kind, actionId, dimension) key).
+ * That is the intended fail-closed behavior; mid-run controller upgrades
+ * across the #108 boundary are additionally discouraged by the run
+ * manifest's code-commit binding.
  */
 import { spawn } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
