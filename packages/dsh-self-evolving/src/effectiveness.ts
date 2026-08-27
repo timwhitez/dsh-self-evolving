@@ -1,4 +1,9 @@
-import type { V011AdmissionReceipt, V011LoaderProbeReceipt } from '@dsh-self-evolving/candidate-sdk'
+import {
+  canonicalV011,
+  digestV011,
+  type V011AdmissionReceipt,
+  type V011LoaderProbeReceipt,
+} from '@dsh-self-evolving/candidate-sdk'
 
 export const ENGINEERING_EFFECT_FIXTURE = 'dsh-self-evolving.fixed-replay-effect.v2' as const
 
@@ -81,7 +86,10 @@ export interface EngineeringEffectReceipt {
 }
 
 function admissionDigest(receipt: V011AdmissionReceipt): `sha256:${string}` {
-  return receipt.stageReceipts.offlineCapsule
+  // Domain-separated digest over the COMPLETE admission receipt — every
+  // stage, catalog, materialization and capsule identity — not just the
+  // capsule SHA256SUMS text (issue #87).
+  return digestV011(canonicalV011(receipt))
 }
 
 function measurement(admission: EffectAdmission) {
@@ -110,8 +118,35 @@ export function evaluateEngineeringEffect(input: {
   if (!input.baseline.receipt.admitted || !input.child.receipt.admitted) {
     throw new Error('effectiveness: baseline and child must both be admitted')
   }
-  if (input.proposalGatewayReceipts.length === 0) {
-    throw new Error('effectiveness: real proposal gateway receipt is required')
+  // Cross-bind Loader probe evidence to its own admission (issue #87): the
+  // probe receipt must carry the admission's candidate digest, and replay
+  // digests must be sha256-shaped rather than any equal strings.
+  for (const [label, admission] of [
+    ['baseline', input.baseline],
+    ['child', input.child],
+  ] as const) {
+    for (const mode of ['solve', 'propose'] as const) {
+      const probe = admission.loader[mode]
+      if (
+        probe.candidateId !== admission.receipt.candidateDigest ||
+        !/^sha256:[0-9a-f]{64}$/.test(probe.replayDigest)
+      ) {
+        throw new Error(
+          `effectiveness: ${label} ${mode} Loader probe is not bound to its admission`,
+        )
+      }
+    }
+  }
+  if (
+    input.proposalGatewayReceipts.length === 0 ||
+    input.proposalGatewayReceipts.some(
+      (row) =>
+        !/^sha256:[0-9a-f]{64}$/.test(row.requestHash) ||
+        !/^sha256:[0-9a-f]{64}$/.test(row.responseHash) ||
+        !/^sha256:[0-9a-f]{64}$/.test(row.routeHash),
+    )
+  ) {
+    throw new Error('effectiveness: gateway receipts must be well-formed sha256 records')
   }
   const targets = new Set(input.modeContract.targetModes)
   const preserved = new Set(input.modeContract.preservedModes)
