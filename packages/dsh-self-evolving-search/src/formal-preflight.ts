@@ -30,6 +30,13 @@ export interface FormalRunManifest {
   targetK: number
   createdAt: string
   signatureKeyId: string
+  /**
+   * Canonical digest over the prerequisite evidence claims (issue #83): the
+   * detached signature covers this commitment, so every caller-supplied
+   * boolean/hash in FormalPreflightEvidence is signature-bound instead of
+   * living outside the signature where anyone could swap it.
+   */
+  evidenceCommitment: `sha256:${string}`
   code: {
     commit: string
     tag: string
@@ -153,6 +160,30 @@ function routeIdentity(route: FormalRunManifest['solverRoute']): string {
   return canonicalJson(route)
 }
 
+/**
+ * Canonical commitment over the complete prerequisite evidence: the signed
+ * manifest must carry exactly this value, binding Git state, gate receipts,
+ * baseline identity, route smoke, split separation, budget reservation,
+ * run-directory freshness, operator procedures and statistics publication
+ * to the trusted signature (issue #83).
+ */
+export function formalEvidenceCommitment(evidence: FormalPreflightEvidence): `sha256:${string}` {
+  return sha256(
+    canonicalJson({
+      schemaVersion: 1,
+      git: evidence.git,
+      prerequisiteGateReceipts: evidence.prerequisiteGateReceipts,
+      baseline: evidence.baseline,
+      providerRouteSmokeReceiptHash: evidence.providerRouteSmokeReceiptHash,
+      split: evidence.split,
+      budgetReservationReceiptHash: evidence.budgetReservationReceiptHash,
+      runDirectoryFresh: evidence.runDirectoryFresh,
+      operatorProcedures: evidence.operatorProcedures,
+      statisticsProtocolPublished: evidence.statisticsProtocolPublished,
+    }),
+  ) as `sha256:${string}`
+}
+
 export function verifyFormalPreflight(
   manifest: FormalRunManifest,
   evidence: FormalPreflightEvidence,
@@ -184,6 +215,13 @@ export function verifyFormalPreflight(
     }
   } catch {
     reasons.push('manifest signer/signature cannot be parsed')
+  }
+
+  // The signature must cover the evidence itself (issue #83): a validly
+  // signed manifest with a stale/absent evidence commitment proves nothing
+  // about the prerequisites recorded here.
+  if (manifest.evidenceCommitment !== formalEvidenceCommitment(evidence)) {
+    reasons.push('signed manifest does not commit to this prerequisite evidence')
   }
 
   if (!gitCommitPattern.test(manifest.code.commit)) reasons.push('manifest code commit is invalid')

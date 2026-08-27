@@ -53,6 +53,7 @@ export {
   type Gate5AcceptanceVerdict,
 } from './acceptance.js'
 export {
+  formalEvidenceCommitment,
   formalSignerKeyId,
   verifyFormalPreflight,
   type FormalPreflightEvidence,
