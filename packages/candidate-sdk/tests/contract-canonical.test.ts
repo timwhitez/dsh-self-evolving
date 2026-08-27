@@ -10,9 +10,10 @@ const sha = (character: string) => `sha256:${character.repeat(64)}`
 
 describe('canonicalV011 (issue #218)', () => {
   it('keeps byte-stable digests for the production payload shapes', () => {
-    // Pinned BEFORE the hardening with the localeCompare-based sorter; every
-    // production key set orders identically under code-unit sorting, so these
-    // digests must never move.
+    // Pinned BEFORE the hardening with the localeCompare-based sorter. These
+    // key sets order identically under both sorts, so their digests must
+    // never move. (The splitReveal key set is the one production shape that
+    // DID move — see the divergence-documented test below.)
     expect(
       digestV011(canonicalV011({ b: 1, a: 2, c: { z: 'x', y: 3 } })),
     ).toBe('sha256:2404ab67f81ea007ec105d6213cfb8d54970e61587cb65633adc2690b0c94515')
@@ -39,6 +40,38 @@ describe('canonicalV011 (issue #218)', () => {
     )
     expect(digestV011(new Uint8Array([1, 2, 3, 4]))).toBe(
       'sha256:9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a',
+    )
+  })
+
+  it('pins the splitReveal shape whose commitment digest intentionally moved (issue #218)', () => {
+    const sha256 = (character: string) => `sha256:${character.repeat(64)}`
+    const splitReveal = {
+      commitmentVerified: true,
+      merkleRoot: sha256('1'),
+      revealReceiptHash: sha256('2'),
+      revealCount: 1,
+      preLockSealedAccessCount: 0,
+      revealedTaskIds: ['task-060', 'task-061'],
+      revealedAssignment: [
+        { taskId: 'task-000', label: 'dev-observed' },
+        { taskId: 'task-060', label: 'sealed' },
+      ],
+      commitment: {
+        seedCommitment: sha256('3'),
+        taskInventoryDigest: sha256('4'),
+        sizes: { devObserved: 48, devGuard: 12, sealed: 29 },
+      },
+      inventoryTaskIds: ['task-000', 'task-060'],
+    }
+    // This key set is the ONE production shape where the localeCompare and
+    // code-unit orders differ ('revealReceiptHash' vs 'revealed*'): its
+    // canonical form INTENTIONALLY moved with the #218 hardening. Old
+    // (localeCompare) digest of this payload:
+    //   sha256:2e3971f0f82c9d2a31da615fc7e13eb924489233f469632bce3629bacdd36d0e
+    // No recorded gate8 evidenceCommitment predates this change (the gate8
+    // evidence status is BLOCKED_NOT_STARTED), so nothing archived diverges.
+    expect(digestV011(canonicalV011(splitReveal))).toBe(
+      'sha256:d1bc29a8334f0bbea55b5b3e8fff8fd2217ff2658313cfa9357501b2005f26f0',
     )
   })
 

@@ -92,9 +92,14 @@ export async function assertV011(kind: V011SchemaKind, value: unknown): Promise<
  *   unbound. JSON-derived payloads are unaffected; a rejection is a
  *   fail-closed signal, not a compatibility break.
  *
- * Compatibility: verified byte-stable for the production shapes pinned in
- * contract-canonical.test.ts (capability catalogs, loader probe receipts,
- * admission fixed-replay digests, ASCII key permutations).
+ * Compatibility: byte-stable for every production shape EXCEPT the Gate8
+ * splitReveal key set, where 'revealReceiptHash' and the 'revealed*' keys
+ * order differently under the two sorts — that canonical form (and any
+ * gate8EvidenceCommitment containing a splitReveal) intentionally moved with
+ * this hardening. No recorded gate8 evidence commitment predates the change
+ * (gate8 evidence status is BLOCKED_NOT_STARTED), so no archived digest
+ * diverges. The stable shapes are pinned in contract-canonical.test.ts;
+ * the moved shape is pinned there with its old value recorded in a comment.
  */
 export function canonicalV011(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
