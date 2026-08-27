@@ -238,7 +238,15 @@ function trialRecordReason(
   if (trial.normalizedRecord === undefined || trial.normalizedRecord === null) {
     return `trial normalized record missing: ${key}`
   }
-  if (digestV011(canonicalV011(trial.normalizedRecord)) !== trial.normalizedRecordHash) {
+  let recomputed: string
+  try {
+    recomputed = digestV011(canonicalV011(trial.normalizedRecord))
+  } catch {
+    // Undigestible record content is a fail-closed reason, never a crash
+    // (issue #217).
+    return `trial normalized record digest cannot be computed: ${key}`
+  }
+  if (recomputed !== trial.normalizedRecordHash) {
     return `trial normalized record digest mismatch: ${key}`
   }
   if (!recordIdentityMatches(trial.normalizedRecord, trial)) {
@@ -259,8 +267,25 @@ function trialRecordReason(
 
 export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVerdict {
   const reasons: string[] = []
-  if (input.evidenceCommitment !== gate8EvidenceCommitment(input)) {
-    reasons.push('evidence envelope does not match its recorded commitment')
+  if (input === null || typeof input !== 'object') {
+    return {
+      protocolValid: false,
+      promotionState: 'PROTOCOL_INVALID',
+      sealedComplete: false,
+      fullSetEligible: false,
+      fullSetVerified: false,
+      releaseVerified: false,
+      reasons: ['evidence envelope is not an object'],
+    }
+  }
+  try {
+    if (input.evidenceCommitment !== gate8EvidenceCommitment(input)) {
+      reasons.push('evidence envelope does not match its recorded commitment')
+    }
+  } catch {
+    // Undigestible content anywhere in the envelope cannot be
+    // commitment-checked: fail closed (issue #217).
+    reasons.push('evidence envelope commitment cannot be computed')
   }
   let computedPromotion: PromotionState | 'PROTOCOL_INVALID' | 'NOT_EVALUATED' = 'NOT_EVALUATED'
   if (
@@ -343,6 +368,19 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     reasons.push('candidate lock is not bound to baseline/sealed-plan/analysis identities')
   }
 
+  const sealedTrialsWellFormed =
+    Array.isArray(input.sealedTrials) &&
+    input.sealedTrials.every(
+      (trial) =>
+        trial !== null &&
+        typeof trial === 'object' &&
+        typeof trial.taskId === 'string' &&
+        typeof trial.attemptIndex === 'number',
+    )
+  if (!sealedTrialsWellFormed) {
+    reasons.push('sealed trial matrix is missing or malformed')
+  }
+  const safeSealedTrials = sealedTrialsWellFormed ? input.sealedTrials : []
   if (lock !== null && plan !== null) {
     const expectedPerRole = 29 * plan.attemptsPerTask
     const trialKeys = new Set<string>()
@@ -352,7 +390,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       string,
       { baseline?: SealedTrialEvidence; candidate?: SealedTrialEvidence }
     >()
-    for (const trial of input.sealedTrials) {
+    for (const trial of safeSealedTrials) {
       const key = `${trial.role}/${trial.taskId}/${trial.attemptIndex}`
       if (trialKeys.has(key)) reasons.push(`duplicate sealed trial: ${key}`)
       trialKeys.add(key)
@@ -387,7 +425,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     }
     if (
       taskIds.size !== 29 ||
-      input.sealedTrials.length !== expectedPerRole * 2 ||
+      safeSealedTrials.length !== expectedPerRole * 2 ||
       trialKeys.size !== expectedPerRole * 2 ||
       scheduleIndexes.size !== expectedPerRole * 2
     ) {
@@ -534,9 +572,22 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       reasons.push('full-set verification status is invalid')
     }
     const expectedTrials = full.taskCount * full.attemptsPerTask
+    const fullTrialsWellFormed =
+      Array.isArray(full.trials) &&
+      full.trials.every(
+        (trial) =>
+          trial !== null &&
+          typeof trial === 'object' &&
+          typeof trial.taskId === 'string' &&
+          typeof trial.attemptIndex === 'number',
+      )
+    if (!fullTrialsWellFormed) {
+      reasons.push('full-set trial matrix is missing or malformed')
+    }
+    const safeFullTrials = fullTrialsWellFormed ? full.trials : []
     const keys = new Set<string>()
     const tasks = new Set<string>()
-    for (const trial of full.trials) {
+    for (const trial of safeFullTrials) {
       const key = `${trial.taskId}/${trial.attemptIndex}`
       if (keys.has(key)) reasons.push(`duplicate full-set trial: ${key}`)
       keys.add(key)
@@ -559,7 +610,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     if (
       tasks.size !== 89 ||
       keys.size !== expectedTrials ||
-      full.trials.length !== expectedTrials
+      safeFullTrials.length !== expectedTrials
     ) {
       reasons.push('full-set 89 x >=5 trial matrix is incomplete')
     }

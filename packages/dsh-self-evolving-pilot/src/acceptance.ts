@@ -63,19 +63,53 @@ const digest = /^sha256:[0-9a-f]{64}$/
 
 export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6AcceptanceVerdict {
   const reasons: string[] = []
+  // Structural guards first: a malformed envelope must produce a fail-closed
+  // verdict, never a TypeError/RangeError the caller can only crash on
+  // (issue #217).
+  if (input === null || typeof input !== 'object') {
+    return { accepted: false, reasons: ['evidence envelope is not an object'] }
+  }
+  const candidatesWellFormed =
+    Array.isArray(input.candidates) &&
+    input.candidates.every(
+      (candidate) =>
+        candidate !== null &&
+        typeof candidate === 'object' &&
+        typeof candidate.candidateId === 'string',
+    )
+  const observationsWellFormed =
+    Array.isArray(input.observations) &&
+    input.observations.every(
+      (observation) =>
+        observation !== null &&
+        typeof observation === 'object' &&
+        typeof observation.candidateId === 'string' &&
+        typeof observation.taskId === 'string' &&
+        typeof observation.attemptIndex === 'number',
+    )
+  if (!candidatesWellFormed) reasons.push('candidate matrix is missing or malformed')
+  if (!observationsWellFormed) reasons.push('observation matrix is missing or malformed')
   if (!input.runId || input.runId === 'pilot-001')
     reasons.push('fresh successor pilot run id missing')
   if (input.targetK !== 10) reasons.push(`pilot target K must equal 10; got ${input.targetK}`)
   if (input.capabilityMode !== 'real') reasons.push('pilot capabilities are not real')
-  if (input.evidenceCommitment !== gate6EvidenceCommitment(input)) {
-    reasons.push('evidence envelope does not match its recorded commitment')
+  try {
+    if (input.evidenceCommitment !== gate6EvidenceCommitment(input)) {
+      reasons.push('evidence envelope does not match its recorded commitment')
+    }
+  } catch {
+    // Undigestible content anywhere in the envelope (circular values, stray
+    // bigint) cannot be commitment-checked: fail closed (issue #217).
+    reasons.push('evidence envelope commitment cannot be computed')
   }
-  const ids = new Set(input.candidates.map((candidate) => candidate.candidateId))
-  if (ids.size !== input.targetK || ids.size !== input.candidates.length) {
+  const safeCandidates = candidatesWellFormed ? input.candidates : []
+  const safeObservations = observationsWellFormed ? input.observations : []
+  const ids = new Set(safeCandidates.map((candidate) => candidate.candidateId))
+  if (ids.size !== input.targetK || ids.size !== safeCandidates.length) {
     reasons.push(`unique admitted candidate matrix incomplete: ${ids.size}/${input.targetK}`)
   }
   const sourceDigests = new Set<string>()
-  for (const candidate of input.candidates) {
+  for (const candidate of safeCandidates) {
     // The candidate ID is the SDK-issued canonical identity (c_<base32>),
     // distinct from every sha256 digest field (issue #77).
     if (
@@ -88,12 +122,12 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
     }
     sourceDigests.add(candidate.sourceDigest)
   }
-  if (sourceDigests.size !== input.candidates.length) {
+  if (sourceDigests.size !== safeCandidates.length) {
     reasons.push('admitted candidates do not have unique source digests')
   }
   const observationKeys = new Set<string>()
   const observedCandidates = new Set<string>()
-  for (const observation of input.observations) {
+  for (const observation of safeObservations) {
     const key = `${observation.candidateId}/${observation.taskId}/${observation.attemptIndex}`
     if (observationKeys.has(key)) reasons.push(`duplicate observation: ${key}`)
     observationKeys.add(key)
@@ -116,24 +150,39 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
       )
     } else {
       // Recompute from the record itself: a hash-shaped string alone proves
-      // nothing (issue #121).
-      const recomputed = digestV011(canonicalV011(observation.normalizedRecord))
-      if (recomputed !== observation.normalizedRecordHash) {
+      // nothing (issue #121). Undigestible content is a fail-closed reason,
+      // never a crash (issue #217).
+      let recomputed: string
+      try {
+        recomputed = digestV011(canonicalV011(observation.normalizedRecord))
+      } catch {
+        reasons.push(
+          `observation normalized record digest cannot be computed: ${observation.candidateId}/${observation.taskId}`,
+        )
+        recomputed = ''
+      }
+      if (recomputed !== '' && recomputed !== observation.normalizedRecordHash) {
         reasons.push(
           `observation normalized record digest mismatch: ${observation.candidateId}/${observation.taskId}`,
         )
       }
       // The record must also be attributable: a correctly-hashed blob that
       // names another candidate/task/attempt — or nothing — is not evidence
-      // for this observation (issue #121).
+      // for this observation (issue #121). Identity is compared through own
+      // ENUMERABLE properties only, matching what canonicalV011 digests, so a
+      // record cannot pass with identity hidden on a prototype or marked
+      // non-enumerable (issue #217).
       const record = observation.normalizedRecord as unknown
+      const own =
+        typeof record === 'object' && record !== null && !Array.isArray(record)
+          ? Object.entries(record)
+          : []
+      const field = (name: string): unknown => own.find(([key]) => key === name)?.[1]
       if (
-        typeof record !== 'object' ||
-        record === null ||
-        Array.isArray(record) ||
-        (record as Record<string, unknown>).candidateId !== observation.candidateId ||
-        (record as Record<string, unknown>).taskId !== observation.taskId ||
-        (record as Record<string, unknown>).attemptIndex !== observation.attemptIndex
+        own.length === 0 ||
+        field('candidateId') !== observation.candidateId ||
+        field('taskId') !== observation.taskId ||
+        field('attemptIndex') !== observation.attemptIndex
       ) {
         reasons.push(
           `observation record identity mismatch: ${observation.candidateId}/${observation.taskId}/${observation.attemptIndex}`,
@@ -143,6 +192,7 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
     if (
       !Number.isFinite(observation.costUsd) ||
       observation.costUsd < 0 ||
+      !Array.isArray(observation.rawEvidenceDigests) ||
       observation.rawEvidenceDigests.length === 0 ||
       observation.rawEvidenceDigests.some((value) => !digest.test(value))
     ) {
@@ -159,8 +209,18 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
   if (!input.allActionsTerminalAndReconciled) reasons.push('actions are not terminal/reconciled')
   if (!input.journalReplayMatches) reasons.push('independent journal replay does not match')
   if (!input.realCrashResumeReceipt) reasons.push('real process crash/resume receipt missing')
-  for (const [fixture, covered] of Object.entries(input.fixtures)) {
-    if (!covered) reasons.push(`required failure fixture not covered: ${fixture}`)
+  const requiredFixtures = ['buildReject', 'runtimeFail', 'infraRetry', 'duplicateChild'] as const
+  if (input.fixtures === null || typeof input.fixtures !== 'object') {
+    reasons.push('required failure fixtures are missing or malformed')
+  } else {
+    // Presence AND boolean-ness: an empty or partial fixture object must not
+    // sail through the entries loop (issue #217).
+    for (const fixture of requiredFixtures) {
+      const covered = (input.fixtures as Record<string, unknown>)[fixture]
+      if (covered !== true) {
+        reasons.push(`required failure fixture not covered: ${fixture}`)
+      }
+    }
   }
   if (input.proposerRawEvidenceReferences <= 0) {
     reasons.push('proposer did not cite historical raw evidence')

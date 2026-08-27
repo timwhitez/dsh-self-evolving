@@ -562,4 +562,54 @@ describe('Gate 8 sealed/full/release evidence', () => {
     expect(verdict.sealedComplete).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/sealed trial identity\/artifact invalid/)
   })
+
+  it('returns a verdict, never throws, on circular or bigint record content (issue #217)', () => {
+    const circular = complete()
+    const record: Record<string, unknown> = {
+      candidateId: circular.sealedTrials[1]!.candidateId,
+      taskId: circular.sealedTrials[1]!.taskId,
+      attemptIndex: 0,
+      reward: 1,
+    }
+    record['self'] = record
+    circular.sealedTrials[1]!.normalizedRecord = record
+    circular.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
+    const circularVerdict = verifyGate8Evidence(circular)
+    expect(circularVerdict.sealedComplete).toBe(false)
+    expect(circularVerdict.reasons.join('\n')).toMatch(
+      /digest cannot be computed|commitment cannot be computed/,
+    )
+
+    const big = complete()
+    big.sealedTrials[1]!.normalizedRecord = {
+      candidateId: big.sealedTrials[1]!.candidateId,
+      taskId: big.sealedTrials[1]!.taskId,
+      attemptIndex: 0,
+      reward: 1n,
+    }
+    big.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
+    const bigVerdict = verifyGate8Evidence(big)
+    expect(bigVerdict.sealedComplete).toBe(false)
+    expect(bigVerdict.reasons.join('\n')).toMatch(
+      /digest cannot be computed|commitment cannot be computed/,
+    )
+  })
+
+  it('rejects null trial matrices with reasons, not TypeErrors (issue #217)', () => {
+    const nullSealed = complete()
+    ;(nullSealed as unknown as Record<string, unknown>)['sealedTrials'] = null
+    nullSealed.evidenceCommitment = 'sha256:' + 'b'.repeat(64)
+    expect(() => verifyGate8Evidence(nullSealed)).not.toThrow()
+    expect(verifyGate8Evidence(nullSealed).reasons.join('\n')).toMatch(
+      /sealed trial matrix is missing or malformed/,
+    )
+
+    const nullFull = complete()
+    ;(nullFull.fullSet as unknown as Record<string, unknown>)['trials'] = null
+    nullFull.evidenceCommitment = 'sha256:' + 'b'.repeat(64)
+    expect(() => verifyGate8Evidence(nullFull)).not.toThrow()
+    expect(verifyGate8Evidence(nullFull).reasons.join('\n')).toMatch(
+      /full-set trial matrix is missing or malformed/,
+    )
+  })
 })

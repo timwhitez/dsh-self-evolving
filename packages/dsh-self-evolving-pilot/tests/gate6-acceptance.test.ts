@@ -174,4 +174,81 @@ describe('Gate6 evidence binding (issue #121)', () => {
     expect(verdict.reasons.join('\n')).toMatch(/normalized record missing/)
   })
 })
+
+})
+
+describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
+  it('returns a verdict, never throws, on a circular record', () => {
+    const input = complete()
+    const record: Record<string, unknown> = {
+      candidateId: input.observations[0]!.candidateId,
+      taskId: input.observations[0]!.taskId,
+      attemptIndex: 0,
+      reward: 1,
+    }
+    record['self'] = record
+    input.observations[0]!.normalizedRecord = record
+    input.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/digest cannot be computed|commitment cannot be computed/)
+  })
+
+  it('rejects a bigint-bearing record without throwing', () => {
+    const input = complete()
+    input.observations[0]!.normalizedRecord = {
+      candidateId: input.observations[0]!.candidateId,
+      taskId: input.observations[0]!.taskId,
+      attemptIndex: 0,
+      reward: 1n,
+    }
+    input.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/digest cannot be computed|commitment cannot be computed/)
+  })
+
+  it('rejects null/malformed matrices and fixtures with reasons, not TypeErrors', () => {
+    const nullCandidates = complete()
+    ;(nullCandidates as unknown as Record<string, unknown>)['candidates'] = null
+    expect(() => verifyGate6Acceptance(nullCandidates)).not.toThrow()
+    expect(verifyGate6Acceptance(nullCandidates).reasons.join('\n')).toMatch(/candidate matrix is missing or malformed/)
+
+    const nullObservations = complete()
+    ;(nullObservations as unknown as Record<string, unknown>)['observations'] = null
+    expect(verifyGate6Acceptance(nullObservations).reasons.join('\n')).toMatch(
+      /observation matrix is missing or malformed/,
+    )
+
+    const nullFixtures = complete()
+    ;(nullFixtures as unknown as Record<string, unknown>)['fixtures'] = null
+    expect(verifyGate6Acceptance(nullFixtures).reasons.join('\n')).toMatch(
+      /required failure fixtures are missing or malformed/,
+    )
+  })
+
+  it('rejects an empty or partial fixture object instead of sailing through the entries loop', () => {
+    const emptyFixtures = complete()
+    ;(emptyFixtures as unknown as Record<string, unknown>)['fixtures'] = {}
+    emptyFixtures.evidenceCommitment = gate6EvidenceCommitment(emptyFixtures)
+    const verdict = verifyGate6Acceptance(emptyFixtures)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/required failure fixture not covered: buildReject/)
+  })
+
+  it('rejects a record whose identity lives on a prototype (own-enumerable semantics)', () => {
+    const input = complete()
+    const template = input.observations[0]!.normalizedRecord as Record<string, unknown>
+    const { candidateId, ...rest } = template
+    const ghost: Record<string, unknown> = Object.create({
+      candidateId,
+      ...(rest as object),
+    })
+    input.observations[0]!.normalizedRecord = ghost
+    input.observations[0]!.normalizedRecordHash = digestV011(canonicalV011(ghost))
+    input.evidenceCommitment = gate6EvidenceCommitment(input)
+    expect(verifyGate6Acceptance(input).reasons.join('\n')).toMatch(
+      /record identity mismatch/,
+    )
+  })
 })
