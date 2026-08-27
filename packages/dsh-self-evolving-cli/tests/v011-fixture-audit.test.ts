@@ -26,6 +26,8 @@ afterEach(async () => {
   root = undefined
 })
 
+const PARENT_DIGEST = 'sha256:' + 'a'.repeat(64)
+
 function sha(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
@@ -109,7 +111,8 @@ async function realFixture(action: string, runId: string): Promise<void> {
 describe('invalid-replacement fixture audit (issue #113)', () => {
   it('accepts a real digest-bound, replayable fixture record', async () => {
     await realFixture(join(root!, 'v011', 'actions', 'proposal-1-1'), 'fixture-audit-run')
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons).toEqual([])
   })
 
@@ -124,7 +127,8 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
         retained: true,
       }) + '\n',
     )
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons.join('\n')).toMatch(/not digest-bound|not retained/)
   })
 
@@ -134,7 +138,8 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     const record = JSON.parse(await readFileText(path)) as { reasonDigest: string }
     record.reasonDigest = sha('a different validator outcome')
     await writeFile(path, JSON.stringify(record, null, 2) + '\n')
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons.join('\n')).toMatch(/reason is not reproducible/)
   })
 
@@ -176,7 +181,8 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     record['fixtureAnalysisDigest'] = digestV011(validAnalysis)
     record['reasonDigest'] = sha('any')
     await writeFile(path, JSON.stringify(record, null, 2) + '\n')
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons.join('\n')).toMatch(/unexpectedly validates/)
   })
 
@@ -187,7 +193,8 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     const record = JSON.parse(await readFileText(path)) as Record<string, unknown>
     delete record['binding']
     await writeFile(path, JSON.stringify(record, null, 2) + '\n')
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 
@@ -198,22 +205,42 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     const record = JSON.parse(await readFileText(path)) as { analysisSchemaDigest: string }
     record.analysisSchemaDigest = 'sha256:' + 'f'.repeat(64)
     await writeFile(path, JSON.stringify(record, null, 2) + '\n')
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 
-  it('rejects a fixture whose parent digest contradicts the journal action key', async () => {
+  it('rejects a fixture whose parent digest contradicts the materialization receipt', async () => {
     const action = join(root!, 'v011', 'actions', 'proposal-1-1')
     await realFixture(action, 'fixture-audit-run')
     const reasons = await verifyInvalidReplacementFixture(config(), {
       parentDigest: 'sha256:' + 'e'.repeat(64),
+      proposalId: 'p-fixture',
     })
+    expect(reasons.join('\n')).toMatch(/not digest-bound/)
+  })
+
+  it('rejects a fixture whose proposalId contradicts the materialization receipt', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const reasons = await verifyInvalidReplacementFixture(config(), {
+      parentDigest: PARENT_DIGEST,
+      proposalId: 'p-OTHER',
+    })
+    expect(reasons.join('\n')).toMatch(/not digest-bound/)
+  })
+
+  it('fails closed when the fixture exists but the cross-binding is missing', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const reasons = await verifyInvalidReplacementFixture(config(), {})
     expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 
   it('rejects a fixture from a different run binding', async () => {
     await realFixture(join(root!, 'v011', 'actions', 'proposal-1-1'), 'OTHER-RUN')
-    const reasons = await verifyInvalidReplacementFixture(config())
+    const cross = { parentDigest: PARENT_DIGEST, proposalId: 'p-fixture' }
+    const reasons = await verifyInvalidReplacementFixture(config(), cross)
     expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 })

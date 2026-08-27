@@ -3,9 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
-  readAll,
   readControllerStatus,
-  type JournalEvent,
   type V011Analysis,
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
@@ -103,8 +101,10 @@ export async function verifyInvalidReplacementFixture(
         rejection.replacedBy.endsWith('/proposal/1/1') &&
         binding !== null &&
         binding['runId'] === config.runId &&
-        (cross.parentDigest === undefined || binding['parentDigest'] === cross.parentDigest) &&
-        (cross.proposalId === undefined || binding['proposalId'] === cross.proposalId) &&
+        typeof cross.parentDigest === 'string' &&
+        typeof cross.proposalId === 'string' &&
+        binding['parentDigest'] === cross.parentDigest &&
+        binding['proposalId'] === cross.proposalId &&
         typeof rejection.analysisSchemaDigest === 'string' &&
         rejection.analysisSchemaDigest === (await v011SchemaDigest('analysis')) &&
         digestV011(proposalBytes) === rejection.fixtureProposalDigest &&
@@ -135,27 +135,20 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const reasons = [...predecessor.reasons]
-  const journal = {
-    journalDir: join(config.stateDir, 'journal'),
-    runId: config.runId,
-    segmentMaxBytes: 16 * 1024 * 1024,
+  // Cross-bind the fixture to the successor action's OWN materialization
+  // receipt: the same trusted source that produced the fixture's binding
+  // (issue #203). The action's idempotency-key tail is a candidateId, not a
+  // digest, and must not be compared against binding.parentDigest.
+  const materialization = (await json(
+    join(config.stateDir, 'v011', 'actions', 'proposal-1-1', 'materialization.json'),
+  )) as { materialization?: { proposalId?: unknown; parentDigest?: unknown } } | null
+  const materializationRecord = materialization?.materialization
+  const cross: FixtureCrossBinding = {}
+  if (typeof materializationRecord?.parentDigest === 'string') {
+    cross.parentDigest = materializationRecord.parentDigest
   }
-  const journalEvents = await readAll(journal).catch(() => [] as JournalEvent[])
-  const plannedKey = controller.state.actions['proposal:1:1']?.idempotencyKey
-  const cross: FixtureCrossBinding = {
-    ...(typeof plannedKey === 'string' ? { parentDigest: plannedKey.split('/')[4] } : {}),
-    ...(typeof (
-      journalEvents.find((event) => event.eventId === 'proposal:1:1:completed')?.payload as
-        { proposalId?: unknown } | undefined
-    )?.proposalId === 'string'
-      ? {
-          proposalId: (
-            journalEvents.find((event) => event.eventId === 'proposal:1:1:completed')?.payload as {
-              proposalId?: unknown
-            }
-          )?.proposalId as string,
-        }
-      : {}),
+  if (typeof materializationRecord?.proposalId === 'string') {
+    cross.proposalId = materializationRecord.proposalId
   }
   reasons.push(...(await verifyInvalidReplacementFixture(config, cross)))
   const baselineMigration = (await json(
