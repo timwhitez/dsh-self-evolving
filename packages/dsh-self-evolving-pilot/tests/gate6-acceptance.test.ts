@@ -131,6 +131,38 @@ describe('Gate6 evidence binding (issue #121)', () => {
     expect(verdict.reasons.join('\n')).toMatch(/normalized record digest mismatch/)
   })
 
+  it('rejects a record relabeled onto another observation, even with a recomputed hash and commitment', () => {
+    const input = complete()
+    const observation = input.observations[0] as unknown as {
+      normalizedRecord: { candidateId: string }
+    }
+    observation.normalizedRecord.candidateId = candidateId(9)
+    // Re-forging both the per-record hash and the envelope commitment must
+    // not rescue a misattributed record.
+    input.observations[0]!.normalizedRecordHash = digestV011(
+      canonicalV011(observation.normalizedRecord),
+    )
+    input.evidenceCommitment = gate6EvidenceCommitment(input)
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/record identity mismatch/)
+  })
+
+  it('rejects an arbitrary blob reused as every record, even fully re-hashed', () => {
+    const input = complete()
+    const blob = { lie: 'i am a real trial' }
+    input.observations = input.observations.map((observation) => {
+      const row = observation as unknown as Record<string, unknown>
+      row['normalizedRecord'] = blob
+      row['normalizedRecordHash'] = digestV011(canonicalV011(blob))
+      return observation
+    })
+    input.evidenceCommitment = gate6EvidenceCommitment(input)
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/record identity mismatch/)
+  })
+
   it('rejects observations presented without record content', () => {
     const input = complete()
     input.observations = input.observations.map((observation) => {

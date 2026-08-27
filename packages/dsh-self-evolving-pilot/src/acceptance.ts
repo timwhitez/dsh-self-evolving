@@ -123,6 +123,22 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
           `observation normalized record digest mismatch: ${observation.candidateId}/${observation.taskId}`,
         )
       }
+      // The record must also be attributable: a correctly-hashed blob that
+      // names another candidate/task/attempt — or nothing — is not evidence
+      // for this observation (issue #121).
+      const record = observation.normalizedRecord as unknown
+      if (
+        typeof record !== 'object' ||
+        record === null ||
+        Array.isArray(record) ||
+        (record as Record<string, unknown>).candidateId !== observation.candidateId ||
+        (record as Record<string, unknown>).taskId !== observation.taskId ||
+        (record as Record<string, unknown>).attemptIndex !== observation.attemptIndex
+      ) {
+        reasons.push(
+          `observation record identity mismatch: ${observation.candidateId}/${observation.taskId}/${observation.attemptIndex}`,
+        )
+      }
     }
     if (
       !Number.isFinite(observation.costUsd) ||
