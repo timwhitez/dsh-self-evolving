@@ -21,7 +21,9 @@ export interface SealedTrialEvidence {
   /**
    * The normalized record content itself (issue #219): the verifier recomputes
    * its canonical digest and requires it to equal normalizedRecordHash, and
-   * requires the record's own identity fields to match this row.
+   * requires the record's own identity fields to match this row. The record
+   * must also carry a `reward` equal to this row's reward (issue #111): the
+   * analyzed outcome must be the recorded one.
    */
   normalizedRecord: unknown
   rawEvidenceDigests: string[]
@@ -38,7 +40,9 @@ export interface FullSetTrialEvidence {
   normalizedRecordHash: string
   /**
    * The normalized record content itself (issue #219): digest recomputation
-   * and row-identity binding, mirroring the sealed matrix.
+   * and row-identity binding, mirroring the sealed matrix. Must additionally
+   * carry `capsuleDigest` equal to this row's and `reward` equal to this
+   * row's reward (issue #111).
    */
   normalizedRecord: unknown
   rawEvidenceDigests: string[]
@@ -48,6 +52,14 @@ export interface FullSetTrialEvidence {
 }
 
 export interface Gate8EvidenceInput {
+  /**
+   * Canonical digest over the full evidence envelope (every field below,
+   * recorded by gate8EvidenceCommitment at envelope-record time). The
+   * verifier recomputes it, so any post-hoc edit — including flipping
+   * signatureVerified/commitmentVerified/replay booleans after recording —
+   * diverges and fails (issue #111).
+   */
+  evidenceCommitment: `sha256:${string}`
   formalSearchReceiptHash: string | null
   formalSearchStatus: 'SEARCH_COMPLETE' | 'NO_DEVELOPMENT_IMPROVEMENT' | 'NOT_STARTED'
   developmentPointDelta: number | null
@@ -218,6 +230,8 @@ function trialRecordReason(
     attemptIndex: number
     normalizedRecordHash: string
     normalizedRecord: unknown
+    reward: 0 | 1
+    capsuleDigest?: string
   },
   key: string,
 ): string | null {
@@ -230,11 +244,24 @@ function trialRecordReason(
   if (!recordIdentityMatches(trial.normalizedRecord, trial)) {
     return `trial record identity mismatch: ${key}`
   }
+  // Outcome binding (issue #111): the analyzed reward must be the recorded
+  // one, and a full-set record must describe the capsule that actually ran.
+  const own = Object.entries(trial.normalizedRecord as Record<string, unknown>)
+  const field = (name: string): unknown => own.find(([k]) => k === name)?.[1]
+  if (
+    field('reward') !== (trial.reward === 1 ? 1 : 0) ||
+    (trial.capsuleDigest !== undefined && field('capsuleDigest') !== trial.capsuleDigest)
+  ) {
+    return `trial record outcome mismatch: ${key}`
+  }
   return null
 }
 
 export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVerdict {
   const reasons: string[] = []
+  if (input.evidenceCommitment !== gate8EvidenceCommitment(input)) {
+    reasons.push('evidence envelope does not match its recorded commitment')
+  }
   let computedPromotion: PromotionState | 'PROTOCOL_INVALID' | 'NOT_EVALUATED' = 'NOT_EVALUATED'
   if (
     !validDigest(input.formalSearchReceiptHash) ||
@@ -343,6 +370,8 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       if (trial.candidateId !== expectedCandidate)
         reasons.push(`sealed attribution mismatch: ${key}`)
       if (
+        !Number.isInteger(trial.attemptIndex) ||
+        !Number.isInteger(trial.scheduleIndex) ||
         trial.attemptIndex < 0 ||
         trial.attemptIndex >= plan.attemptsPerTask ||
         trial.scheduleIndex < 0 ||
@@ -517,6 +546,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
         trial.candidateId !== lock.candidateId ||
         trial.capsuleDigest !== lock.capsuleDigest ||
         trial.protocolHash !== full.protocolHash ||
+        !Number.isInteger(trial.attemptIndex) ||
         trial.attemptIndex < 0 ||
         trial.attemptIndex >= full.attemptsPerTask ||
         !validTrialArtifacts(trial)
@@ -604,4 +634,39 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     releaseVerified,
     reasons: [...new Set(reasons)].sort(),
   }
+}
+
+/**
+ * Canonical digest over the whole Gate8 evidence envelope (issue #111):
+ * recorded at envelope-record time, recomputed by the verifier, so post-hoc
+ * edits of any field — including the caller booleans (signatureVerified,
+ * commitmentVerified, terminal/reconciled/replay/noAdaptation) and every
+ * receipt hash — diverge. `bootstrapSeed` is committed via its hexadecimal
+ * string form because canonicalV011 does not serialize bigint.
+ */
+export function gate8EvidenceCommitment(
+  input: Omit<Gate8EvidenceInput, 'evidenceCommitment'>,
+): `sha256:${string}` {
+  return digestV011(
+    canonicalV011({
+      schemaVersion: 1,
+      formalSearchReceiptHash: input.formalSearchReceiptHash,
+      formalSearchStatus: input.formalSearchStatus,
+      developmentPointDelta: input.developmentPointDelta,
+      baselineCandidateId: input.baselineCandidateId,
+      lockedCandidate: input.lockedCandidate,
+      splitReveal: input.splitReveal,
+      sealedPlan:
+        input.sealedPlan === null
+          ? null
+          : { ...input.sealedPlan, bootstrapSeed: input.sealedPlan.bootstrapSeed.toString() },
+      sealedTrials: input.sealedTrials,
+      sealedActionsTerminalAndReconciled: input.sealedActionsTerminalAndReconciled,
+      sealedJournalReplayMatches: input.sealedJournalReplayMatches,
+      auditCriticalFindings: input.auditCriticalFindings,
+      reportedPromotionState: input.reportedPromotionState,
+      fullSet: input.fullSet,
+      release: input.release,
+    }),
+  )
 }

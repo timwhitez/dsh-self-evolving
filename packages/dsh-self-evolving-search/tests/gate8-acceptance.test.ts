@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import {
   commitSplit,
+  gate8EvidenceCommitment,
   verifyGate8Evidence,
   type Gate8EvidenceInput,
   type SealedTrialEvidence,
@@ -124,7 +125,7 @@ function complete(): Gate8EvidenceInput {
       }
     }),
   ).flat()
-  return {
+  const input = {
     formalSearchReceiptHash: digest('search-complete'),
     formalSearchStatus: 'SEARCH_COMPLETE',
     developmentPointDelta: 0.1,
@@ -192,7 +193,9 @@ function complete(): Gate8EvidenceInput {
       rollbackReceiptHash: digest('rollback'),
       publicExportLeakScanReceiptHash: digest('leak-scan'),
     },
-  }
+  } as unknown as Gate8EvidenceInput
+  input.evidenceCommitment = gate8EvidenceCommitment(input)
+  return input
 }
 
 describe('Gate 8 sealed/full/release evidence', () => {
@@ -274,11 +277,18 @@ describe('Gate 8 sealed/full/release evidence', () => {
     )
     for (const trial of input.sealedTrials) {
       if (trial.role === 'candidate') {
-        trial.reward = baselineRewards.get(`${trial.taskId}/${trial.attemptIndex}`) ?? 0
+        const reward = baselineRewards.get(`${trial.taskId}/${trial.attemptIndex}`) ?? 0
+        trial.reward = reward
+        const record = trial.normalizedRecord as { reward: number }
+        record.reward = reward
+        trial.normalizedRecordHash = recordDigest(record)
       }
     }
     input.reportedPromotionState = 'SEALED_REJECTED'
     input.release = null
+    // The rewritten envelope is honestly re-recorded: outcome edits update the
+    // record content and the envelope commitment together.
+    input.evidenceCommitment = gate8EvidenceCommitment(input)
     const verdict = verifyGate8Evidence(input)
     expect(verdict.promotionState).toBe('SEALED_REJECTED')
     expect(verdict.fullSetEligible).toBe(false)
@@ -486,5 +496,70 @@ describe('Gate 8 sealed/full/release evidence', () => {
     input.sealedTrials[1]!.normalizedRecordHash = recordDigest(ghost)
     const verdict = verifyGate8Evidence(input)
     expect(verdict.reasons.join('\n')).toMatch(/trial record identity mismatch: sealed\//)
+  })
+
+  it('rejects a post-hoc envelope edit that diverges from the recorded commitment (issue #111)', () => {
+    const input = complete()
+    // A still-well-formed receipt hash swap passes every field-level check;
+    // only the recorded commitment catches it.
+    input.formalSearchReceiptHash = digest('other-search-complete')
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/evidence envelope does not match its recorded commitment/)
+  })
+
+  it('rejects a signature flag flipped after recording, even with a re-recorded commitment elsewhere (issue #111)', () => {
+    const input = complete()
+    input.lockedCandidate = { ...input.lockedCandidate!, signatureVerified: false }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/signed immutable candidate lock is missing or invalid/)
+    expect(verdict.reasons.join('\n')).toMatch(/does not match its recorded commitment/)
+  })
+
+  it('rejects a record whose reward disagrees with the analyzed row reward, even fully re-forged (issue #111)', () => {
+    const input = complete()
+    const trial = input.sealedTrials[1] as unknown as {
+      normalizedRecord: { reward: number }
+    }
+    trial.normalizedRecord.reward = 0
+    input.sealedTrials[1]!.normalizedRecordHash = recordDigest(trial.normalizedRecord)
+    input.evidenceCommitment = gate8EvidenceCommitment(input)
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/trial record outcome mismatch: sealed\//)
+  })
+
+  it('rejects a full-set record naming a different capsule than the row, fully re-forged (issue #111)', () => {
+    const input = complete()
+    input.fullSet = {
+      ...input.fullSet!,
+      trials: input.fullSet!.trials.map((trial) => {
+        const record = trial.normalizedRecord as { capsuleDigest: string }
+        record.capsuleDigest = digest('other-capsule')
+        return {
+          ...trial,
+          normalizedRecordHash: recordDigest(record),
+        }
+      }),
+    }
+    input.evidenceCommitment = gate8EvidenceCommitment(input)
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.fullSetVerified).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/trial record outcome mismatch: full-set\//)
+  })
+
+  it('rejects fractional attempt indexes on both row and record (issue #111)', () => {
+    const input = complete()
+    const trial = input.sealedTrials[1] as unknown as {
+      attemptIndex: number
+      normalizedRecord: { attemptIndex: number }
+    }
+    trial.attemptIndex = 1.5
+    trial.normalizedRecord.attemptIndex = 1.5
+    input.sealedTrials[1]!.normalizedRecordHash = recordDigest(trial.normalizedRecord)
+    input.evidenceCommitment = gate8EvidenceCommitment(input)
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/sealed trial identity\/artifact invalid/)
   })
 })

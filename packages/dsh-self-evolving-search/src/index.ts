@@ -61,6 +61,7 @@ export {
   type FormalRunManifest,
 } from './formal-preflight.js'
 export {
+  gate8EvidenceCommitment,
   verifyGate8Evidence,
   type FullSetTrialEvidence,
   type Gate8EvidenceInput,
