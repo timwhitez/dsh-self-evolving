@@ -454,7 +454,16 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     ) {
       reasons.push('full-set 89 x >=5 trial matrix is incomplete')
     }
-    // Exact membership against the official inventory universe (issue #110).
+    // Exact membership against the official inventory universe (issue #110) —
+    // and the SAME universe the sealed ceremony committed over (spec 04
+    // §11: one pinned 89-task dataset for split and full set).
+    if (reveal !== null && Array.isArray(reveal.inventoryTaskIds)) {
+      const sealedInventory = [...new Set(reveal.inventoryTaskIds)].sort()
+      const fullInventorySorted = [...new Set(full.inventoryTaskIds)].sort()
+      if (JSON.stringify(sealedInventory) !== JSON.stringify(fullInventorySorted)) {
+        reasons.push('sealed ceremony and full-set inventories are different task universes')
+      }
+    }
     if (!Array.isArray(full.inventoryTaskIds)) {
       reasons.push('official inventory list is missing')
     } else {

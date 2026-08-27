@@ -313,21 +313,15 @@ describe('Gate 8 sealed/full/release evidence', () => {
     expect(verdict.reasons.join('\n')).toMatch(/does not match the official inventory/)
   })
 
-  it('rejects a self-declared revealed set that the Merkle root does not commit (issue #110/#111)', () => {
+  it('rejects a self-declared revealed set the committed stratum does not contain (issue #110/#111)', () => {
     const input = complete()
-    // Swap two sealed rows for dev rows in the revealed list: counts stay 29,
-    // but the recommitted root no longer matches.
+    // Swap two sealed ids for dev ids in the revealed list AND the trials:
+    // counts, schedule indexes and the root stay valid, so the rejection can
+    // come only from the committed-stratum binding.
     const forged = [...input.splitReveal!.revealedTaskIds]
     forged[0] = 'task-000'
     forged[1] = 'task-001'
     input.splitReveal = { ...input.splitReveal!, revealedTaskIds: forged }
-    // Keep trials consistent with the forged set so only the root check fires.
-    const map = new Map(
-      input.sealedTrials.map((trial) => [
-        `${trial.role}/${trial.taskId}/${trial.attemptIndex}`,
-        trial,
-      ]),
-    )
     input.sealedTrials = input.sealedTrials.map((trial) =>
       trial.taskId === 'task-060'
         ? { ...trial, taskId: 'task-000' }
@@ -335,11 +329,53 @@ describe('Gate 8 sealed/full/release evidence', () => {
           ? { ...trial, taskId: 'task-001' }
           : trial,
     )
-    void map
     const verdict = verifyGate8Evidence(input)
     expect(verdict.sealedComplete).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(
-      /Merkle root|committed sealed stratum|revealed sealed task set/,
+      /revealed sealed set does not match the committed sealed stratum/,
     )
+    expect(verdict.reasons.join('\n')).not.toMatch(/does not match the revealed sealed task set/)
+  })
+
+  it('rejects a tampered revealed assignment whose recomputed root diverges', () => {
+    const input = complete()
+    input.splitReveal = {
+      ...input.splitReveal!,
+      revealedAssignment: input.splitReveal!.revealedAssignment.map((row) =>
+        row.taskId === 'task-060' ? { ...row, label: 'dev-guard' as const } : row,
+      ),
+    }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/Merkle root|stratum|cannot be recommitted/)
+  })
+
+  it('rejects non-protocol ceremony sizes', () => {
+    const input = complete()
+    input.splitReveal = {
+      ...input.splitReveal!,
+      commitment: {
+        ...input.splitReveal!.commitment,
+        sizes: { devObserved: 0, devGuard: 0, sealed: 29 },
+      },
+    }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/frozen protocol|cannot be recommitted/)
+  })
+
+  it('rejects a full-set universe disjoint from the sealed ceremony inventory', () => {
+    const input = complete()
+    const otherUniverse = Array.from({ length: 89 }, (_, task) => `other-${task}`)
+    input.fullSet = {
+      ...input.fullSet!,
+      inventoryTaskIds: otherUniverse,
+      trials: input.fullSet!.trials.map((trial, index) => ({
+        ...trial,
+        taskId: otherUniverse[index % 89]!,
+      })),
+    }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/different task universes/)
   })
 })
