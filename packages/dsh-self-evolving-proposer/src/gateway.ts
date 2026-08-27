@@ -168,6 +168,28 @@ async function readDurableRequest(path: string): Promise<DurableRequestRecord | 
   }
 }
 
+/**
+ * A replayed durable response must be a self-consistent envelope for THIS
+ * request: shape, requestId, and — for successes — responseHash recomputed
+ * from the stored result. Corruption confined to the response body must fail
+ * closed, never replay as a poisoned success (issue #56).
+ */
+function durableResponseMatches(
+  record: DurableRequestRecord,
+  requestId: string,
+): record is DurableRequestRecord & { response: ProposalGatewayResponse } {
+  const response = record.response
+  if (response === null || typeof response !== 'object') return false
+  if (response.schemaVersion !== 1 || response.requestId !== requestId) return false
+  if (response.ok === true) {
+    return (
+      typeof response.responseHash === 'string' &&
+      response.responseHash === sha256(stableJson(response.result))
+    )
+  }
+  return response.ok === false && typeof response.error === 'string'
+}
+
 async function reserveDurableRequest(
   path: string,
   record: DurableRequestRecord,
@@ -175,8 +197,13 @@ async function reserveDurableRequest(
   try {
     await writeFile(path, `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o600 })
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    // A failed reservation write (ENOSPC/EROFS/...) must not leave a partial
+    // marker that permanently poisons this id: surface the failure instead of
+    // silently treating it as a lost race.
+    await rm(path, { force: true }).catch(() => {})
+    throw error
   }
 }
 
@@ -196,7 +223,15 @@ export async function startProposalGateway(
   if (!validRoute(options.route)) throw new Error('proposal gateway: invalid locked route')
   const socketPath = resolve(options.socketPath)
   if ((await stat(socketPath).catch(() => null)) !== null) {
-    throw new Error(`proposal gateway: socket path already exists: ${socketPath}`)
+    // Refuse only when another gateway actually answers on this path; a
+    // leftover socket file from a crashed owner is unlinked so a resumed run
+    // can rebind and serve durable replays (issue #56).
+    if (await socketIsLive(socketPath)) {
+      throw new Error(`proposal gateway: socket path already exists: ${socketPath}`)
+    }
+    await rm(socketPath, { force: true }).catch(() => {
+      throw new Error(`proposal gateway: cannot remove stale socket: ${socketPath}`)
+    })
   }
   await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 })
   const maxRequestBytes = options.maxRequestBytes ?? 1024 * 1024
@@ -252,12 +287,50 @@ export async function startProposalGateway(
         const path = durableRequestPath(stateDir, requestId)
         const record = await readDurableRequest(path)
         if (record !== null) {
+          if (record.requestHash === '') {
+            // Corrupt record: fail closed without a misleading conflict claim.
+            return {
+              schemaVersion: 1,
+              requestId,
+              ok: false,
+              error: 'durable request record is corrupt',
+            }
+          }
           if (record.requestHash !== requestHash) {
             return { schemaVersion: 1, requestId, ok: false, error: 'conflicting idempotency replay' }
           }
-          if (record.phase === 'complete' && record.response !== undefined) {
+          if (record.phase === 'complete' && durableResponseMatches(record, requestId)) {
             completed.set(requestId, { requestHash, response: record.response })
+            // The replayed response's billed attempts must still reach the
+            // surfaced receipts on a resumed run (issue #193/#56).
+            const replayResult = record.response.ok ? record.response.result : null
+            const replayAttempts =
+              replayResult !== null &&
+              typeof replayResult === 'object' &&
+              Array.isArray((replayResult as { attempts?: unknown }).attempts)
+                ? ((replayResult as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ??
+                  undefined)
+                : undefined
+            receiptLog.push({
+              requestId,
+              requestHash,
+              responseHash: record.response.ok
+                ? record.response.responseHash
+                : sha256(stableJson({ failed: true })),
+              routeHash,
+              ...(replayAttempts === undefined ? {} : { attempts: replayAttempts }),
+            })
             return record.response
+          }
+          if (record.phase === 'complete') {
+            // Complete record with a corrupt/foreign response body: treat as
+            // interrupted, never replay it (issue #56).
+            return {
+              schemaVersion: 1,
+              requestId,
+              ok: false,
+              error: 'durable request record is corrupt',
+            }
           }
           // Pending from an interrupted (or cross-process) dispatch: the
           // provider outcome is unknowable, so fail closed instead of
@@ -284,7 +357,7 @@ export async function startProposalGateway(
             winner !== null &&
             winner.phase === 'complete' &&
             winner.requestHash === requestHash &&
-            winner.response !== undefined
+            durableResponseMatches(winner, requestId)
           ) {
             return winner.response
           }
@@ -320,7 +393,25 @@ export async function startProposalGateway(
         }
         return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }
       }
-      const responseHash = sha256(stableJson(result))
+      let responseHash: string
+      let attempts: ProposalGatewayReceipt['attempts'] | undefined
+      try {
+        responseHash = sha256(stableJson(result))
+        attempts =
+          result !== null &&
+          typeof result === 'object' &&
+          Array.isArray((result as { attempts?: unknown }).attempts)
+            ? ((result as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ?? undefined)
+            : undefined
+      } catch {
+        // An unserializable handler result cannot be hashed or recorded;
+        // drop the reservation so an in-place retry stays possible instead of
+        // stranding this id as forever-pending.
+        if (stateDir !== undefined) {
+          await rm(durableRequestPath(stateDir, requestId), { force: true }).catch(() => {})
+        }
+        return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }
+      }
       const response: ProposalGatewayResponse = {
         schemaVersion: 1,
         requestId,
@@ -328,12 +419,6 @@ export async function startProposalGateway(
         result,
         responseHash,
       }
-      const attempts =
-        result !== null &&
-        typeof result === 'object' &&
-        Array.isArray((result as { attempts?: unknown }).attempts)
-          ? ((result as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ?? undefined)
-          : undefined
       receiptLog.push({
         requestId,
         requestHash,
@@ -488,6 +573,19 @@ export async function startProposalGateway(
       await rm(socketPath, { force: true })
     },
   }
+}
+
+function socketIsLive(socketPath: string): Promise<boolean> {
+  return new Promise((done) => {
+    const probe = createConnection(socketPath)
+    const finish = (live: boolean): void => {
+      probe.destroy()
+      done(live)
+    }
+    probe.once('connect', () => finish(true))
+    probe.once('error', () => finish(false))
+    setTimeout(() => finish(false), 1_000).unref?.()
+  })
 }
 
 function listen(server: Server, socketPath: string): Promise<void> {

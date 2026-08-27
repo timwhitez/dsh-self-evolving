@@ -2,7 +2,7 @@
  * Gateway idempotency tests (issue #56): one durable owner/result per request
  * id across concurrent callers and process restarts.
  */
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -159,7 +159,7 @@ describe('proposal gateway idempotency (issue #56)', () => {
       const response = await second.request(envelope('req-4', { a: 1 }))
       expect(response.ok).toBe(false)
       if (!response.ok) {
-        expect(response.error).toMatch(/conflicting idempotency replay|interrupted dispatch/)
+        expect(response.error).toBe('durable request record is corrupt')
       }
     } finally {
       await second.close()
@@ -274,6 +274,86 @@ describe('proposal gateway idempotency (issue #56)', () => {
       if (!response.ok) expect(response.error).toBe('conflicting idempotency replay')
     } finally {
       await second.close()
+    }
+  })
+
+  it('never replays a poisoned success whose stored response body was corrupted', async () => {
+    const stateDir = join(root!, 'gateway-state')
+    const first = await startProposalGateway({
+      socketPath: join(root!, 'proposal.sock'),
+      route,
+      stateDir,
+      handle: async () => ({ value: 'real' }),
+    })
+    const original = await first.request(envelope('req-10', { a: 1 }))
+    await first.close()
+    expect(original.ok).toBe(true)
+
+    // Rewrite the record with a well-formed envelope whose result/hash were
+    // poisoned: replay must refuse it, not serve the forgery.
+    const files = await readdir(stateDir)
+    expect(files.length).toBe(1)
+    const path = join(stateDir, files[0]!)
+    const record = JSON.parse(await readFile(path, 'utf8')) as {
+      response: { result: unknown; responseHash: string }
+    }
+    record.response.result = { value: 'POISONED' }
+    record.response.responseHash = 'sha256:deadbeef'
+    await writeFile(path, `${JSON.stringify(record)}\n`)
+
+    const second = await startProposalGateway({
+      socketPath: join(root!, 'proposal.sock'),
+      route,
+      stateDir,
+      handle: async () => {
+        throw new Error('must not re-dispatch a poisoned record')
+      },
+    })
+    try {
+      const response = await second.request(envelope('req-10', { a: 1 }))
+      expect(response.ok).toBe(false)
+      if (!response.ok) {
+        expect(response.error).toBe('durable request record is corrupt')
+      }
+    } finally {
+      await second.close()
+    }
+  })
+
+  it('rebinds over a stale socket file left by a crashed owner and still refuses a live one', async () => {
+    const stateDir = join(root!, 'gateway-state')
+    const live = await startProposalGateway({
+      socketPath: join(root!, 'proposal.sock'),
+      route,
+      stateDir,
+      handle: async () => ({ value: 'live' }),
+    })
+    // A second gateway on the LIVE socket must still be refused.
+    await expect(
+      startProposalGateway({
+        socketPath: join(root!, 'proposal.sock'),
+        route,
+        stateDir,
+        handle: async () => ({ value: 'other' }),
+      }),
+    ).rejects.toThrow(/socket path already exists/)
+    await live.close()
+
+    // Hard-crash simulation: a leftover socket FILE with no listener behind
+    // it (graceful close removes the file; a SIGKILL does not).
+    const stalePath = join(root!, 'stale.sock')
+    await writeFile(stalePath, '')
+    const rebinder = await startProposalGateway({
+      socketPath: stalePath,
+      route,
+      stateDir,
+      handle: async () => ({ value: 'rebound' }),
+    })
+    try {
+      const response = await rebinder.request(envelope('req-11', { a: 1 }))
+      expect(response.ok).toBe(true)
+    } finally {
+      await rebinder.close()
     }
   })
 

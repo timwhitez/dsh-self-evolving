@@ -221,8 +221,9 @@ async function realProposal(
       route: lockedRoute,
       requestTimeoutMs: sandboxTimeoutMs,
       handle: createProposalGatewayLlmHandler(adapter, lockedRoute),
-      // Stable across restarts: artifactDir is the content-addressed proposal
-      // identity, so a resumed run replays instead of re-billing (issue #56).
+      // Stable across restarts: artifactDir is the generation+attempt-addressed
+      // proposal artifact directory, so a resumed run re-enters the same store
+      // and replays instead of re-billing (issue #56).
       stateDir: join(artifactDir, 'gateway-requests'),
     })
     try {
