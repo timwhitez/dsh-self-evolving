@@ -128,6 +128,7 @@ async function fixture(v011 = false) {
             status: baselineFailure ? 'fail' : 'pass',
             reward: baselineFailure ? 0 : 1,
             costUsd: 0.001,
+            pricing: { state: 'priced' },
             rawEvidenceDigests: [digest(`${spec.candidate.candidateId}/${spec.taskId}`)],
           } as Awaited<ReturnType<EvaluationProvider['collect']>>
         },
@@ -258,6 +259,7 @@ describe('stable-demo engine', () => {
         status: 'pass' as const,
         reward: 1,
         costUsd: 0.001,
+        pricing: { state: 'priced' },
       })
       return provider
     }

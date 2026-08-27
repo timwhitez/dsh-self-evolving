@@ -67,6 +67,7 @@ const provider = {
       status: 'pass',
       reward: 1,
       costUsd: 2,
+      pricing: { state: 'priced' },
     }
   },
 }

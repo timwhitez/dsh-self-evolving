@@ -553,6 +553,7 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
           status: 'pass' | 'fail' | 'invalid'
           reward: number | null
           costUsd: number
+          priced?: boolean
         }>
       }
       const row = summary.normalized[0]
@@ -579,6 +580,17 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
         status: mapNormalizedStatus(row.status),
         reward: row.reward,
         costUsd: row.costUsd,
+        // A summary written without the priced flag (or with it false) means
+        // the DSH usage evidence was missing, unreadable, or eventless: keep
+        // that state structured instead of collapsing to a measured zero
+        // (issue #108).
+        pricing:
+          row.priced === true && Number.isFinite(row.costUsd) && row.costUsd >= 0
+            ? { state: 'priced' }
+            : {
+                state: 'unknown',
+                reason: 'DSH usage evidence missing, unreadable, or without usage events',
+              },
         rawEvidenceDigests: [sha256(bytes)],
       } as EvaluationObservation
     },

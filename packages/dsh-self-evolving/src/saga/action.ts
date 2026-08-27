@@ -6,6 +6,17 @@ import type { RecordInput, SelfEvolvingService } from '../service.js'
 
 export type DurableBoundary = 'intent' | 'launch' | 'collect' | 'commit'
 
+export interface EvaluationPricing {
+  /**
+   * 'priced' requires a finite non-negative costUsd backed by trusted usage
+   * evidence; anything else is 'unknown' and settles at the full reservation
+   * (issue #108): unknown cost must never release reserved capacity as a
+   * measured zero.
+   */
+  state: 'priced' | 'unknown'
+  reason?: string
+}
+
 export interface EvaluationObservation {
   candidateId: string
   taskId: string
@@ -13,6 +24,35 @@ export interface EvaluationObservation {
   status: 'pass' | 'fail' | 'invalid'
   reward: number | null
   costUsd: number
+  pricing: EvaluationPricing
+}
+
+/**
+ * Fail-closed read of an observation's pricing state. A missing, malformed,
+ * or non-finite-cost 'priced' claim is downgraded to 'unknown' — including
+ * observations journaled before this field existed, which settle
+ * conservatively instead of as a measured zero (issue #108).
+ */
+export function observationPricing(observation: EvaluationObservation): EvaluationPricing {
+  const pricing = (observation as { pricing?: unknown }).pricing
+  if (
+    typeof pricing === 'object' &&
+    pricing !== null &&
+    (pricing as EvaluationPricing).state === 'priced' &&
+    Number.isFinite(observation.costUsd) &&
+    observation.costUsd >= 0
+  ) {
+    return { state: 'priced' }
+  }
+  const reason =
+    typeof pricing === 'object' &&
+    pricing !== null &&
+    typeof (pricing as EvaluationPricing).reason === 'string'
+      ? (pricing as EvaluationPricing).reason
+      : 'pricing state absent or invalid in recorded observation'
+  return reason === undefined
+    ? { state: 'unknown' }
+    : { state: 'unknown', reason }
 }
 
 export interface ProviderInspection {
@@ -148,11 +188,17 @@ export async function recoverEvaluationAction(
     await service.record(eventInput(spec.actionId, 'evaluation.observed', observation))
   }
 
-  if (observation.costUsd > spec.reserveUsd) {
+  const pricing = observationPricing(observation)
+  // Unpriced usage must not release reserved capacity as a measured zero
+  // (issue #108): the paid-but-unmeasured evaluation settles at the FULL
+  // reservation so the USD hard limit stays enforced and the action remains
+  // auditable through its recorded pricing reason.
+  const settleUsd = pricing.state === 'unknown' ? spec.reserveUsd : observation.costUsd
+  if (settleUsd > spec.reserveUsd) {
     throw new Error('PROTOCOL_INVALID: actual cost exceeds the durable reservation')
   }
-  await spend(spec.budgetLedger, spec.actionId, 'usd', observation.costUsd)
-  await release(spec.budgetLedger, spec.actionId, 'usd', spec.reserveUsd - observation.costUsd)
+  await spend(spec.budgetLedger, spec.actionId, 'usd', settleUsd)
+  await release(spec.budgetLedger, spec.actionId, 'usd', spec.reserveUsd - settleUsd)
   await hooks.onDurableBoundary?.('collect')
 
   state = replay(await readAll(service.journal))

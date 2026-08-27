@@ -1,4 +1,10 @@
-import { computeTotals, readAll, readControllerStatus } from '@dsh-self-evolving/core'
+import {
+  computeTotals,
+  observationPricing,
+  readAll,
+  readControllerStatus,
+  type EvaluationObservation,
+} from '@dsh-self-evolving/core'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ProjectConfig } from './config.js'
@@ -221,6 +227,16 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
     },
   })
   if (budget.totals.reserved.usd !== 0) reasons.push('budget reservation remains unsettled')
+  // Fail closed while any evaluation's usage is unpriced: a zero-spend entry
+  // is only acceptable with trusted pricing evidence (issue #108).
+  const unpriced = events.filter(
+    (event) =>
+      event.type === 'evaluation.observed' &&
+      observationPricing(event.payload as unknown as EvaluationObservation).state !== 'priced',
+  )
+  if (unpriced.length > 0) {
+    reasons.push(`unresolved unpriced evaluation usage: ${unpriced.length}`)
+  }
   if (
     budget.entries.filter((entry) => entry.kind === 'spend').length !== state.observations.length
   ) {
