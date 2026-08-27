@@ -1,8 +1,39 @@
 import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import { describe, expect, it } from 'vitest'
-import { evaluateEngineeringEffect, type EffectAdmission } from '../src/index.js'
+import {
+  engineeringEffectRouteHash,
+  evaluateEngineeringEffect,
+  type EffectAdmission,
+  type EffectRoute,
+} from '../src/index.js'
 
 const sha = (character: string) => `sha256:${character.repeat(64)}` as const
+
+const effectRoute: EffectRoute = {
+  provider: 'deepseek-official',
+  endpoint: 'https://api.deepseek.com/v1',
+  model: 'deepseek-v4-flash',
+  wireApi: 'responses',
+  reasoningEffort: 'high',
+  contextWindow: 1_048_576,
+  store: false,
+}
+
+function boundReceipt(runId = 'effect-v1'): {
+  requestId: string
+  runId: string
+  requestHash: string
+  responseHash: string
+  routeHash: string
+} {
+  return {
+    requestId: 'r1',
+    runId,
+    requestHash: sha('1'),
+    responseHash: sha('2'),
+    routeHash: engineeringEffectRouteHash(effectRoute),
+  }
+}
 
 function admission(character: string, extra: boolean): EffectAdmission {
   const promptSections = extra
@@ -70,17 +101,9 @@ describe('low-consumption engineering effectiveness gate', () => {
   it('requires a target-mode change while preserving the preregistered control mode', () => {
     const receipt = evaluateEngineeringEffect({
       runId: 'effect-v1',
-      route: {
-        provider: 'deepseek-official',
-        endpoint: 'https://api.deepseek.com/v1',
-        model: 'deepseek-v4-flash',
-        wireApi: 'responses',
-        reasoningEffort: 'high',
-        contextWindow: 1_048_576,
-        store: false,
-      },
+      route: effectRoute,
       proposalGatewayReceipts: [
-        { requestId: 'r1', requestHash: sha('1'), responseHash: sha('2'), routeHash: sha('3') },
+        boundReceipt(),
       ],
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
@@ -101,17 +124,9 @@ describe('low-consumption engineering effectiveness gate', () => {
   it('does not call an admitted but behavior-identical child effective', () => {
     const receipt = evaluateEngineeringEffect({
       runId: 'effect-v1-no-change',
-      route: {
-        provider: 'deepseek-official',
-        endpoint: 'https://api.deepseek.com/v1',
-        model: 'deepseek-v4-flash',
-        wireApi: 'responses',
-        reasoningEffort: 'high',
-        contextWindow: 1_048_576,
-        store: false,
-      },
+      route: effectRoute,
       proposalGatewayReceipts: [
-        { requestId: 'r1', requestHash: sha('1'), responseHash: sha('2'), routeHash: sha('3') },
+        boundReceipt('effect-v1-no-change'),
       ],
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
@@ -124,17 +139,9 @@ describe('low-consumption engineering effectiveness gate', () => {
   it('rejects target improvement that also drifts the preserved mode', () => {
     const receipt = evaluateEngineeringEffect({
       runId: 'effect-v2-preservation-drift',
-      route: {
-        provider: 'deepseek-official',
-        endpoint: 'https://api.deepseek.com/v1',
-        model: 'deepseek-v4-flash',
-        wireApi: 'responses',
-        reasoningEffort: 'high',
-        contextWindow: 1_048_576,
-        store: false,
-      },
+      route: effectRoute,
       proposalGatewayReceipts: [
-        { requestId: 'r1', requestHash: sha('1'), responseHash: sha('2'), routeHash: sha('3') },
+        boundReceipt('effect-v2-preservation-drift'),
       ],
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
@@ -148,18 +155,8 @@ describe('low-consumption engineering effectiveness gate', () => {
 describe('engineering-effect evidence binding (issue #87)', () => {
   const baseInput = () => ({
     runId: 'effect-v2',
-    route: {
-      provider: 'deepseek-official',
-      endpoint: 'https://api.deepseek.com/v1',
-      model: 'deepseek-v4-flash',
-      wireApi: 'responses',
-      reasoningEffort: 'high',
-      contextWindow: 1_048_576,
-      store: false,
-    },
-    proposalGatewayReceipts: [
-      { requestId: 'r1', requestHash: sha('1'), responseHash: sha('2'), routeHash: sha('3') },
-    ],
+    route: effectRoute,
+    proposalGatewayReceipts: [boundReceipt('effect-v2')],
     usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
     modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
     baseline: admission('e', false),
@@ -195,8 +192,51 @@ describe('engineering-effect evidence binding (issue #87)', () => {
   it('rejects malformed gateway receipt hashes', () => {
     const input = baseInput()
     input.proposalGatewayReceipts = [
-      { requestId: 'r1', requestHash: 'garbage', responseHash: sha('2'), routeHash: sha('3') },
+      {
+        requestId: 'r1',
+        runId: 'effect-v2',
+        requestHash: 'garbage',
+        responseHash: sha('2'),
+        routeHash: engineeringEffectRouteHash(effectRoute),
+      },
     ]
-    expect(() => evaluateEngineeringEffect(input)).toThrow(/well-formed sha256/)
+    expect(() => evaluateEngineeringEffect(input)).toThrow(
+      /not bound to this run and locked route/,
+    )
+  })
+
+  it('rejects a foreign-run receipt set even with well-formed hashes (issue #214)', () => {
+    const input = baseInput()
+    input.proposalGatewayReceipts = [boundReceipt('some-other-run')]
+    expect(() => evaluateEngineeringEffect(input)).toThrow(
+      /not bound to this run and locked route/,
+    )
+  })
+
+  it('rejects a receipt set collected against a different locked route (issue #214)', () => {
+    const input = baseInput()
+    const otherRoute: EffectRoute = { ...effectRoute, model: 'deepseek-v4-lite' }
+    input.proposalGatewayReceipts = [
+      {
+        requestId: 'r1',
+        runId: 'effect-v2',
+        requestHash: sha('1'),
+        responseHash: sha('2'),
+        routeHash: engineeringEffectRouteHash(otherRoute),
+      },
+    ]
+    expect(() => evaluateEngineeringEffect(input)).toThrow(
+      /not bound to this run and locked route/,
+    )
+  })
+
+  it('rejects rows without a request id or with an empty one (issue #214)', () => {
+    const input = baseInput()
+    input.proposalGatewayReceipts = [
+      { ...boundReceipt('effect-v2'), requestId: '' },
+    ]
+    expect(() => evaluateEngineeringEffect(input)).toThrow(
+      /not bound to this run and locked route/,
+    )
   })
 })
