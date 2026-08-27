@@ -262,10 +262,31 @@ describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
       candidateId,
       ...(rest as object),
     })
+    // Since the #218 canonicalizer hardening, a prototype-carried record is
+    // rejected at digest computation itself — the identity can never even
+    // reach the comparison. The verifier must convert that into a reason.
+    expect(() => canonicalV011(ghost)).toThrow(/non-plain-object leaf/)
     input.observations[0]!.normalizedRecord = ghost
-    input.observations[0]!.normalizedRecordHash = digestV011(canonicalV011(ghost))
-    input.evidenceCommitment = gate6EvidenceCommitment(input)
+    input.evidenceCommitment = 'sha256:' + 'e'.repeat(64)
     expect(verifyGate6Acceptance(input).reasons.join('\n')).toMatch(
+      /normalized record digest cannot be computed/,
+    )
+    // A PLAIN record with a non-enumerable own identity property still
+    // exercises the own-enumerable comparison: it digests (the property is
+    // excluded from the digest) but must fail the identity check. A fresh
+    // envelope: the ghost above already poisons the commitment computation.
+    const plain = complete()
+    const plainTemplate = plain.observations[1]!.normalizedRecord as Record<string, unknown>
+    const { candidateId: plainId, ...plainRest } = plainTemplate
+    const sneaky: Record<string, unknown> = { ...plainRest }
+    Object.defineProperty(sneaky, 'candidateId', {
+      value: plainId,
+      enumerable: false,
+    })
+    plain.observations[1]!.normalizedRecord = sneaky
+    plain.observations[1]!.normalizedRecordHash = digestV011(canonicalV011(sneaky))
+    plain.evidenceCommitment = gate6EvidenceCommitment(plain)
+    expect(verifyGate6Acceptance(plain).reasons.join('\n')).toMatch(
       /record identity mismatch/,
     )
   })

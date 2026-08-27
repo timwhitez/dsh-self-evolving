@@ -492,10 +492,29 @@ describe('Gate 8 sealed/full/release evidence', () => {
       candidateId,
       ...(rest as object),
     })
+    // Since the #218 canonicalizer hardening, a prototype-carried record is
+    // rejected at digest computation itself; the verifier converts that into
+    // a fail-closed reason instead of a throw.
+    expect(() => canonicalV011(ghost)).toThrow(/non-plain-object leaf/)
     input.sealedTrials[1]!.normalizedRecord = ghost
-    input.sealedTrials[1]!.normalizedRecordHash = recordDigest(ghost)
-    const verdict = verifyGate8Evidence(input)
-    expect(verdict.reasons.join('\n')).toMatch(/trial record identity mismatch: sealed\//)
+    input.evidenceCommitment = 'sha256:' + 'f'.repeat(64)
+    expect(verifyGate8Evidence(input).reasons.join('\n')).toMatch(
+      /trial normalized record digest cannot be computed: sealed\//,
+    )
+    // A PLAIN record with a non-enumerable own identity property still
+    // exercises the own-enumerable comparison directly.
+    const sneaky: Record<string, unknown> = { ...rest }
+    Object.defineProperty(sneaky, 'candidateId', {
+      value: candidateId,
+      enumerable: false,
+    })
+    const second = complete()
+    second.sealedTrials[1]!.normalizedRecord = sneaky
+    second.sealedTrials[1]!.normalizedRecordHash = recordDigest(sneaky)
+    second.evidenceCommitment = gate8EvidenceCommitment(second)
+    expect(verifyGate8Evidence(second).reasons.join('\n')).toMatch(
+      /trial record identity mismatch: sealed\//,
+    )
   })
 
   it('rejects a post-hoc envelope edit that diverges from the recorded commitment (issue #111)', () => {
