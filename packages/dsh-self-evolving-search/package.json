@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Evolution search algorithm: clade CMP estimator, clade + node Thompson sampling, UCB-Air expand/evaluate scheduler, deterministic wave RNG, shortlist tournament. Pure functions over an explicit archive view — no reward-dependent policy switches after manifest freeze (spec 03).",
+  "description": "Evolution search algorithm: clade CMP estimator, clade + node Thompson sampling, UCB-Air expand/evaluate scheduler, deterministic wave RNG, shortlist tournament. Pure functions over an explicit archive view \u2014 no reward-dependent policy switches after manifest freeze (spec 03).",
   "main": "lib/index.js",
   "exports": {
     ".": {
@@ -22,6 +22,9 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "rm -rf lib .tsbuildinfo"
+  },
+  "dependencies": {
+    "@dsh-self-evolving/candidate-sdk": "workspace:*"
   },
   "devDependencies": {
     "@dsh-self-evolving/core": "workspace:*",

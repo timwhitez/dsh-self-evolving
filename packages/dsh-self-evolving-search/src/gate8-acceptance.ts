@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import {
   MAX_BOOTSTRAP_RESAMPLES,
   classifyPromotion,
@@ -17,6 +18,12 @@ export interface SealedTrialEvidence {
   scheduleIndex: number
   trialSeedHash: string
   normalizedRecordHash: string
+  /**
+   * The normalized record content itself (issue #219): the verifier recomputes
+   * its canonical digest and requires it to equal normalizedRecordHash, and
+   * requires the record's own identity fields to match this row.
+   */
+  normalizedRecord: unknown
   rawEvidenceDigests: string[]
   protocolHash: string
   reward: 0 | 1
@@ -29,6 +36,11 @@ export interface FullSetTrialEvidence {
   taskId: string
   attemptIndex: number
   normalizedRecordHash: string
+  /**
+   * The normalized record content itself (issue #219): digest recomputation
+   * and row-identity binding, mirroring the sealed matrix.
+   */
+  normalizedRecord: unknown
   rawEvidenceDigests: string[]
   protocolHash: string
   reward: 0 | 1
@@ -163,7 +175,6 @@ function validTrialArtifacts(trial: {
   costUsd: number
 }): boolean {
   return (
-    validDigest(trial.normalizedRecordHash) &&
     trial.rawEvidenceDigests.length > 0 &&
     trial.rawEvidenceDigests.every(validDigest) &&
     validDigest(trial.protocolHash) &&
@@ -171,6 +182,55 @@ function validTrialArtifacts(trial: {
     Number.isFinite(trial.costUsd) &&
     trial.costUsd >= 0
   )
+}
+
+/**
+ * Verify a trial's record content against its claims (issue #219): the
+ * record must be present, hash to its claimed digest, and carry the trial
+ * row's own identity. Identity is compared through own enumerable properties
+ * only, matching what canonicalV011 digests, so a record cannot pass with
+ * identity fields hidden on a prototype or marked non-enumerable.
+ */
+function recordIdentityMatches(
+  record: unknown,
+  trial: { candidateId: string; taskId: string; attemptIndex: number },
+): boolean {
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) return false
+  const own = Object.entries(record)
+  const field = (name: string): unknown =>
+    own.find(([key]) => key === name)?.[1]
+  return (
+    field('candidateId') === trial.candidateId &&
+    field('taskId') === trial.taskId &&
+    field('attemptIndex') === trial.attemptIndex
+  )
+}
+
+/**
+ * Record-content checks for one trial row (issue #219): missing content,
+ * digest divergence, or identity mismatch each yield their own reason so a
+ * forged envelope cannot hide behind a generic artifact failure.
+ */
+function trialRecordReason(
+  trial: {
+    candidateId: string
+    taskId: string
+    attemptIndex: number
+    normalizedRecordHash: string
+    normalizedRecord: unknown
+  },
+  key: string,
+): string | null {
+  if (trial.normalizedRecord === undefined || trial.normalizedRecord === null) {
+    return `trial normalized record missing: ${key}`
+  }
+  if (digestV011(canonicalV011(trial.normalizedRecord)) !== trial.normalizedRecordHash) {
+    return `trial normalized record digest mismatch: ${key}`
+  }
+  if (!recordIdentityMatches(trial.normalizedRecord, trial)) {
+    return `trial record identity mismatch: ${key}`
+  }
+  return null
 }
 
 export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVerdict {
@@ -293,6 +353,8 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       ) {
         reasons.push(`sealed trial identity/artifact invalid: ${key}`)
       }
+      const recordReason = trialRecordReason(trial, `sealed/${key}`)
+      if (recordReason !== null) reasons.push(recordReason)
     }
     if (
       taskIds.size !== 29 ||
@@ -461,6 +523,8 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       ) {
         reasons.push(`full-set trial identity/artifact invalid: ${key}`)
       }
+      const recordReason = trialRecordReason(trial, `full-set/${key}`)
+      if (recordReason !== null) reasons.push(recordReason)
     }
     if (
       tasks.size !== 89 ||

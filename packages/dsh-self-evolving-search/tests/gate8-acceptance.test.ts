@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
+import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import {
   commitSplit,
   verifyGate8Evidence,
@@ -8,6 +9,7 @@ import {
 } from '../src/index.js'
 
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`
+const recordDigest = (record: unknown) => digestV011(canonicalV011(record))
 
 function completeSplitReveal() {
   const inventory = Array.from({ length: 89 }, (_, task) => `task-${String(task).padStart(3, '0')}`)
@@ -48,6 +50,16 @@ function complete(): Gate8EvidenceInput {
   for (let task = 0; task < 29; task++) {
     for (let attemptIndex = 0; attemptIndex < attemptsPerTask; attemptIndex++) {
       const taskId = `task-${String(task + 60).padStart(3, '0')}`
+      const baselineReward = task < 9 ? 1 : 0
+      const baselineRecord = {
+        schemaVersion: 1,
+        role: 'baseline',
+        candidateId: baselineCandidateId,
+        taskId,
+        attemptIndex,
+        reward: baselineReward,
+        costUsd: 0.01,
+      }
       sealedTrials.push({
         role: 'baseline',
         candidateId: baselineCandidateId,
@@ -55,12 +67,22 @@ function complete(): Gate8EvidenceInput {
         attemptIndex,
         scheduleIndex: scheduleIndex++,
         trialSeedHash: digest(`baseline-seed-${task}-${attemptIndex}`),
-        normalizedRecordHash: digest(`baseline-normalized-${task}-${attemptIndex}`),
+        normalizedRecordHash: recordDigest(baselineRecord),
+        normalizedRecord: baselineRecord,
         rawEvidenceDigests: [digest(`baseline-raw-${task}-${attemptIndex}`)],
         protocolHash,
-        reward: task < 9 ? 1 : 0,
+        reward: baselineReward,
         costUsd: 0.01,
       })
+      const candidateRecord = {
+        schemaVersion: 1,
+        role: 'candidate',
+        candidateId,
+        taskId,
+        attemptIndex,
+        reward: 1,
+        costUsd: 0.01,
+      }
       sealedTrials.push({
         role: 'candidate',
         candidateId,
@@ -68,7 +90,8 @@ function complete(): Gate8EvidenceInput {
         attemptIndex,
         scheduleIndex: scheduleIndex++,
         trialSeedHash: digest(`candidate-seed-${task}-${attemptIndex}`),
-        normalizedRecordHash: digest(`candidate-normalized-${task}-${attemptIndex}`),
+        normalizedRecordHash: recordDigest(candidateRecord),
+        normalizedRecord: candidateRecord,
         rawEvidenceDigests: [digest(`candidate-raw-${task}-${attemptIndex}`)],
         protocolHash,
         reward: 1,
@@ -77,17 +100,29 @@ function complete(): Gate8EvidenceInput {
     }
   }
   const fullTrials = Array.from({ length: 89 }, (_, task) =>
-    Array.from({ length: 5 }, (_, attemptIndex) => ({
-      candidateId,
-      capsuleDigest,
-      taskId: `task-${String(task).padStart(3, '0')}`,
-      attemptIndex,
-      normalizedRecordHash: digest(`full-normalized-${task}-${attemptIndex}`),
-      rawEvidenceDigests: [digest(`full-raw-${task}-${attemptIndex}`)],
-      protocolHash,
-      reward: 1 as const,
-      costUsd: 0.01,
-    })),
+    Array.from({ length: 5 }, (_, attemptIndex) => {
+      const fullRecord = {
+        schemaVersion: 1,
+        candidateId,
+        capsuleDigest,
+        taskId: `task-${String(task).padStart(3, '0')}`,
+        attemptIndex,
+        reward: 1,
+        costUsd: 0.01,
+      }
+      return {
+        candidateId,
+        capsuleDigest,
+        taskId: fullRecord.taskId,
+        attemptIndex,
+        normalizedRecordHash: recordDigest(fullRecord),
+        normalizedRecord: fullRecord,
+        rawEvidenceDigests: [digest(`full-raw-${task}-${attemptIndex}`)],
+        protocolHash,
+        reward: 1 as const,
+        costUsd: 0.01,
+      }
+    }),
   ).flat()
   return {
     formalSearchReceiptHash: digest('search-complete'),
@@ -397,5 +432,59 @@ describe('Gate 8 sealed/full/release evidence', () => {
     }
     const verdict = verifyGate8Evidence(input)
     expect(verdict.reasons.join('\n')).toMatch(/different task universes/)
+  })
+
+  it('rejects a sealed record relabeled onto another candidate, even with a recomputed hash (issue #219)', () => {
+    const input = complete()
+    const trial = input.sealedTrials[1] as unknown as {
+      normalizedRecord: { candidateId: string }
+    }
+    trial.normalizedRecord.candidateId = input.baselineCandidateId
+    input.sealedTrials[1]!.normalizedRecordHash = recordDigest(trial.normalizedRecord)
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/trial record identity mismatch: sealed\//)
+  })
+
+  it('rejects an arbitrary blob reused as every full-set record, even fully re-hashed (issue #219)', () => {
+    const input = complete()
+    const blob = { lie: 'i am a real trial' }
+    input.fullSet = {
+      ...input.fullSet!,
+      trials: input.fullSet!.trials.map((trial) => ({
+        ...trial,
+        normalizedRecord: blob,
+        normalizedRecordHash: recordDigest(blob),
+      })),
+    }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.fullSetVerified).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/trial record identity mismatch: full-set\//)
+  })
+
+  it('rejects trials whose record content is absent, without throwing (issue #219)', () => {
+    const input = complete()
+    input.sealedTrials = input.sealedTrials.map((trial) => {
+      const rest = { ...(trial as unknown as Record<string, unknown>) }
+      delete rest['normalizedRecord']
+      return rest as never
+    })
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/trial normalized record missing: sealed\//)
+  })
+
+  it('rejects a record whose own identity lives on a prototype rather than in digested content', () => {
+    const input = complete()
+    const template = input.sealedTrials[1]!.normalizedRecord as Record<string, unknown>
+    const { candidateId, ...rest } = template
+    const ghost: Record<string, unknown> = Object.create({
+      candidateId,
+      ...(rest as object),
+    })
+    input.sealedTrials[1]!.normalizedRecord = ghost
+    input.sealedTrials[1]!.normalizedRecordHash = recordDigest(ghost)
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.reasons.join('\n')).toMatch(/trial record identity mismatch: sealed\//)
   })
 })
