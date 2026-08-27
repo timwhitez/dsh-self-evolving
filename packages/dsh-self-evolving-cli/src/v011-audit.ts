@@ -47,7 +47,7 @@ async function files(root: string): Promise<string[]> {
 }
 
 export interface FixtureCrossBinding {
-  /** Parent digest from the successor action's materialization receipt. */
+  /** Parent digest from the baseline receipt (fallback: action materialization). */
   parentDigest?: string | undefined
   /** Reserved proposalId from the successor action's materialization receipt. */
   proposalId?: string | undefined
@@ -102,9 +102,8 @@ export async function verifyInvalidReplacementFixture(
         binding !== null &&
         binding['runId'] === config.runId &&
         typeof cross.parentDigest === 'string' &&
-        typeof cross.proposalId === 'string' &&
         binding['parentDigest'] === cross.parentDigest &&
-        binding['proposalId'] === cross.proposalId &&
+        (cross.proposalId === undefined || binding['proposalId'] === cross.proposalId) &&
         typeof rejection.analysisSchemaDigest === 'string' &&
         rejection.analysisSchemaDigest === (await v011SchemaDigest('analysis')) &&
         digestV011(proposalBytes) === rejection.fixtureProposalDigest &&
@@ -131,26 +130,37 @@ export async function verifyInvalidReplacementFixture(
   return reasons
 }
 
-export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
-  const predecessor = await auditStableRun(config)
-  const controller = await readControllerStatus(config as never)
-  const reasons = [...predecessor.reasons]
-  // Cross-bind the fixture to the successor action's OWN materialization
-  // receipt: the same trusted source that produced the fixture's binding
-  // (issue #203). The action's idempotency-key tail is a candidateId, not a
-  // digest, and must not be compared against binding.parentDigest.
+/**
+ * Derive the fixture cross-binding (issues #203/#208): parentDigest from the
+ * trusted baseline stable-build receipt (present even when attempt 1 failed),
+ * falling back to the action's own materialization receipt; proposalId only
+ * when that attempt's materialization exists.
+ */
+export async function deriveFixtureCross(config: V011DemoConfig): Promise<FixtureCrossBinding> {
+  const baseline = (await json(
+    join(config.stateDir, 'candidates', 'v011-baseline', 'stable-build.json'),
+  )) as { sourceDigest?: unknown } | null
   const materialization = (await json(
     join(config.stateDir, 'v011', 'actions', 'proposal-1-1', 'materialization.json'),
   )) as { materialization?: { proposalId?: unknown; parentDigest?: unknown } } | null
   const materializationRecord = materialization?.materialization
   const cross: FixtureCrossBinding = {}
-  if (typeof materializationRecord?.parentDigest === 'string') {
+  if (typeof baseline?.sourceDigest === 'string') {
+    cross.parentDigest = baseline.sourceDigest
+  } else if (typeof materializationRecord?.parentDigest === 'string') {
     cross.parentDigest = materializationRecord.parentDigest
   }
   if (typeof materializationRecord?.proposalId === 'string') {
     cross.proposalId = materializationRecord.proposalId
   }
-  reasons.push(...(await verifyInvalidReplacementFixture(config, cross)))
+  return cross
+}
+
+export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
+  const predecessor = await auditStableRun(config)
+  const controller = await readControllerStatus(config as never)
+  const reasons = [...predecessor.reasons]
+  reasons.push(...(await verifyInvalidReplacementFixture(config, await deriveFixtureCross(config))))
   const baselineMigration = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'migration-receipt.json'),
   )) as { inheritedResultsPolicy?: unknown } | null

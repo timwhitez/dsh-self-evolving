@@ -42,6 +42,15 @@ export interface TrustedAdapterAttemptSource {
   readonly lastFetchAttempts: readonly AdapterFetchAttempt[]
 }
 
+/**
+ * Per-invocation attempt log: each stream() call gets an isolated collector,
+ * so concurrent in-flight requests on one adapter instance cannot reset or
+ * cross-contaminate each other's records (issue #206).
+ */
+export class AttemptCollector {
+  readonly attempts: AdapterFetchAttempt[] = []
+}
+
 export function classifyStatus(status: number): { retryable: boolean; ambiguous: boolean } {
   if (status === 429) return { retryable: true, ambiguous: false }
   if (status === 408 || status >= 500) return { retryable: true, ambiguous: true }

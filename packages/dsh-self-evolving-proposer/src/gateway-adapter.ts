@@ -12,6 +12,12 @@ import type { AdapterFetchAttempt, TrustedAdapterAttemptSource } from './fetch-a
 export interface ProposalGatewayAdapterConfig {
   socketPath: string
   route: ProposalGatewayRoute
+  /**
+   * Default per-request wire budget sent as the envelope deadline so the
+   * trusted host aborts its provider fetch even if this sandbox client dies
+   * silently (issue #190). Effective deadline is min(this, caller signal).
+   */
+  defaultDeadlineMs?: number
 }
 
 function wirePayload(options: GenerateOptions): Record<string, unknown> {
@@ -54,10 +60,17 @@ export class ProposalGatewayAdapter extends LlmAdapter {
       route: this.config.route,
       payload,
     }
+    const deadlineMs = this.config.defaultDeadlineMs
     const response = await requestProposalGateway(
       this.config.socketPath,
       request,
-      options.signal === undefined ? {} : { signal: options.signal },
+      options.signal === undefined
+        ? deadlineMs === undefined
+          ? {}
+          : { deadlineMs }
+        : deadlineMs === undefined
+          ? { signal: options.signal }
+          : { signal: options.signal, deadlineMs },
     )
     if (!response.ok) throw new Error(`proposal gateway adapter: ${response.error}`)
     const result = response.result as { chunks?: unknown }
@@ -74,6 +87,17 @@ export class ProposalGatewayAdapter extends LlmAdapter {
 }
 
 /** Build the trusted-host handler that owns the real provider adapter/key. */
+/**
+ * Serialize handler calls: the trusted adapter's attempt-log slot is
+ * evidence-faithful single-flight, so concurrent gateway requests over one
+ * adapter instance must not interleave (issue #206).
+ */
+function serialized<T>(fn: () => Promise<T>, gate: { tail: Promise<unknown> }): Promise<T> {
+  const run = gate.tail.then(fn)
+  gate.tail = run.catch(() => undefined)
+  return run
+}
+
 export function createProposalGatewayLlmHandler(
   adapter: LlmAdapter,
   route: ProposalGatewayRoute,
@@ -81,7 +105,13 @@ export function createProposalGatewayLlmHandler(
   payload: unknown,
   context?: { signal: AbortSignal },
 ) => Promise<{ chunks: StreamChunk[]; attempts?: AdapterFetchAttempt[] }> {
-  return async (payload, context) => {
+  const gate = { tail: Promise.resolve() }
+  return (payload, context) => serialized(() => body(payload, context), gate)
+
+  async function body(
+    payload: unknown,
+    context?: { signal: AbortSignal },
+  ): Promise<{ chunks: StreamChunk[]; attempts?: AdapterFetchAttempt[] }> {
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new Error('proposal gateway handler: invalid payload')
     }

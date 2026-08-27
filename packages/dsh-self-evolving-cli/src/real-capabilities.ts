@@ -165,6 +165,7 @@ async function realProposal(
     join(config.stateDir, `.proposal-${input.generation}-${input.attempt}-`),
   )
   const route = await loadTrustedRoute()
+  const sandboxTimeoutMs = 600_000
   const lockedRoute: ProposalGatewayRoute = {
     provider: 'deepseek',
     endpoint: route.baseUrl,
@@ -201,6 +202,7 @@ async function realProposal(
       join(mounts.contracts, 'request.json'),
       JSON.stringify({
         route: lockedRoute,
+        llmDeadlineMs: Math.max(60_000, sandboxTimeoutMs - 120_000),
         parentDigest: input.parent.sourceDigest,
         candidateId: input.parent.candidateId,
         width: 3,
@@ -217,6 +219,7 @@ async function realProposal(
     const gateway = await startProposalGateway({
       socketPath: join(scratch, 'gateway', 'proposal.sock'),
       route: lockedRoute,
+      requestTimeoutMs: sandboxTimeoutMs,
       handle: createProposalGatewayLlmHandler(adapter, lockedRoute),
     })
     try {
@@ -225,7 +228,7 @@ async function realProposal(
         runtimeRoot,
         command: '/runtime/node',
         args: ['/runtime/node_modules/@dsh-self-evolving/proposer/lib/sandbox-worker.js'],
-        timeoutMs: 600_000,
+        timeoutMs: sandboxTimeoutMs,
         maxOutputBytes: 2 * 1024 * 1024,
         gatewaySocket: gateway.socketPath,
       })

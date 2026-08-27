@@ -9,6 +9,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type { ProposalGatewayRoute } from './gateway.js'
 import {
+  AttemptCollector,
   classifyStatus,
   type AdapterDiscardedUsage,
   type AdapterFetchAttempt,
@@ -291,7 +292,8 @@ export class TrustedResponsesAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    this.fetchAttempts = []
+    const collector = new AttemptCollector()
+    this.fetchAttempts = collector.attempts
     const route = this.config.route
     const effectiveMaxTokens = options.maxTokens ?? route.maxTokens
     if (
@@ -345,6 +347,7 @@ export class TrustedResponsesAdapter extends LlmAdapter {
               }),
         },
         options.signal,
+        collector,
       )
       body = fetched.body
       // Discarded transport retries may already have been billed: count their
@@ -515,7 +518,8 @@ export class TrustedResponsesAdapter extends LlmAdapter {
 
   private async fetchBody(
     body: unknown,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    collector: AttemptCollector,
   ): Promise<{ body: ResponsesBody; discardedUsage: AdapterDiscardedUsageTotal }> {
     const route = this.config.route
     const request: RequestInit = {
@@ -540,8 +544,8 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       response = await this.fetchImpl(`${route.endpoint.replace(/\/$/, '')}/responses`, request)
       const { retryable, ambiguous } = classifyStatus(response.status)
       if (response.ok) {
-        this.fetchAttempts.push({
-          attemptIndex: this.fetchAttempts.length,
+        collector.attempts.push({
+          attemptIndex: collector.attempts.length,
           status: response.status,
           retryable,
           ambiguous,
@@ -570,8 +574,8 @@ export class TrustedResponsesAdapter extends LlmAdapter {
         } catch {
           // Non-JSON failure body: recorded without salvaged usage.
         }
-        this.fetchAttempts.push({
-          attemptIndex: this.fetchAttempts.length,
+        collector.attempts.push({
+          attemptIndex: collector.attempts.length,
           status: response.status,
           retryable,
           ambiguous,
@@ -605,8 +609,8 @@ export class TrustedResponsesAdapter extends LlmAdapter {
       } catch {
         // Non-JSON error body: the attempt is still recorded as ambiguous.
       }
-      this.fetchAttempts.push({
-        attemptIndex: this.fetchAttempts.length,
+      collector.attempts.push({
+        attemptIndex: collector.attempts.length,
         status: response.status,
         retryable,
         ambiguous,
