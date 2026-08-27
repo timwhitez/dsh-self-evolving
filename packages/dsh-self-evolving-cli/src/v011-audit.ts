@@ -7,7 +7,13 @@ import {
   type V011Analysis,
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
-import { assertV011, digestV011, v011SchemaDigest } from '@dsh-self-evolving/candidate-sdk'
+import {
+  assertV011,
+  digestV011,
+  freezeCapabilityCatalog,
+  validateV011,
+  v011SchemaDigest,
+} from '@dsh-self-evolving/candidate-sdk'
 import { auditStableRun } from './audit.js'
 import type { V011DemoConfig } from './config.js'
 
@@ -154,6 +160,85 @@ export async function deriveFixtureCross(config: V011DemoConfig): Promise<Fixtur
     cross.proposalId = materializationRecord.proposalId
   }
   return cross
+}
+
+/**
+ * Validate mechanism-outcome CONTENT, not filename counts (issue #85): each
+ * generation's record must parse against the official schema, carry bound
+ * identities, and the set must be exactly generations 1-3.
+ */
+export async function verifyMechanismOutcomes(stateDir: string): Promise<string[]> {
+  const reasons: string[] = []
+  const outcomes = (await files(join(stateDir, 'v011', 'outcomes'))).filter((path) =>
+    path.endsWith('/outcome.json'),
+  )
+  if (outcomes.length !== 3) reasons.push(`mechanism-outcome record matrix is ${outcomes.length}/3`)
+  // Validate CONTENT, not filename counts (issue #85): each generation's
+  // record must parse against the official schema, carry the expected
+  // idempotency key shape, and the set must be exactly generations 1-3.
+  const expectedGenerations = ['generation-1', 'generation-2', 'generation-3']
+  const seenGenerations = new Set<string>()
+  for (const path of outcomes) {
+    const generation = path.split('/').at(-2)
+    if (generation === undefined || !expectedGenerations.includes(generation)) {
+      reasons.push(`mechanism-outcome at unexpected path: ${path}`)
+      continue
+    }
+    if (seenGenerations.has(generation)) {
+      reasons.push(`duplicate mechanism-outcome for ${generation}`)
+    }
+    seenGenerations.add(generation)
+    const parsed = await readFile(path, 'utf8')
+      .then((raw) => JSON.parse(raw) as Record<string, unknown>)
+      .catch(() => null)
+    if (parsed === null) {
+      reasons.push(`mechanism-outcome for ${generation} is not valid JSON`)
+      continue
+    }
+    const validation = await validateV011('mechanism-outcome', parsed)
+    if (!validation.valid) {
+      reasons.push(`mechanism-outcome for ${generation} fails its schema`)
+    }
+    const key = parsed['idempotencyKey']
+    const candidateDigest = parsed['candidateDigest']
+    if (
+      typeof key !== 'string' ||
+      !/^sha256:[0-9a-f]{64}$/.test(key) ||
+      typeof candidateDigest !== 'string'
+    ) {
+      reasons.push(`mechanism-outcome for ${generation} lacks a bound identity`)
+    }
+  }
+  for (const generation of expectedGenerations) {
+    if (!seenGenerations.has(generation)) {
+      reasons.push(`mechanism-outcome missing for ${generation}`)
+    }
+  }
+  return reasons
+}
+
+/**
+ * Recompute the frozen capability-catalog digest (issue #82): the embedded
+ * catalog must survive the official freezer (unique ids, no enabled T3,
+ * fixture coverage) and its canonical digest must equal the recorded one.
+ */
+export async function verifyCapabilityCatalog(
+  stateDir: string,
+): Promise<{ digest: `sha256:${string}` } | null> {
+  const catalog = (await json(join(stateDir, 'v011', 'capability-catalog.json'))) as {
+    digest?: unknown
+    catalog?: unknown
+  } | null
+  if (catalog === null) return null
+  try {
+    const frozen = await freezeCapabilityCatalog(
+      catalog.catalog as Parameters<typeof freezeCapabilityCatalog>[0],
+    )
+    if (frozen.digest !== catalog.digest) return null
+    return { digest: frozen.digest }
+  } catch {
+    return null
+  }
 }
 
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
@@ -319,18 +404,9 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   )
   if (!multiFile.some((count) => count >= 2))
     reasons.push('no admitted child contains multiple production files')
-  const outcomes = (await files(join(config.stateDir, 'v011', 'outcomes'))).filter((path) =>
-    path.endsWith('/outcome.json'),
-  )
-  if (outcomes.length !== 3) reasons.push(`mechanism-outcome record matrix is ${outcomes.length}/3`)
-  const catalog = (await json(join(config.stateDir, 'v011', 'capability-catalog.json'))) as {
-    digest?: unknown
-    catalog?: { protocol?: unknown }
-  } | null
-  if (
-    catalog?.catalog?.protocol !== 'dsh-self-evolving-candidate-tree-v2' ||
-    typeof catalog.digest !== 'string'
-  ) {
+  reasons.push(...(await verifyMechanismOutcomes(config.stateDir)))
+
+  if ((await verifyCapabilityCatalog(config.stateDir)) === null) {
     reasons.push('frozen exact capability catalog missing')
   }
   const sealedAccessCount = predecessor.accepted
