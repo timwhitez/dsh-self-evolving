@@ -1,7 +1,7 @@
 # Project status
 
 **当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
-**更新时间：2026-08-27（Asia/Tokyo）**
+**更新时间：2026-08-28（Asia/Tokyo）**
 
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
@@ -172,6 +172,38 @@ APPROVE 后 squash merge；评审发现的新问题均立为 issue）：
 
 所有上述均为验证器/预算/幂等层的 falsifiability 与 fail-closed 强化；不改变现有已验收 gate 结论，
 不产生新的 benchmark/promotion 声明。
+
+## 2026-08-28 issue-convergence batch（验证器加固 / 规范化 / 时序收敛）
+
+上一批（2026-08-27）之后的第二轮流散收敛，同样逐项走本地全量门禁 → 独立 subagent 对抗性
+review → APPROVE 后 squash merge；全部评审发现（含两轮 REQUEST_CHANGES 的阻断项）均已
+修复并由同一评审复核确认：
+
+- **#227 / PR228**：budget-stale-lock SIGKILL 测试去 flaky。评审定位真实根因（测试自身的
+  flock 探针短暂持锁 + worker 单次非阻塞获取碰撞即死），worker 改为有界重试（碰撞延迟而非
+  死亡），wait 与 worker 退出竞速实现即时可诊断失败；30+10 次压力运行零失败。
+- **#223 / PR229**：#108 收尾——audit 未定价拒绝对正/负控制用例、provider pricing 映射直测、
+  writer 把 readDshUsage 的具体失败原因写入 summary（pricingReason）、legacy re-settle 行为
+  在 ledger 头部文档化、observationPricing 对 null/-0 fail closed。
+- **#217 / PR231**：Gate6/Gate8 malformed envelope 全面 fail closed（两轮 review：第一轮修复
+  后评审探测出 Gate6 throwing-getter 与 Gate8 14 个 JSON 可表示崩溃面，全部补齐并 pin 测试）；
+  Gate6 fixtures 空对象旁路关闭；Gate6 身份比较移植 own-enumerable 语义。
+- **#214 / PR232**：engineering-effect gateway receipts 绑定 run id + 锁定路由哈希
+  （`engineeringEffectRouteHash`），外部 run/route 的 receipt 集不再满足 gate。
+- **#218 / PR233**：canonicalV011 加固（UTF-16 code-unit 键序、非 plain 叶拒绝、undefined 键
+  跳过）。评审发现并纠正了"全量字节稳定"的错误声明：splitReveal 键集是唯一迁移的生产形态，
+  新旧 digest 均 pin、且证实无任何已记录 gate8 commitment 先于该变更（exposure 为零）。
+- **#234 / PR235**：freezeCapabilityCatalog 行序 bytewise 化（catalog digest 摆脱 ICU 依赖），
+  同样 pin 新旧 digest 并证实生产 id 集无 divergence。
+- **#230 / PR236**：Gate 2 Harbor E2E 相位计时 + 300s→480s 余量（评审复现相位日志：
+  harbor-job ~71-95s、archive pack ~11-18s）。
+
+本批终态门禁：build/lint/typecheck 干净，unit 105 files / 809 passed + 1 skipped，E2E
+36 passed + 3 skipped。#226 确认为 #227 重复并关闭。
+
+剩余开放 issue 均为较大设计工作，未动：#213（preflight 签名密钥锚定）与 #111 剩余片
+（receipt 字节化/签名验证，依赖 #213）；#198/#197/#187；架构级 #37/#51/#65/#116 需先写 ADR。
+本批不改变任何已验收 gate 结论，不产生新 benchmark/promotion 声明。
 
 ## Gate 2 successor（已验收）
 
