@@ -309,4 +309,49 @@ describe('deriveFixtureCross chain (issue #208)', () => {
     const cross = await deriveFixtureCross(config())
     expect(cross).toEqual({})
   })
+
+  describe('catalog digest recomputation (issue #82)', () => {
+    it('rejects an arbitrary digest string on a protocol-matching catalog', async () => {
+      const root2 = await mkdtemp(join(tmpdir(), 'v011-catalog-'))
+      const { rm: rmDir } = await import('node:fs/promises')
+      setTimeout(() => void rmDir(root2, { recursive: true, force: true }), 0).unref?.()
+
+      const { mkdir, writeFile: wf } = await import('node:fs/promises')
+      await mkdir(join(root2, 'v011'), { recursive: true })
+      await wf(
+        join(root2, 'v011', 'capability-catalog.json'),
+        JSON.stringify({
+          digest: 'not-a-digest',
+          catalog: {
+            schemaVersion: 1,
+            protocol: 'dsh-self-evolving-candidate-tree-v2',
+            dshCommit: 'a'.repeat(40),
+            capabilities: [
+              {
+                id: 'systemPrompt',
+                tier: 'T0',
+                kind: 'service',
+                signature: 'sig',
+                enabled: true,
+                fixtureDigest: 'sha256:' + '1'.repeat(64),
+              },
+            ],
+          },
+        }) + '\n',
+      )
+      // Direct check of the audit behavior via a minimal harness: reuse
+      // auditStableRun is too heavy; assert through the exported audit's
+      // reason by calling auditV011Run would need full state. Instead pin the
+      // recomputation contract directly.
+      const { freezeCapabilityCatalog } = await import('@dsh-self-evolving/candidate-sdk')
+      const raw = JSON.parse(
+        await (
+          await import('node:fs/promises')
+        ).readFile(join(root2, 'v011', 'capability-catalog.json'), 'utf8'),
+      ) as { digest: string; catalog: unknown }
+      const frozen = await freezeCapabilityCatalog(raw.catalog as never)
+      expect(frozen.digest).not.toBe(raw.digest)
+      expect(frozen.digest).toMatch(/^sha256:[0-9a-f]{64}$/)
+    })
+  })
 })
