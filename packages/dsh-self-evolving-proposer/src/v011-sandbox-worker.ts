@@ -8,12 +8,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model'
 import * as AgentSpine from '@deepseek-ai/dsh-agent-spine-demo'
 import { ProposalGatewayAdapter } from './gateway-adapter.js'
-import { runV011ProposalTurn } from './v011-runner.js'
-import {
-  canonicalizeV011Tree,
-  digestV011,
-  snapshotV011Tree,
-} from '@dsh-self-evolving/candidate-sdk'
+import { runV011ProposalTurn, verifyFinishedTreeBinding } from './v011-runner.js'
 import type { ProposalGatewayRoute } from './gateway.js'
 import type { V011ParentEvidenceBinding } from '@dsh-self-evolving/core'
 
@@ -196,13 +191,7 @@ try {
   if (result.toolState.finishedTreeDigest === null) {
     throw new Error('v0.1.1 proposal worker: finished state lacks a tree digest binding')
   }
-  const finalTree = await snapshotV011Tree(`${slot}/tree`)
-  const finalDigest = digestV011((await canonicalizeV011Tree(finalTree)).bytes)
-  if (finalDigest !== result.toolState.finishedTreeDigest) {
-    throw new Error(
-      'v0.1.1 proposal worker: child tree changed after finish_proposal — final validation bypassed',
-    )
-  }
+  await verifyFinishedTreeBinding(`${slot}/tree`, result.toolState.finishedTreeDigest)
   await writeFile(
     `${slot}/worker-output.json`,
     JSON.stringify(
@@ -217,7 +206,7 @@ try {
         },
         transcript: result.transcript,
         toolCallCount: result.toolState.callCount,
-        finishedTreeDigest: finalDigest,
+        finishedTreeDigest: result.toolState.finishedTreeDigest,
       },
       null,
       2,

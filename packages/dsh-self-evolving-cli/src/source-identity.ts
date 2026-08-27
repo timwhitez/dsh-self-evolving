@@ -177,6 +177,8 @@ export async function verifySourceArchiveIdentity(
       return invalid('extracted tree contains files outside the declared release inventory')
     }
   }
+  const prunedNote =
+    '; .git/lib/node_modules-named directories are pruned from the walk (inventory blind spot, issue #195)'
   if (archiveAuthenticated) {
     return {
       valid: true,
@@ -188,12 +190,12 @@ export async function verifySourceArchiveIdentity(
     return {
       valid: true,
       status: 'COMMIT_ANCHORED',
-      detail: `commit-anchored source archive ${identity.commit} (whole-release substitution only; not byte-authenticated)`,
+      detail: `commit-anchored source archive ${identity.commit} (whole-release substitution only; not byte-authenticated)${prunedNote}`,
     }
   }
   return {
     valid: true,
     status: 'SELF_CONSISTENT',
-    detail: `self-consistent source archive (no external trust anchor provided); embedded commit ${identity.commit}`,
+    detail: `self-consistent source archive (no external trust anchor provided); embedded commit ${identity.commit}${prunedNote}`,
   }
 }

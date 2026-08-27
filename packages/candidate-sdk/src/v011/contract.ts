@@ -85,6 +85,16 @@ export function canonicalV011(value: unknown): string {
     .join(',')}}`
 }
 
+/**
+ * Digest of the schema file backing a validator kind. Rejection records pin
+ * this so replay verification can distinguish schema/wording drift from
+ * tampering (issue #203).
+ */
+export async function v011SchemaDigest(kind: V011SchemaKind): Promise<`sha256:${string}`> {
+  const bytes = await readFile(resolve(schemaRoot(), SCHEMAS[kind]), 'utf8')
+  return digestV011(bytes)
+}
+
 export function digestV011(value: string | Uint8Array | unknown): `sha256:${string}` {
   const bytes =
     typeof value === 'string' || value instanceof Uint8Array ? value : canonicalV011(value)
