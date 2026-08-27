@@ -337,7 +337,7 @@ describe('Gate 8 sealed/full/release evidence', () => {
     expect(verdict.reasons.join('\n')).not.toMatch(/does not match the revealed sealed task set/)
   })
 
-  it('rejects a tampered revealed assignment whose recomputed root diverges', () => {
+  it('rejects an assignment commitSplit cannot recommit (label count violation)', () => {
     const input = complete()
     input.splitReveal = {
       ...input.splitReveal!,
@@ -347,7 +347,7 @@ describe('Gate 8 sealed/full/release evidence', () => {
     }
     const verdict = verifyGate8Evidence(input)
     expect(verdict.sealedComplete).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/Merkle root|stratum|cannot be recommitted/)
+    expect(verdict.reasons.join('\n')).toMatch(/cannot be recommitted/)
   })
 
   it('rejects non-protocol ceremony sizes', () => {
@@ -361,7 +361,27 @@ describe('Gate 8 sealed/full/release evidence', () => {
     }
     const verdict = verifyGate8Evidence(input)
     expect(verdict.sealedComplete).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/frozen protocol|cannot be recommitted/)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /split commitment sizes\/inventory do not match the frozen protocol/,
+    )
+  })
+
+  it('rejects a recomputed-root divergence with valid stratum counts (label swap)', () => {
+    const input = complete()
+    // Swap the labels of one sealed and one dev-guard row: sizes stay
+    // 48/12/29, so commitSplit succeeds and the recomputed root legitimately
+    // diverges from the revealed root.
+    input.splitReveal = {
+      ...input.splitReveal!,
+      revealedAssignment: input.splitReveal!.revealedAssignment.map((row) => {
+        if (row.taskId === 'task-060') return { ...row, label: 'dev-guard' as const }
+        if (row.taskId === 'task-059') return { ...row, label: 'sealed' as const }
+        return row
+      }),
+    }
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/not committed by the split Merkle root/)
   })
 
   it('rejects a full-set universe disjoint from the sealed ceremony inventory', () => {

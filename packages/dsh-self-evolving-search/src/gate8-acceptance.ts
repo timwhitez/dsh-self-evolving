@@ -5,7 +5,7 @@ import {
   pairedBootstrapCi,
   type PromotionState,
 } from './stats.js'
-import { commitSplit } from './split.js'
+import { commitSplit, SPLIT_SIZES } from './split.js'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 
@@ -322,6 +322,18 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       // Recompute the split commitment from the revealed assignment: the
       // revealed set is provably the committed one, not a self-declared list
       // (issues #110/#111).
+      // Protocol constants, not caller choices (spec 04 §3.1): the ceremony
+      // is always 48/12/29 over the pinned 89-task inventory. Checked
+      // independently of the recommit so a fabricated small ceremony cannot
+      // slip through on a throw.
+      if (
+        reveal.commitment.sizes.devObserved !== SPLIT_SIZES.devObserved ||
+        reveal.commitment.sizes.devGuard !== SPLIT_SIZES.devGuard ||
+        reveal.commitment.sizes.sealed !== SPLIT_SIZES.sealed ||
+        reveal.inventoryTaskIds.length !== 89
+      ) {
+        reasons.push('split commitment sizes/inventory do not match the frozen protocol')
+      }
       if (Array.isArray(reveal.revealedAssignment) && Array.isArray(reveal.inventoryTaskIds)) {
         try {
           const recomputed = commitSplit(
