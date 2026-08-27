@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { verifyGate6Acceptance, type Gate6AcceptanceInput } from '../src/index.js'
+import {
+  gate6EvidenceCommitment,
+  verifyGate6Acceptance,
+  type Gate6AcceptanceInput,
+} from '../src/index.js'
+import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk' 
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`
 
@@ -14,19 +19,30 @@ function complete(): Gate6AcceptanceInput {
     capsuleDigest: hash(((index + 1) % 16).toString(16)),
     buildManifestDigest: hash(((index + 2) % 16).toString(16)),
   }))
-  return {
+  const input = {
     runId: 'pilot-successor-20260814',
     targetK: 10,
     capabilityMode: 'real',
     candidates,
-    observations: candidates.map((candidate, index) => ({
-      candidateId: candidate.candidateId,
-      taskId: `dev-task-${index}`,
-      attemptIndex: 0,
-      normalizedRecordHash: hash('d'),
-      rawEvidenceDigests: [hash('e')],
-      costUsd: 0.02,
-    })),
+    observations: candidates.map((candidate, index) => {
+      const normalizedRecord = {
+        schemaVersion: 1,
+        candidateId: candidate.candidateId,
+        taskId: `dev-task-${index}`,
+        attemptIndex: 0,
+        status: 'pass',
+        reward: 1,
+      }
+      return {
+        candidateId: candidate.candidateId,
+        taskId: `dev-task-${index}`,
+        attemptIndex: 0,
+        normalizedRecordHash: digestV011(canonicalV011(normalizedRecord)),
+        rawEvidenceDigests: [hash('e')],
+        costUsd: 0.02,
+        normalizedRecord,
+      }
+    }),
     allActionsTerminalAndReconciled: true,
     journalReplayMatches: true,
     realCrashResumeReceipt: true,
@@ -35,7 +51,9 @@ function complete(): Gate6AcceptanceInput {
     auditCriticalFindings: 0,
     costPredictionErrorFraction: 0.1,
     sealedAccessCount: 0,
-  }
+  } as unknown as Gate6AcceptanceInput
+  input.evidenceCommitment = gate6EvidenceCommitment(input)
+  return input
 }
 
 describe('Gate 6 fail-closed acceptance', () => {
@@ -91,4 +109,37 @@ describe('Gate 6 fail-closed acceptance', () => {
     expect(verdict.accepted).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/lacks full immutable identity/)
   })
+
+describe('Gate6 evidence binding (issue #121)', () => {
+  it('rejects a post-hoc evidence edit that diverges from the commitment', () => {
+    const input = complete()
+    input.realCrashResumeReceipt = false
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons).toContain('evidence envelope does not match its recorded commitment')
+    expect(verdict.reasons.join('\n')).toMatch(/crash\/resume/)
+  })
+
+  it('rejects an observation whose record content does not hash to its claim', () => {
+    const input = complete()
+    const observation = input.observations[0] as unknown as {
+      normalizedRecord: { reward: number }
+    }
+    observation.normalizedRecord.reward = 0
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/normalized record digest mismatch/)
+  })
+
+  it('rejects observations presented without record content', () => {
+    const input = complete()
+    input.observations = input.observations.map((observation) => {
+      const rest = { ...(observation as unknown as Record<string, unknown>) }
+      delete rest['normalizedRecord']
+      return rest as never
+    })
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.reasons.join('\n')).toMatch(/normalized record missing/)
+  })
+})
 })
