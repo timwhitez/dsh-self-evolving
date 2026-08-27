@@ -47,9 +47,9 @@ async function files(root: string): Promise<string[]> {
 }
 
 export interface FixtureCrossBinding {
-  /** Parent digest component of the successor action's idempotency key. */
-  parentDigest?: string
-  /** Reserved proposalId the successor completed under, when known. */
+  /** Parent digest from the successor action's materialization receipt. */
+  parentDigest?: string | undefined
+  /** Reserved proposalId from the successor action's materialization receipt. */
   proposalId?: string | undefined
 }
 
