@@ -4,8 +4,9 @@ import { join } from 'node:path'
 import type { ProjectConfig } from './config.js'
 import {
   computeCrashReceiptFacts,
+  crashReceiptMatches,
+  parseCrashReceipt,
   readCrashInjectionRequest,
-  type CrashReceiptFacts,
 } from './crash.js'
 
 export interface StableAuditReport {
@@ -178,7 +179,7 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
     }
     const covered = new Set([...buildByCandidate.keys(), ...observationByCandidate.keys()])
     for (const candidateId of covered) {
-      if (!childIds.has(candidateId) && candidateId !== 'baseline') {
+      if (!childIds.has(candidateId)) {
         reasons.push(`evidence references an unknown candidate: ${candidateId}`)
       }
     }
@@ -189,28 +190,18 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
   if (crashReceipt?.isFile() !== true) reasons.push('real crash/resume receipt missing')
   else {
     // Independently re-derive the crash facts from durable state instead of
-    // trusting the receipt's counters (issue #78): run/action/boundary
-    // binding, preserved stale locks, exactly-once event counts and the
-    // replay hash are all recomputed.
-    const crash = JSON.parse(await readFile(crashPath, 'utf8')) as Record<string, unknown>
-    const crashRequest = await readCrashInjectionRequest(config)
-    let facts: CrashReceiptFacts | null = null
-    if (crashRequest !== null) {
-      facts = await computeCrashReceiptFacts(config, crashRequest).catch(() => null)
-    }
+    // trusting the receipt's counters (issue #78), using the SAME shared
+    // field-wise verifier as finalization (review of #210).
+    const crashRequest = await readCrashInjectionRequest(config).catch(() => null)
+    const parsed = parseCrashReceipt(await readFile(crashPath, 'utf8'))
+    const facts =
+      crashRequest === null
+        ? null
+        : await computeCrashReceiptFacts(config, crashRequest).catch(() => null)
     if (
-      crashRequest === null ||
+      parsed === null ||
       facts === null ||
-      crash['schemaVersion'] !== 1 ||
-      crash['runId'] !== config.runId ||
-      crash['injectedActionId'] !== crashRequest.actionId ||
-      crash['injectedBoundary'] !== crashRequest.boundary ||
-      JSON.stringify(crash['staleWriterLockReceipts']) !==
-        JSON.stringify(facts.staleWriterLockReceipts) ||
-      crash['launchEvents'] !== 1 ||
-      crash['observationEvents'] !== 1 ||
-      crash['commitEvents'] !== 1 ||
-      crash['replayStateHash'] !== controller.stateHash ||
+      !crashReceiptMatches(parsed, facts) ||
       facts.replayStateHash !== controller.stateHash
     ) {
       reasons.push('crash/resume exactly-once receipt is invalid')

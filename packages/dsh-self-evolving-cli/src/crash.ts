@@ -92,6 +92,56 @@ export async function computeCrashReceiptFacts(
   }
 }
 
+/**
+ * Field-wise receipt verification with unknown-key rejection: one verifier
+ * shared by finalization and audit so strictness cannot drift (review of
+ * #210). Returns null when the file is unparseable or malformed.
+ */
+export function parseCrashReceipt(
+  raw: string,
+): (CrashReceiptFacts & { schemaVersion: number }) | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const expectedKeys = [
+      'schemaVersion',
+      'runId',
+      'injectedActionId',
+      'injectedBoundary',
+      'staleWriterLockReceipts',
+      'launchEvents',
+      'observationEvents',
+      'commitEvents',
+      'replayStateHash',
+    ]
+    if (
+      JSON.stringify(Object.keys(parsed).sort()) !== JSON.stringify(expectedKeys.sort()) ||
+      parsed['schemaVersion'] !== 1
+    ) {
+      return null
+    }
+    return parsed as unknown as CrashReceiptFacts & { schemaVersion: number }
+  } catch {
+    return null
+  }
+}
+
+export function crashReceiptMatches(
+  parsed: CrashReceiptFacts & { schemaVersion: number },
+  facts: CrashReceiptFacts,
+): boolean {
+  return (
+    parsed.runId === facts.runId &&
+    parsed.injectedActionId === facts.injectedActionId &&
+    parsed.injectedBoundary === facts.injectedBoundary &&
+    JSON.stringify(parsed.staleWriterLockReceipts) ===
+      JSON.stringify(facts.staleWriterLockReceipts) &&
+    parsed.launchEvents === facts.launchEvents &&
+    parsed.observationEvents === facts.observationEvents &&
+    parsed.commitEvents === facts.commitEvents &&
+    parsed.replayStateHash === facts.replayStateHash
+  )
+}
+
 export async function finalizeCrashResumeReceipt(config: ProjectConfig): Promise<string | null> {
   const request = await readCrashInjectionRequest(config)
   if (request === null) return null
@@ -100,12 +150,10 @@ export async function finalizeCrashResumeReceipt(config: ProjectConfig): Promise
   if (existing !== null) {
     // Bare existence is not completion (issue #78): parse and fully
     // re-derive the receipt before accepting it.
-    const parsed = JSON.parse(existing) as CrashReceiptFacts & { schemaVersion?: unknown }
-    const facts = await computeCrashReceiptFacts(config, request)
-    if (
-      parsed.schemaVersion !== 1 ||
-      JSON.stringify(parsed) !== JSON.stringify({ schemaVersion: 1, ...facts })
-    ) {
+    const parsed = parseCrashReceipt(existing)
+    const facts =
+      parsed === null ? null : await computeCrashReceiptFacts(config, request).catch(() => null)
+    if (parsed === null || facts === null || !crashReceiptMatches(parsed, facts)) {
       throw new Error('crash receipt: existing receipt does not match re-derived facts')
     }
     return receiptPath
