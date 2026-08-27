@@ -1,7 +1,7 @@
 # Project status
 
 **当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
-**更新时间：2026-08-15（Asia/Tokyo）**
+**更新时间：2026-08-27（Asia/Tokyo）**
 
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
@@ -142,6 +142,36 @@ task-cluster bootstrap 与 5pp/CI 门槛；candidate lock 绑定 baseline/model/
 provenance、rollback 与 public leak-scan receipts。当前权威状态仍是 `BLOCKED_NOT_STARTED`：无正式
 candidate lock、reveal count=0、sealed/full trials=0、无 promotion/release。详见
 [`docs/audits/2026-08-14-gate8-verifier.md`](docs/audits/2026-08-14-gate8-verifier.md)。
+
+## 2026-08-27 audit-hardening batch（证据绑定 / 预算 / 幂等收敛）
+
+远端 issues 的审计硬化批次已全部落地（每项：本地全量门禁 → 独立 subagent adversarial review →
+APPROVE 后 squash merge；评审发现的新问题均立为 issue）：
+
+- **#121 / PR216**：Gate6 验证器不再信任 hash 形状的 `normalizedRecordHash`——observation 必须携带
+  `normalizedRecord` 内容，验证器重算 canonical digest 并要求 record 的 candidateId/taskId/attemptIndex
+  与 observation 行一致；整个证据 envelope 以 `evidenceCommitment`（`gate6EvidenceCommitment`）内容寻址，
+  事后任何编辑都会发散。评审确认 commitment 覆盖全部 load-bearing 字段。
+- **#219 / PR220**：同一模式移植到 Gate8——sealed/full-set trial records 内容化 + own-enumerable 身份绑定
+  （prototype/non-enumerable 身份在 Gate8 从第一天即被拒绝）；search 包新增 candidate-sdk canonical 依赖。
+- **#111 slice 2 / PR221**：Gate8 envelope 以 `gate8EvidenceCommitment` 记录式承诺覆盖（divergence 同时
+  冻结 promotion 分类为 PROTOCOL_INVALID）；record outcome 绑定（reward 必须等于被统计的行值、full-set
+  capsuleDigest 绑定锁定 capsule）；attemptIndex/scheduleIndex 整数化。剩余 receipt 字节化/签名验证仍在 #111。
+- **#108 / PR222**：未定价 usage 不再以测得零释放预留——`EvaluationObservation.pricing` 结构化
+  priced/unknown 状态（缺失/畸形/非有限成本一律降级 unknown），unknown 按全额预留结算，stable audit 对
+  任何未解决 unpriced usage fail closed；real provider 保留 summary 的 priced 标志。
+- **#56 / PR224**：proposal gateway 幂等收敛——in-flight 同步注册（同 id 并发 join 同一次 dispatch）、
+  durable request store（`wx` 预留 → 原子完成 → 崩溃遗留 pending 永不重发）、replay 前完整 envelope 验证
+  （含 responseHash 重算，防 poisoned success）、stale socket 探测重绑（live 拒绝）、reservation 写失败
+  上抛而非毒化 id；v1/v011 两条生产 wiring 均指向跨重启稳定的目录。
+
+评审驱动新立 issue：#217（Gate6/8 malformed envelope fail-closed + empty-fixtures 旁路）、#218
+（canonicalV011 规范化弱点，需版本化迁移）、#219（已修）、#223（#108 收尾：audit/provider 覆盖、失败
+原因粒度、legacy re-settle 文档）。本批合并后全量本地门禁：build/lint/typecheck 干净，unit
+103 files / 784 passed + 1 skipped，E2E 36 passed + 3 skipped。
+
+所有上述均为验证器/预算/幂等层的 falsifiability 与 fail-closed 强化；不改变现有已验收 gate 结论，
+不产生新的 benchmark/promotion 声明。
 
 ## Gate 2 successor（已验收）
 
