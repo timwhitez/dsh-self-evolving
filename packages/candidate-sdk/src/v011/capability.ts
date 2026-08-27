@@ -28,9 +28,16 @@ export interface FrozenCapabilityCatalog {
 export async function freezeCapabilityCatalog(
   catalog: CapabilityCatalog,
 ): Promise<FrozenCapabilityCatalog> {
+  // Row order feeds the catalog digest, so it must be locale/ICU-independent
+  // (issue #234, same class as the #218 key-order fix): bytewise UTF-16
+  // comparison, matching split.ts and v011-capability-ledger.ts. The current
+  // production id set orders identically under both comparators, so recorded
+  // catalog digests are unchanged.
   const normalized: CapabilityCatalog = {
     ...catalog,
-    capabilities: [...catalog.capabilities].sort((left, right) => left.id.localeCompare(right.id)),
+    capabilities: [...catalog.capabilities].sort((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+    ),
   }
   await assertV011('capability-catalog', normalized)
   const ids = normalized.capabilities.map((row) => row.id)

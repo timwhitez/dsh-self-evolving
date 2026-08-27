@@ -117,3 +117,39 @@ describe('canonicalV011 (issue #218)', () => {
     expect(canonicalV011(nullProto)).toBe('{"a":2,"b":1}')
   })
 })
+
+describe('capability catalog order (issue #234)', () => {
+  it('sorts capability rows bytewise and pins the moved mixed-case digest', async () => {
+    const { freezeCapabilityCatalog } = await import('../src/v011/capability.js')
+    const sha256 = (character: string) =>
+      `sha256:${character.repeat(64)}` as `sha256:${string}`
+    const catalog = {
+      schemaVersion: 1 as const,
+      protocol: 'dsh-self-evolving-candidate-tree-v2',
+      dshCommit: 'a'.repeat(40),
+      capabilities: [
+        { id: 'b-cap', tier: 'T1' as const, kind: 'tool' as const, signature: 'x', enabled: true, fixtureDigest: sha256('1') },
+        { id: 'A-cap', tier: 'T2' as const, kind: 'service' as const, signature: 'y', enabled: false, fixtureDigest: null },
+        { id: 'a_cap', tier: 'T1' as const, kind: 'package-export' as const, signature: 'z', enabled: false, fixtureDigest: null },
+        { id: 'Z9', tier: 'T1' as const, kind: 'event' as const, signature: 'w', enabled: false, fixtureDigest: null },
+      ],
+    }
+    const frozen = await freezeCapabilityCatalog(catalog)
+    expect(frozen.catalog.capabilities.map((row) => row.id)).toEqual([
+      'A-cap',
+      'Z9',
+      'a_cap',
+      'b-cap',
+    ])
+    // Mixed-case ids are the divergence case: under the previous
+    // localeCompare row order this catalog digested as
+    //   sha256:34b1a3b1506add67894a84d2df3857b8aa2f19220dc186ba597eeb0a207bb601
+    // The bytewise order intentionally moved it. The PRODUCTION id set
+    // (agent/request, candidate-internal-composition, systemPrompt,
+    // tools/pre-execute, tools/result) orders identically under both, so no
+    // recorded catalog digest changes.
+    expect(frozen.digest).toBe(
+      'sha256:63857175e4fdf301fabea0ebbe5749c13ecab7f69ad1dcecc4c9196a4effc25b',
+    )
+  })
+})
