@@ -158,12 +158,40 @@ async function probeKernelLock(lockPath: string): Promise<boolean> {
   )
 }
 
-async function waitForKernelLock(lockPath: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await probeKernelLock(lockPath)) return
-    await new Promise((resolve) => setTimeout(resolve, 10))
+/**
+ * Shared bounded poll. Under concurrent load (parallel probe scripts, busy
+ * CI) both the flock probe itself and kernel fd teardown can transiently
+ * stall, so the budget must be generous and transient probe errors must be
+ * retried instead of failing the test (issues #191/#227).
+ */
+async function pollKernelLock(
+  lockPath: string,
+  wantHeld: boolean,
+): Promise<void> {
+  const attempts = 300
+  const intervalMs = 20
+  let lastError: unknown
+  let consecutiveErrors = 0
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const held = await probeKernelLock(lockPath)
+      lastError = undefined
+      consecutiveErrors = 0
+      if (held === wantHeld) return
+    } catch (error) {
+      lastError = error
+      consecutiveErrors += 1
+      if (consecutiveErrors >= 10) break
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
-  throw new Error('test: budget mutation lock was not acquired in time')
+  throw new Error(
+    `test: budget mutation lock did not reach held=${String(wantHeld)} within ${attempts * intervalMs}ms${lastError === undefined ? '' : `; last probe error: ${String(lastError)}`}`,
+  )
+}
+
+async function waitForKernelLock(lockPath: string): Promise<void> {
+  await pollKernelLock(lockPath, true)
 }
 
 /**
@@ -172,11 +200,7 @@ async function waitForKernelLock(lockPath: string): Promise<void> {
  * bounded deadline instead of asserting instantaneous release (issue #191).
  */
 async function waitForKernelLockRelease(lockPath: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (!(await probeKernelLock(lockPath))) return
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error('test: budget mutation lock was not released in time')
+  await pollKernelLock(lockPath, false)
 }
 
 describe('budget OS mutation lock recovery', () => {
@@ -262,7 +286,21 @@ describe('budget OS mutation lock recovery', () => {
     const fifo = await runProcess('/usr/bin/mkfifo', [currentLedger.ledgerPath])
     expect(fifo, fifo.stderr).toMatchObject({ code: 0, signal: null })
     const coreUrl = new URL('../lib/index.js', import.meta.url).href
-    const workerSource = `import { reserve } from ${JSON.stringify(coreUrl)};await reserve(JSON.parse(process.argv[1]),'crash-owner','usd',1)`
+    // The acquisition retries transient `already locked` rejections: this
+    // test's OWN flock probe holds the exclusive lock for a few ms per poll,
+    // and the worker acquires with a single nonblocking attempt — a probe
+    // collision must delay the worker, never kill it (issue #227).
+    const workerSource = `import { reserve } from ${JSON.stringify(coreUrl)};
+const ledger = JSON.parse(process.argv[1]);
+for (let attempt = 0; ; attempt += 1) {
+  try {
+    await reserve(ledger, 'crash-owner', 'usd', 1);
+    break;
+  } catch (error) {
+    if (!String(error).includes('already locked') || attempt >= 300) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}`
     const worker = spawn(
       process.execPath,
       ['--input-type=module', '--eval', workerSource, JSON.stringify(currentLedger)],
@@ -274,8 +312,22 @@ describe('budget OS mutation lock recovery', () => {
       stderr += chunk.toString('utf8')
     })
     const closed = closeOutcome(worker)
-
-    await waitForKernelLock(lockPath)
+    // Fail fast with the worker's stderr if it exits before holding the lock,
+    // instead of timing out opaquely (issue #227).
+    const exitedEarly = new Promise<never>((_, reject) => {
+      worker.once('exit', (code, signal) =>
+        reject(
+          new Error(
+            `worker exited before holding the lock: code=${String(code)} signal=${String(signal)} ${stderr}`,
+          ),
+        ),
+      )
+    })
+    try {
+      await Promise.race([waitForKernelLock(lockPath), exitedEarly])
+    } finally {
+      exitedEarly.catch(() => undefined)
+    }
     worker.kill('SIGKILL')
     const outcome = await closed
     holders.delete(worker)
