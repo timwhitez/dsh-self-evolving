@@ -286,7 +286,21 @@ describe('budget OS mutation lock recovery', () => {
     const fifo = await runProcess('/usr/bin/mkfifo', [currentLedger.ledgerPath])
     expect(fifo, fifo.stderr).toMatchObject({ code: 0, signal: null })
     const coreUrl = new URL('../lib/index.js', import.meta.url).href
-    const workerSource = `import { reserve } from ${JSON.stringify(coreUrl)};await reserve(JSON.parse(process.argv[1]),'crash-owner','usd',1)`
+    // The acquisition retries transient `already locked` rejections: this
+    // test's OWN flock probe holds the exclusive lock for a few ms per poll,
+    // and the worker acquires with a single nonblocking attempt — a probe
+    // collision must delay the worker, never kill it (issue #227).
+    const workerSource = `import { reserve } from ${JSON.stringify(coreUrl)};
+const ledger = JSON.parse(process.argv[1]);
+for (let attempt = 0; ; attempt += 1) {
+  try {
+    await reserve(ledger, 'crash-owner', 'usd', 1);
+    break;
+  } catch (error) {
+    if (!String(error).includes('already locked') || attempt >= 300) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}`
     const worker = spawn(
       process.execPath,
       ['--input-type=module', '--eval', workerSource, JSON.stringify(currentLedger)],
@@ -298,8 +312,22 @@ describe('budget OS mutation lock recovery', () => {
       stderr += chunk.toString('utf8')
     })
     const closed = closeOutcome(worker)
-
-    await waitForKernelLock(lockPath)
+    // Fail fast with the worker's stderr if it exits before holding the lock,
+    // instead of timing out opaquely (issue #227).
+    const exitedEarly = new Promise<never>((_, reject) => {
+      worker.once('exit', (code, signal) =>
+        reject(
+          new Error(
+            `worker exited before holding the lock: code=${String(code)} signal=${String(signal)} ${stderr}`,
+          ),
+        ),
+      )
+    })
+    try {
+      await Promise.race([waitForKernelLock(lockPath), exitedEarly])
+    } finally {
+      exitedEarly.catch(() => undefined)
+    }
     worker.kill('SIGKILL')
     const outcome = await closed
     holders.delete(worker)
