@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { verifyInvalidReplacementFixture } from '../src/v011-audit.js'
 import type { V011DemoConfig } from '../src/config.js'
-import { assertV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
+import { assertV011, digestV011, v011SchemaDigest } from '@dsh-self-evolving/candidate-sdk'
 
 let root: string | undefined
 
@@ -86,6 +86,7 @@ async function realFixture(action: string, runId: string): Promise<void> {
         schemaVersion: 2,
         classification: 'FIXTURE_VALIDATOR_REJECT',
         validator: 'assertV011:analysis',
+        analysisSchemaDigest: await v011SchemaDigest('analysis'),
         fixtureProposalDigest: digestV011(proposalBytes),
         fixtureAnalysisDigest: digestV011(analysisBytes),
         reasonDigest: sha(reason),
@@ -187,6 +188,26 @@ describe('invalid-replacement fixture audit (issue #113)', () => {
     delete record['binding']
     await writeFile(path, JSON.stringify(record, null, 2) + '\n')
     const reasons = await verifyInvalidReplacementFixture(config())
+    expect(reasons.join('\n')).toMatch(/not digest-bound/)
+  })
+
+  it('rejects a fixture pinned to a different analysis schema (issue #203)', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const path = join(action, 'rejection.json')
+    const record = JSON.parse(await readFileText(path)) as { analysisSchemaDigest: string }
+    record.analysisSchemaDigest = 'sha256:' + 'f'.repeat(64)
+    await writeFile(path, JSON.stringify(record, null, 2) + '\n')
+    const reasons = await verifyInvalidReplacementFixture(config())
+    expect(reasons.join('\n')).toMatch(/not digest-bound/)
+  })
+
+  it('rejects a fixture whose parent digest contradicts the journal action key', async () => {
+    const action = join(root!, 'v011', 'actions', 'proposal-1-1')
+    await realFixture(action, 'fixture-audit-run')
+    const reasons = await verifyInvalidReplacementFixture(config(), {
+      parentDigest: 'sha256:' + 'e'.repeat(64),
+    })
     expect(reasons.join('\n')).toMatch(/not digest-bound/)
   })
 

@@ -3,11 +3,13 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
+  readAll,
   readControllerStatus,
+  type JournalEvent,
   type V011Analysis,
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
-import { assertV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
+import { assertV011, digestV011, v011SchemaDigest } from '@dsh-self-evolving/candidate-sdk'
 import { auditStableRun } from './audit.js'
 import type { V011DemoConfig } from './config.js'
 
@@ -46,7 +48,17 @@ async function files(root: string): Promise<string[]> {
   return output.sort()
 }
 
-export async function verifyInvalidReplacementFixture(config: V011DemoConfig): Promise<string[]> {
+export interface FixtureCrossBinding {
+  /** Parent digest component of the successor action's idempotency key. */
+  parentDigest?: string
+  /** Reserved proposalId the successor completed under, when known. */
+  proposalId?: string | undefined
+}
+
+export async function verifyInvalidReplacementFixture(
+  config: V011DemoConfig,
+  cross: FixtureCrossBinding = {},
+): Promise<string[]> {
   const reasons: string[] = [] // The invalid-replacement fixture must be a REAL reproducible negative
   // action: the audit replays the retained fixture through the same
   // validator and cross-checks every digest binding (issue #113). A
@@ -58,6 +70,7 @@ export async function verifyInvalidReplacementFixture(config: V011DemoConfig): P
     validator?: unknown
     fixtureProposalDigest?: unknown
     fixtureAnalysisDigest?: unknown
+    analysisSchemaDigest?: unknown
     reasonDigest?: unknown
     binding?: unknown
     retained?: unknown
@@ -90,6 +103,10 @@ export async function verifyInvalidReplacementFixture(config: V011DemoConfig): P
         rejection.replacedBy.endsWith('/proposal/1/1') &&
         binding !== null &&
         binding['runId'] === config.runId &&
+        (cross.parentDigest === undefined || binding['parentDigest'] === cross.parentDigest) &&
+        (cross.proposalId === undefined || binding['proposalId'] === cross.proposalId) &&
+        typeof rejection.analysisSchemaDigest === 'string' &&
+        rejection.analysisSchemaDigest === (await v011SchemaDigest('analysis')) &&
         digestV011(proposalBytes) === rejection.fixtureProposalDigest &&
         digestV011(analysisBytes) === rejection.fixtureAnalysisDigest
       if (!replayable) {
@@ -118,7 +135,29 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const reasons = [...predecessor.reasons]
-  reasons.push(...(await verifyInvalidReplacementFixture(config)))
+  const journal = {
+    journalDir: join(config.stateDir, 'journal'),
+    runId: config.runId,
+    segmentMaxBytes: 16 * 1024 * 1024,
+  }
+  const journalEvents = await readAll(journal).catch(() => [] as JournalEvent[])
+  const plannedKey = controller.state.actions['proposal:1:1']?.idempotencyKey
+  const cross: FixtureCrossBinding = {
+    ...(typeof plannedKey === 'string' ? { parentDigest: plannedKey.split('/')[4] } : {}),
+    ...(typeof (
+      journalEvents.find((event) => event.eventId === 'proposal:1:1:completed')?.payload as
+        { proposalId?: unknown } | undefined
+    )?.proposalId === 'string'
+      ? {
+          proposalId: (
+            journalEvents.find((event) => event.eventId === 'proposal:1:1:completed')?.payload as {
+              proposalId?: unknown
+            }
+          )?.proposalId as string,
+        }
+      : {}),
+  }
+  reasons.push(...(await verifyInvalidReplacementFixture(config, cross)))
   const baselineMigration = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'migration-receipt.json'),
   )) as { inheritedResultsPolicy?: unknown } | null

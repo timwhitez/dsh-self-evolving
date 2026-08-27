@@ -1,3 +1,8 @@
+import {
+  canonicalizeV011Tree,
+  digestV011,
+  snapshotV011Tree,
+} from '@dsh-self-evolving/candidate-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelRoute, ProposalTranscript } from './runner.js'
 import { runProposalTurn } from './runner.js'
@@ -105,4 +110,22 @@ export async function runV011ProposalTurn(
   )
   if (state === undefined) throw new Error('v0.1.1 proposer: scoped tool state was not installed')
   return { transcript, toolState: state }
+}
+
+/**
+ * Worker exit gate (issue #125): re-snapshot the child tree after the agent
+ * turn and require it to still hash to the digest bound at finish_proposal.
+ * Exported so the gate logic itself has direct negative coverage (issue #200).
+ */
+export async function verifyFinishedTreeBinding(
+  childTree: string,
+  finishedTreeDigest: string,
+): Promise<void> {
+  const finalTree = await snapshotV011Tree(childTree)
+  const finalDigest = digestV011((await canonicalizeV011Tree(finalTree)).bytes)
+  if (finalDigest !== finishedTreeDigest) {
+    throw new Error(
+      'v0.1.1 proposal worker: child tree changed after finish_proposal — final validation bypassed',
+    )
+  }
 }

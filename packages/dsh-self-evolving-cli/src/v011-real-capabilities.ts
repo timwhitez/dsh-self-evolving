@@ -20,6 +20,7 @@ import {
   canonicalizeV011Tree,
   canonicalV011,
   digestV011,
+  v011SchemaDigest,
   freezeCapabilityCatalog,
   materializeV011ChildSlot,
   reserveProposalId,
@@ -669,6 +670,7 @@ async function executeInvalidReplacementFixture(
         schemaVersion: 2,
         classification: 'FIXTURE_VALIDATOR_REJECT',
         validator: 'assertV011:analysis',
+        analysisSchemaDigest: await v011SchemaDigest('analysis'),
         fixtureProposalDigest: digestV011(proposalBytes),
         fixtureAnalysisDigest: digestV011(analysisBytes),
         reasonDigest: sha(reason),
@@ -980,6 +982,11 @@ async function realV011Proposal(
       'v0.1.1 proposal: materialized tree differs from the finished validation digest',
     )
   }
+  // INVARIANT (issue #200): the finish digest binds only the child TREE; the
+  // slot-level analysis/proposal metadata is safe to read here ONLY because
+  // trusted materialization fully revalidated these bytes above. If that
+  // revalidation is ever weakened, slot metadata must be folded into the
+  // finish digest first.
   const analysis = JSON.parse(await readFile(join(slot, 'analysis.json'), 'utf8')) as {
     falsifiableHypothesis: string
   }
