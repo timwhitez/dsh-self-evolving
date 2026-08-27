@@ -36,7 +36,7 @@ const valid = await deriveMechanismOutcome({
   hypothesis: 'hypothesis of sufficient length',
   candidateDigest: ('sha256:' + '4'.repeat(64)) as `sha256:${string}`,
   targetClusterSlug: 'cluster',
-  targetTaskHandle: 'task',
+  targetTaskHandle: 'task-1',
   trials: [
     {
       ref: ('sha256:' + '5'.repeat(64)) as `sha256:${string}`,
