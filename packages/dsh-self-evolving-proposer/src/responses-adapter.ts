@@ -119,9 +119,18 @@ function continuationInput(
       pushMessage(role, pendingText)
       pendingText = ''
     }
+    const nonSerializable = new Set<string>()
     for (const block of message.content) {
       if (block.type === 'text') {
         pendingText += (pendingText ? '\n' : '') + block.text
+        continue
+      }
+      if (block.type === 'reasoning') {
+        nonSerializable.add('reasoning')
+        continue
+      }
+      if (block.type === 'image') {
+        nonSerializable.add('image')
         continue
       }
       if (block.type === 'tool-call') {
@@ -149,7 +158,16 @@ function continuationInput(
         })
         continue
       }
-      // reasoning / image / extension blocks are not replayed as text.
+    }
+    if (nonSerializable.size > 0 && !pendingText.trim()) {
+      // A message whose content is entirely non-serializable blocks cannot be
+      // faithfully replayed in the text-only Responses protocol; silently
+      // dropping it would degrade history where turn 1 fails closed
+      // (issue #186). Refuse instead of replaying a misrepresenting
+      // conversation.
+      throw new Error(
+        `responses adapter: continuation history contains a ${[...nonSerializable].sort().join('+')}-only message that cannot be serialized`,
+      )
     }
     flush()
   }

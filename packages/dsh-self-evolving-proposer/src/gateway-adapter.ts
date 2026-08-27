@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
+  ProposalGatewayHandlerFailure,
   requestProposalGateway,
   type ProposalGatewayRequest,
   type ProposalGatewayRoute,
@@ -118,15 +119,29 @@ export function createProposalGatewayLlmHandler(
       ...(record as unknown as GenerateOptions),
       ...(context === undefined ? {} : { signal: context.signal }),
     }
-    const chunks: StreamChunk[] = []
-    for await (const chunk of adapter.stream(options)) {
-      chunks.push(chunk)
+    try {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of adapter.stream(options)) {
+        chunks.push(chunk)
+      }
+      // Surface the trusted adapter's transport-retry attempt log on the
+      // handler result so the gateway receipt records every possibly-billed
+      // attempt (issue #123). Non-attempt adapters simply omit it.
+      const attemptSource = adapter as Partial<TrustedAdapterAttemptSource>
+      const attempts = attemptSource.lastFetchAttempts
+      return attempts === undefined ? { chunks } : { chunks, attempts: [...attempts] }
+    } catch (error) {
+      // Surface the attempt log through the failure so the gateway records
+      // billed attempts even when the handler dies (issue #193).
+      const failureSource = adapter as Partial<TrustedAdapterAttemptSource>
+      const failureAttempts = failureSource.lastFetchAttempts
+      if (failureAttempts !== undefined && failureAttempts.length > 0) {
+        throw new ProposalGatewayHandlerFailure(
+          error instanceof Error ? error.message : String(error),
+          [...failureAttempts],
+        )
+      }
+      throw error
     }
-    // Surface the trusted adapter's transport-retry attempt log on the
-    // handler result so the gateway receipt records every possibly-billed
-    // attempt (issue #123). Non-attempt adapters simply omit it.
-    const attemptSource = adapter as Partial<TrustedAdapterAttemptSource>
-    const attempts = attemptSource.lastFetchAttempts
-    return attempts === undefined ? { chunks } : { chunks, attempts: [...attempts] }
   }
 }

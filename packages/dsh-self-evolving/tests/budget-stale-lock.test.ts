@@ -166,6 +166,19 @@ async function waitForKernelLock(lockPath: string): Promise<void> {
   throw new Error('test: budget mutation lock was not acquired in time')
 }
 
+/**
+ * Kernel lock release after a holder's SIGKILL is asynchronous (fd teardown),
+ * so an immediate probe can still observe the lock under load. Poll with a
+ * bounded deadline instead of asserting instantaneous release (issue #191).
+ */
+async function waitForKernelLockRelease(lockPath: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (!(await probeKernelLock(lockPath))) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('test: budget mutation lock was not released in time')
+}
+
 describe('budget OS mutation lock recovery', () => {
   it('ignores a stale legacy PID record because ownership is kernel-backed', async () => {
     const lockPath = await writeLock('2147483647\n')
@@ -267,7 +280,7 @@ describe('budget OS mutation lock recovery', () => {
     const outcome = await closed
     holders.delete(worker)
     expect(outcome, stderr).toMatchObject({ code: null, signal: 'SIGKILL' })
-    expect(await probeKernelLock(lockPath)).toBe(false)
+    await waitForKernelLockRelease(lockPath)
 
     await rm(currentLedger.ledgerPath)
     await reserve(currentLedger, 'after-process-death', 'usd', 1)
