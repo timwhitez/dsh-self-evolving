@@ -1,3 +1,4 @@
+import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import { describe, expect, it } from 'vitest'
 import { evaluateEngineeringEffect, type EffectAdmission } from '../src/index.js'
 
@@ -18,6 +19,8 @@ function admission(character: string, extra: boolean): EffectAdmission {
     replayDigest: sha(extra ? (mode === 'solve' ? 'c' : 'd') : mode === 'solve' ? 'a' : 'b'),
     leakedHandles: [],
   })
+  const solve = loader('solve')
+  const propose = loader('propose')
   return {
     receipt: {
       schemaVersion: 1,
@@ -31,15 +34,35 @@ function admission(character: string, extra: boolean): EffectAdmission {
         policy: sha('5'),
         candidateTests: sha('6'),
         doubleBuild: sha('7'),
-        loaderSolve: sha('8'),
-        loaderPropose: sha('9'),
+        // Stage digests are digests of the actual probe records (issue #87).
+        loaderSolve: digestV011(canonicalV011(solve)),
+        loaderPropose: digestV011(canonicalV011(propose)),
         fixedReplay: sha('a'),
         offlineCapsule: sha(character),
       },
       capsuleDigest: sha('b'),
       admitted: true,
     },
-    loader: { solve: loader('solve'), propose: loader('propose') },
+    loader: { solve, propose },
+  }
+}
+
+function childWithPreservedPropose(): EffectAdmission {
+  const base = admission('f', true)
+  const preservedProbe = {
+    ...admission('e', false).loader.propose,
+    candidateId: sha('f'),
+  }
+  return {
+    ...base,
+    receipt: {
+      ...base.receipt,
+      stageReceipts: {
+        ...base.receipt.stageReceipts,
+        loaderPropose: digestV011(canonicalV011(preservedProbe)),
+      },
+    },
+    loader: { solve: base.loader.solve, propose: preservedProbe },
   }
 }
 
@@ -62,15 +85,7 @@ describe('low-consumption engineering effectiveness gate', () => {
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
       baseline: admission('e', false),
-      child: {
-        ...admission('f', true),
-        loader: {
-          solve: admission('f', true).loader.solve,
-          // Preserved-mode probe replays the baseline digest but must still
-          // carry the CHILD's admission identity.
-          propose: { ...admission('e', false).loader.propose, candidateId: sha('f') },
-        },
-      },
+      child: childWithPreservedPropose(),
     })
     expect(receipt.status).toBe('ENGINEERING_EFFECT_VERIFIED')
     expect(receipt.deltas).toMatchObject({
@@ -148,21 +163,17 @@ describe('engineering-effect evidence binding (issue #87)', () => {
     usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
     modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
     baseline: admission('e', false),
-    child: {
-      ...admission('f', true),
-      loader: {
-        solve: admission('f', true).loader.solve,
-        propose: { ...admission('e', false).loader.propose, candidateId: sha('f') },
-      },
-    },
+    child: childWithPreservedPropose(),
   })
 
   it('binds admissionDigest to the complete receipt, not the capsule sums alone', () => {
     const original = evaluateEngineeringEffect(baseInput())
-    const mutated = admission('f', true)
+    // Mutate a NON-probe stage so the probe bindings stay valid: the policy
+    // digest is not cross-checked, but it feeds admissionDigest.
+    const mutated = childWithPreservedPropose()
     mutated.receipt.stageReceipts.policy = sha('z')
     const input = baseInput()
-    input.child = { ...input.child, receipt: mutated.receipt }
+    input.child = mutated
     const mutatedReceipt = evaluateEngineeringEffect(input)
     // The policy-stage change must alter the recorded admission digest even
     // though the capsule sums are identical.

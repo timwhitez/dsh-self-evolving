@@ -149,7 +149,9 @@ describe('Gate 7 formal preflight', () => {
     fixture.preflight.operatorProcedures.secretRotationTested = false
     const verdict = verifyFormalPreflight(fixture.runManifest, fixture.preflight)
     expect(verdict.accepted).toBe(false)
+    // Both failures fire: the commitment mismatch AND the procedure check.
     expect(verdict.reasons.join('\n')).toMatch(/does not commit to this prerequisite evidence/)
+    expect(verdict.reasons.join('\n')).toMatch(/secretRotationTested/)
   })
 
   it('blocks the current missing-gate/tag/baseline/provider/budget/procedure state', () => {

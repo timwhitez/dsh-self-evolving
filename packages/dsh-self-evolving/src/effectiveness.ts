@@ -86,9 +86,10 @@ export interface EngineeringEffectReceipt {
 }
 
 function admissionDigest(receipt: V011AdmissionReceipt): `sha256:${string}` {
-  // Domain-separated digest over the COMPLETE admission receipt — every
-  // stage, catalog, materialization and capsule identity — not just the
-  // capsule SHA256SUMS text (issue #87).
+  // Digest over the COMPLETE canonicalized admission receipt — every stage,
+  // catalog, materialization and capsule identity — not just the capsule
+  // SHA256SUMS text (issue #87). Equals the build manifest digest by
+  // canonicality, giving the two subsystems one join key.
   return digestV011(canonicalV011(receipt))
 }
 
@@ -127,9 +128,18 @@ export function evaluateEngineeringEffect(input: {
   ] as const) {
     for (const mode of ['solve', 'propose'] as const) {
       const probe = admission.loader[mode]
+      const stageDigest =
+        mode === 'solve'
+          ? admission.receipt.stageReceipts.loaderSolve
+          : admission.receipt.stageReceipts.loaderPropose
       if (
         probe.candidateId !== admission.receipt.candidateDigest ||
-        !/^sha256:[0-9a-f]{64}$/.test(probe.replayDigest)
+        probe.mode !== mode ||
+        probe.schemaVersion !== 1 ||
+        !/^sha256:[0-9a-f]{64}$/.test(probe.replayDigest) ||
+        // The probe record itself must hash to the admission's stage
+        // receipt, so a fabricated probe cannot ride an unrelated admission.
+        digestV011(canonicalV011(probe)) !== stageDigest
       ) {
         throw new Error(
           `effectiveness: ${label} ${mode} Loader probe is not bound to its admission`,
