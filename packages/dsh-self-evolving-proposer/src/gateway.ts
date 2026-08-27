@@ -1,6 +1,6 @@
 /** Trusted fixed-route Unix gateway for a networkless proposal sandbox. */
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, rm, stat } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import type { AdapterFetchAttempt } from './fetch-attempts.js'
 import { dirname, resolve } from 'node:path'
@@ -82,6 +82,16 @@ export interface ProposalGatewayOptions {
   idleTimeoutMs?: number
   /** Deadline from a complete request until the response is written. */
   requestTimeoutMs?: number
+  /**
+   * Durable request store (issue #56): when set, each dispatched request is
+   * reserved on disk before the provider runs and its final response is
+   * recorded atomically, so idempotency survives process restarts and the
+   * completed map is no longer the only state. Single owner process per
+   * directory. A record left `pending` by a crashed dispatch fails closed:
+   * the provider outcome is unknowable, so the request id is never
+   * re-dispatched.
+   */
+  stateDir?: string
 }
 
 export interface ProposalGatewayHandle {
@@ -121,6 +131,65 @@ function validRoute(route: ProposalGatewayRoute): boolean {
   )
 }
 
+interface DurableRequestRecord {
+  schemaVersion: 1
+  phase: 'pending' | 'complete'
+  requestId: string
+  requestHash: string
+  routeHash: string
+  response?: ProposalGatewayResponse
+}
+
+/**
+ * File name is the hash of the request id, never the id itself: the id is
+ * sandbox-controlled and must not become a path component.
+ */
+function durableRequestPath(stateDir: string, requestId: string): string {
+  return `${stateDir}/request-${createHash('sha256').update(requestId).digest('hex')}.json`
+}
+
+async function readDurableRequest(path: string): Promise<DurableRequestRecord | null> {
+  const raw = await readFile(path, 'utf8').catch(() => null)
+  if (raw === null) return null
+  try {
+    const value = JSON.parse(raw) as DurableRequestRecord
+    if (
+      value.schemaVersion !== 1 ||
+      (value.phase !== 'pending' && value.phase !== 'complete') ||
+      typeof value.requestId !== 'string' ||
+      typeof value.requestHash !== 'string'
+    ) {
+      // A corrupt record is treated as pending: fail closed (issue #56).
+      return { schemaVersion: 1, phase: 'pending', requestId: '', requestHash: '', routeHash: '' }
+    }
+    return value
+  } catch {
+    return { schemaVersion: 1, phase: 'pending', requestId: '', requestHash: '', routeHash: '' }
+  }
+}
+
+async function reserveDurableRequest(
+  path: string,
+  record: DurableRequestRecord,
+): Promise<boolean> {
+  try {
+    await writeFile(path, `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o600 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Atomic completion: write a sibling temp file, then rename over the record. */
+async function completeDurableRequest(
+  path: string,
+  record: DurableRequestRecord,
+): Promise<void> {
+  const temp = `${path}.complete-${process.pid}-${Date.now()}.tmp`
+  await writeFile(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+  await rename(temp, path)
+}
+
 export async function startProposalGateway(
   options: ProposalGatewayOptions,
 ): Promise<ProposalGatewayHandle> {
@@ -131,7 +200,12 @@ export async function startProposalGateway(
   }
   await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 })
   const maxRequestBytes = options.maxRequestBytes ?? 1024 * 1024
+  const stateDir = options.stateDir === undefined ? undefined : resolve(options.stateDir)
+  if (stateDir !== undefined) await mkdir(stateDir, { recursive: true, mode: 0o700 })
   const completed = new Map<string, { requestHash: string; response: ProposalGatewayResponse }>()
+  // Same-id dispatches in THIS process await one shared promise instead of
+  // racing the handler (issue #56).
+  const inFlight = new Map<string, { requestHash: string; promise: Promise<ProposalGatewayResponse> }>()
   const receiptLog: ProposalGatewayReceipt[] = []
 
   const request = async (
@@ -160,48 +234,144 @@ export async function startProposalGateway(
     if (stableJson(candidate.route) !== stableJson(options.route)) {
       return { schemaVersion: 1, requestId, ok: false, error: 'route does not match locked route' }
     }
-    let result: unknown
-    try {
-      result = await options.handle(candidate.payload, context ?? { signal: neverSignal() })
-    } catch (error) {
-      // A failed handler may still have billed attempts on the wire; record a
-      // durable failure receipt so the attempt log reaches evidence (issue
-      // #193). The client still sees the generic transport error.
-      if (error instanceof ProposalGatewayHandlerFailure && error.attempts.length > 0) {
-        receiptLog.push({
+    // In-process concurrency: a second caller with the same id joins the
+    // running dispatch instead of invoking the paid handler again (issue #56).
+    const active = inFlight.get(requestId)
+    if (active !== undefined) {
+      if (active.requestHash !== requestHash) {
+        return { schemaVersion: 1, requestId, ok: false, error: 'conflicting idempotency replay' }
+      }
+      return active.promise
+    }
+    const routeHash = sha256(stableJson(options.route))
+    const dispatch = (async (): Promise<ProposalGatewayResponse> => {
+      // Durable reservation runs INSIDE the shared dispatch promise so a
+      // concurrent same-id caller joins this dispatch instead of observing
+      // the pending marker between reservation and registration (issue #56).
+      if (stateDir !== undefined) {
+        const path = durableRequestPath(stateDir, requestId)
+        const record = await readDurableRequest(path)
+        if (record !== null) {
+          if (record.requestHash !== requestHash) {
+            return { schemaVersion: 1, requestId, ok: false, error: 'conflicting idempotency replay' }
+          }
+          if (record.phase === 'complete' && record.response !== undefined) {
+            completed.set(requestId, { requestHash, response: record.response })
+            return record.response
+          }
+          // Pending from an interrupted (or cross-process) dispatch: the
+          // provider outcome is unknowable, so fail closed instead of
+          // dispatching a second paid call (issue #56).
+          return {
+            schemaVersion: 1,
+            requestId,
+            ok: false,
+            error: 'durable request pending from an interrupted dispatch',
+          }
+        }
+        const reserved = await reserveDurableRequest(path, {
+          schemaVersion: 1,
+          phase: 'pending',
           requestId,
           requestHash,
-          responseHash: sha256(stableJson({ failed: true })),
-          routeHash: sha256(stableJson(options.route)),
-          attempts: error.attempts.map((row: AdapterFetchAttempt) => ({ ...row })),
-          error: String(error.message),
+          routeHash,
         })
+        if (!reserved) {
+          // Lost the reservation race (cross-process): re-read and apply the
+          // same rules to whatever won.
+          const winner = await readDurableRequest(path)
+          if (
+            winner !== null &&
+            winner.phase === 'complete' &&
+            winner.requestHash === requestHash &&
+            winner.response !== undefined
+          ) {
+            return winner.response
+          }
+          return {
+            schemaVersion: 1,
+            requestId,
+            ok: false,
+            error: 'durable request pending from an interrupted dispatch',
+          }
+        }
       }
-      return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }
+      let result: unknown
+      try {
+        result = await options.handle(candidate.payload, context ?? { signal: neverSignal() })
+      } catch (error) {
+        // A failed handler may still have billed attempts on the wire; record a
+        // durable failure receipt so the attempt log reaches evidence (issue
+        // #193). The client still sees the generic transport error. The
+        // durable reservation is dropped so an in-place retry of the same id
+        // stays possible, exactly as the pre-durable behavior allowed.
+        if (error instanceof ProposalGatewayHandlerFailure && error.attempts.length > 0) {
+          receiptLog.push({
+            requestId,
+            requestHash,
+            responseHash: sha256(stableJson({ failed: true })),
+            routeHash,
+            attempts: error.attempts.map((row: AdapterFetchAttempt) => ({ ...row })),
+            error: String(error.message),
+          })
+        }
+        if (stateDir !== undefined) {
+          await rm(durableRequestPath(stateDir, requestId), { force: true }).catch(() => {})
+        }
+        return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }
+      }
+      const responseHash = sha256(stableJson(result))
+      const response: ProposalGatewayResponse = {
+        schemaVersion: 1,
+        requestId,
+        ok: true,
+        result,
+        responseHash,
+      }
+      const attempts =
+        result !== null &&
+        typeof result === 'object' &&
+        Array.isArray((result as { attempts?: unknown }).attempts)
+          ? ((result as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ?? undefined)
+          : undefined
+      receiptLog.push({
+        requestId,
+        requestHash,
+        responseHash,
+        routeHash,
+        ...(attempts === undefined ? {} : { attempts }),
+      })
+      if (stateDir !== undefined) {
+        try {
+          await completeDurableRequest(durableRequestPath(stateDir, requestId), {
+            schemaVersion: 1,
+            phase: 'complete',
+            requestId,
+            requestHash,
+            routeHash,
+            response,
+          })
+        } catch {
+          // The paid call ran but its result cannot be made durable: never
+          // cache or return it, and never re-dispatch this id. The receipt
+          // log above still carries the attempt evidence.
+          return {
+            schemaVersion: 1,
+            requestId,
+            ok: false,
+            error: 'durable completion write failed',
+          }
+        }
+      }
+      completed.set(requestId, { requestHash, response })
+      return response
+    })()
+    inFlight.set(requestId, { requestHash, promise: dispatch })
+    try {
+      return await dispatch
+    } finally {
+      inFlight.delete(requestId)
     }
-    const responseHash = sha256(stableJson(result))
-    const response: ProposalGatewayResponse = {
-      schemaVersion: 1,
-      requestId,
-      ok: true,
-      result,
-      responseHash,
-    }
-    completed.set(requestId, { requestHash, response })
-    const attempts =
-      result !== null &&
-      typeof result === 'object' &&
-      Array.isArray((result as { attempts?: unknown }).attempts)
-        ? ((result as { attempts: ProposalGatewayReceipt['attempts'] }).attempts ?? undefined)
-        : undefined
-    receiptLog.push({
-      requestId,
-      requestHash,
-      responseHash,
-      routeHash: sha256(stableJson(options.route)),
-      ...(attempts === undefined ? {} : { attempts }),
-    })
-    return response
   }
 
   const connections = new Set<Socket>()

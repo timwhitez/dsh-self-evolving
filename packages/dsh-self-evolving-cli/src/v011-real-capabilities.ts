@@ -849,6 +849,9 @@ async function realV011Proposal(
         socketPath: join(action, 'gateway', 'proposal.sock'),
         route: lockedRoute,
         requestTimeoutMs: sandboxTimeoutMs,
+        // `action` is the durable per-action directory: request results
+        // survive restarts and replays instead of re-billing (issue #56).
+        stateDir: join(action, 'gateway', 'requests'),
         async handle(payload, context) {
           try {
             return await handler(payload, context)
