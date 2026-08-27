@@ -2,6 +2,7 @@ import { generateKeyPairSync, sign } from 'node:crypto'
 import { canonicalJson } from '@dsh-self-evolving/core'
 import { describe, expect, it } from 'vitest'
 import {
+  formalEvidenceCommitment,
   formalSignerKeyId,
   verifyFormalPreflight,
   type FormalPreflightEvidence,
@@ -28,6 +29,7 @@ function manifest(signatureKeyId: string): FormalRunManifest {
     targetK: 80,
     createdAt: '2026-08-14T05:00:00.000Z',
     signatureKeyId,
+    evidenceCommitment: hash('e'),
     code: {
       commit,
       tag: 'formal-self-successor-001-preflight',
@@ -110,11 +112,15 @@ function signedFixture(): {
 } {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+  const preflight = evidence('unused', publicKeyPem)
   const runManifest = manifest(formalSignerKeyId(publicKeyPem))
+  // The signature covers the evidence commitment (issue #83).
+  runManifest.evidenceCommitment = formalEvidenceCommitment(preflight)
   const signature = sign(null, Buffer.from(canonicalJson(runManifest)), privateKey).toString(
     'base64',
   )
-  return { runManifest, preflight: evidence(signature, publicKeyPem) }
+  preflight.detachedSignatureBase64 = signature
+  return { runManifest, preflight }
 }
 
 describe('Gate 7 formal preflight', () => {
@@ -133,6 +139,17 @@ describe('Gate 7 formal preflight', () => {
     expect(verdict.accepted).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/signature is invalid/)
     expect(verdict.reasons.join('\n')).toMatch(/target K must equal 80/)
+  })
+
+  it('rejects evidence that the signed manifest does not commit to (issue #83)', () => {
+    const fixture = signedFixture()
+    // Flip one caller-supplied boolean AFTER signing: the commitment no
+    // longer matches, so a re-signed-for-different-evidence manifest cannot
+    // be replayed against this evidence.
+    fixture.preflight.operatorProcedures.secretRotationTested = false
+    const verdict = verifyFormalPreflight(fixture.runManifest, fixture.preflight)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/does not commit to this prerequisite evidence/)
   })
 
   it('blocks the current missing-gate/tag/baseline/provider/budget/procedure state', () => {
