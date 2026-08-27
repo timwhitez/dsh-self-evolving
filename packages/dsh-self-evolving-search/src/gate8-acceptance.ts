@@ -5,6 +5,7 @@ import {
   pairedBootstrapCi,
   type PromotionState,
 } from './stats.js'
+import { commitSplit } from './split.js'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 
@@ -65,6 +66,24 @@ export interface Gate8EvidenceInput {
      * matrix must match THIS set exactly, not merely 29 arbitrary ids.
      */
     revealedTaskIds: string[]
+    /**
+     * The complete one-time revealed assignment over the whole inventory
+     * (48 dev-observed + 12 dev-guard + 29 sealed rows), recommitted via the
+     * ceremony's own commitSplit to prove the revealed sealed set is the
+     * committed one (issue #110/#111).
+     */
+    revealedAssignment: Array<{
+      taskId: string
+      label: 'dev-observed' | 'dev-guard' | 'sealed'
+    }>
+    /** The full ceremony commitment (sizes, seed commitment, digests). */
+    commitment: {
+      seedCommitment: string
+      taskInventoryDigest: string
+      sizes: { devObserved: number; devGuard: number; sealed: number }
+    }
+    /** The complete task inventory the commitment was minted over. */
+    inventoryTaskIds: string[]
   } | null
   sealedPlan: {
     taskCount: number
@@ -299,6 +318,39 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       const evaluated = [...taskIds].sort()
       if (JSON.stringify(evaluated) !== JSON.stringify(revealed)) {
         reasons.push('sealed trial matrix does not match the revealed sealed task set')
+      }
+      // Recompute the split commitment from the revealed assignment: the
+      // revealed set is provably the committed one, not a self-declared list
+      // (issues #110/#111).
+      if (Array.isArray(reveal.revealedAssignment) && Array.isArray(reveal.inventoryTaskIds)) {
+        try {
+          const recomputed = commitSplit(
+            reveal.revealedAssignment,
+            reveal.commitment.seedCommitment,
+            reveal.inventoryTaskIds,
+            reveal.commitment.sizes,
+          )
+          if (recomputed.merkleRoot !== reveal.merkleRoot) {
+            reasons.push('revealed sealed set is not committed by the split Merkle root')
+          }
+          if (recomputed.taskInventoryDigest !== reveal.commitment.taskInventoryDigest) {
+            reasons.push('revealed inventory does not match the committed task inventory digest')
+          }
+          // The sealed rows of the recommitted assignment must BE the revealed
+          // sealed set, so the evaluated matrix is exactly the committed
+          // sealed stratum.
+          const committedSealed = reveal.revealedAssignment
+            .filter((row) => row.label === 'sealed')
+            .map((row) => row.taskId)
+            .sort()
+          if (JSON.stringify(committedSealed) !== JSON.stringify(revealed)) {
+            reasons.push('revealed sealed set does not match the committed sealed stratum')
+          }
+        } catch {
+          reasons.push('revealed split assignment cannot be recommitted')
+        }
+      } else {
+        reasons.push('revealed split assignment/inventory evidence is missing')
       }
     } else {
       reasons.push('revealed sealed task list is missing')

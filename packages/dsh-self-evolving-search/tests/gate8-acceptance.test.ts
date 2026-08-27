@@ -1,12 +1,39 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  commitSplit,
   verifyGate8Evidence,
   type Gate8EvidenceInput,
   type SealedTrialEvidence,
 } from '../src/index.js'
 
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`
+
+function completeSplitReveal() {
+  const inventory = Array.from({ length: 89 }, (_, task) => `task-${String(task).padStart(3, '0')}`)
+  const sealedIds = inventory.slice(60)
+  const assignment = [
+    ...inventory.slice(0, 48).map((taskId) => ({ taskId, label: 'dev-observed' as const })),
+    ...inventory.slice(48, 60).map((taskId) => ({ taskId, label: 'dev-guard' as const })),
+    ...sealedIds.map((taskId) => ({ taskId, label: 'sealed' as const })),
+  ]
+  const commitment = commitSplit(assignment, digest('seed-commitment'), inventory)
+  return {
+    commitmentVerified: true,
+    merkleRoot: commitment.merkleRoot,
+    revealReceiptHash: digest('reveal'),
+    revealCount: 1,
+    preLockSealedAccessCount: 0,
+    revealedTaskIds: sealedIds,
+    revealedAssignment: assignment,
+    commitment: {
+      seedCommitment: digest('seed-commitment'),
+      taskInventoryDigest: commitment.taskInventoryDigest,
+      sizes: { devObserved: 48, devGuard: 12, sealed: 29 },
+    },
+    inventoryTaskIds: inventory,
+  }
+}
 
 function complete(): Gate8EvidenceInput {
   const baselineCandidateId = digest('baseline-candidate')
@@ -20,7 +47,7 @@ function complete(): Gate8EvidenceInput {
   let scheduleIndex = 0
   for (let task = 0; task < 29; task++) {
     for (let attemptIndex = 0; attemptIndex < attemptsPerTask; attemptIndex++) {
-      const taskId = `sealed-task-${task}`
+      const taskId = `task-${String(task + 60).padStart(3, '0')}`
       sealedTrials.push({
         role: 'baseline',
         candidateId: baselineCandidateId,
@@ -53,7 +80,7 @@ function complete(): Gate8EvidenceInput {
     Array.from({ length: 5 }, (_, attemptIndex) => ({
       candidateId,
       capsuleDigest,
-      taskId: `full-task-${task}`,
+      taskId: `task-${String(task).padStart(3, '0')}`,
       attemptIndex,
       normalizedRecordHash: digest(`full-normalized-${task}-${attemptIndex}`),
       rawEvidenceDigests: [digest(`full-raw-${task}-${attemptIndex}`)],
@@ -79,17 +106,10 @@ function complete(): Gate8EvidenceInput {
       sealedPlanHash: planHash,
       analysisContainerHash,
       lockReceiptHash: digest('candidate-lock'),
-      splitMerkleRoot: digest('split-root'),
+      splitMerkleRoot: completeSplitReveal().merkleRoot,
       signatureVerified: true,
     },
-    splitReveal: {
-      commitmentVerified: true,
-      merkleRoot: digest('split-root'),
-      revealReceiptHash: digest('reveal'),
-      revealCount: 1,
-      preLockSealedAccessCount: 0,
-      revealedTaskIds: Array.from({ length: 29 }, (_, task) => `sealed-task-${task}`),
-    },
+    splitReveal: completeSplitReveal(),
     sealedPlan: {
       taskCount: 29,
       planHash,
@@ -111,7 +131,10 @@ function complete(): Gate8EvidenceInput {
     reportedPromotionState: 'SEALED_PROMOTED',
     fullSet: {
       verificationStatus: 'FULL_SET_VERIFIED_LOCAL',
-      inventoryTaskIds: Array.from({ length: 89 }, (_, task) => `full-task-${task}`),
+      inventoryTaskIds: Array.from(
+        { length: 89 },
+        (_, task) => `task-${String(task).padStart(3, '0')}`,
+      ),
       officialMaintainerReceiptHash: null,
       taskCount: 89,
       attemptsPerTask: 5,
@@ -232,7 +255,7 @@ describe('Gate 8 sealed/full/release evidence', () => {
     const input = complete()
     // Substitute one evaluated task with an easier impostor: counts stay 29.
     input.sealedTrials = input.sealedTrials.map((trial) =>
-      trial.taskId === 'sealed-task-0' ? { ...trial, taskId: 'easy-impostor-task' } : trial,
+      trial.taskId === 'task-060' ? { ...trial, taskId: 'easy-impostor-task' } : trial,
     )
     const verdict = verifyGate8Evidence(input)
     expect(verdict.sealedComplete).toBe(false)
@@ -282,11 +305,41 @@ describe('Gate 8 sealed/full/release evidence', () => {
     input.fullSet = {
       ...input.fullSet!,
       trials: input.fullSet!.trials.map((trial) =>
-        trial.taskId === 'full-task-0' ? { ...trial, taskId: 'substituted-task' } : trial,
+        trial.taskId === 'task-000' ? { ...trial, taskId: 'substituted-task' } : trial,
       ),
     }
     const verdict = verifyGate8Evidence(input)
     expect(verdict.fullSetVerified).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/does not match the official inventory/)
+  })
+
+  it('rejects a self-declared revealed set that the Merkle root does not commit (issue #110/#111)', () => {
+    const input = complete()
+    // Swap two sealed rows for dev rows in the revealed list: counts stay 29,
+    // but the recommitted root no longer matches.
+    const forged = [...input.splitReveal!.revealedTaskIds]
+    forged[0] = 'task-000'
+    forged[1] = 'task-001'
+    input.splitReveal = { ...input.splitReveal!, revealedTaskIds: forged }
+    // Keep trials consistent with the forged set so only the root check fires.
+    const map = new Map(
+      input.sealedTrials.map((trial) => [
+        `${trial.role}/${trial.taskId}/${trial.attemptIndex}`,
+        trial,
+      ]),
+    )
+    input.sealedTrials = input.sealedTrials.map((trial) =>
+      trial.taskId === 'task-060'
+        ? { ...trial, taskId: 'task-000' }
+        : trial.taskId === 'task-061'
+          ? { ...trial, taskId: 'task-001' }
+          : trial,
+    )
+    void map
+    const verdict = verifyGate8Evidence(input)
+    expect(verdict.sealedComplete).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /Merkle root|committed sealed stratum|revealed sealed task set/,
+    )
   })
 })
