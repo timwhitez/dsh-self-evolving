@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { verifyMechanismOutcomes } from '../src/v011-audit.js'
+import { deriveMechanismOutcome } from '@dsh-self-evolving/core'
 
 let root: string | undefined
 
@@ -28,22 +29,58 @@ async function seedOutcome(generation: string, body: unknown): Promise<void> {
   await writeFile(join(dir, 'outcome.json'), JSON.stringify(body, null, 2) + '\n')
 }
 
-const valid = {
-  schemaVersion: 1,
-  idempotencyKey: 'sha256:' + '1'.repeat(64),
-  proposalDigest: 'sha256:' + '2'.repeat(64),
-  hypothesisDigest: 'sha256:' + '3'.repeat(64),
-  candidateDigest: 'sha256:' + '4'.repeat(64),
+// A REAL record from the trusted writer, so the control test proves genuine
+// output is accepted (review of #211).
+const valid = await deriveMechanismOutcome({
+  proposalDigest: ('sha256:' + '2'.repeat(64)) as `sha256:${string}`,
+  hypothesis: 'hypothesis of sufficient length',
+  candidateDigest: ('sha256:' + '4'.repeat(64)) as `sha256:${string}`,
   targetClusterSlug: 'cluster',
   targetTaskHandle: 'task',
-  trialRefs: ['sha256:' + '5'.repeat(64)],
-  targetTrials: 1,
-  preservationTrials: 1,
-  status: 'MECHANISM_CONFIRMED',
-  singleTrialObservable: true,
-}
+  trials: [
+    {
+      ref: ('sha256:' + '5'.repeat(64)) as `sha256:${string}`,
+      role: 'target-baseline',
+      status: 'fail',
+      reward: 0,
+      taskId: 'task-1',
+      attemptIndex: 0,
+    },
+    {
+      ref: ('sha256:' + '6'.repeat(64)) as `sha256:${string}`,
+      role: 'target-child',
+      status: 'pass',
+      reward: 1,
+      taskId: 'task-1',
+      attemptIndex: 0,
+    },
+    {
+      ref: ('sha256:' + '7'.repeat(64)) as `sha256:${string}`,
+      role: 'preservation-baseline',
+      status: 'pass',
+      reward: 1,
+      taskId: 'task-2',
+      attemptIndex: 0,
+    },
+    {
+      ref: ('sha256:' + '8'.repeat(64)) as `sha256:${string}`,
+      role: 'preservation-child',
+      status: 'pass',
+      reward: 1,
+      taskId: 'task-2',
+      attemptIndex: 0,
+    },
+  ],
+})
 
 describe('mechanism-outcome content validation (issue #85)', () => {
+  it('accepts a genuine writer-produced matrix', async () => {
+    for (const generation of ['generation-1', 'generation-2', 'generation-3']) {
+      await seedOutcome(generation, valid)
+    }
+    expect(await verifyMechanismOutcomes(root!)).toEqual([])
+  })
+
   it('flags an empty generation-3 outcome file', async () => {
     await seedOutcome('generation-1', valid)
     await seedOutcome('generation-2', valid)

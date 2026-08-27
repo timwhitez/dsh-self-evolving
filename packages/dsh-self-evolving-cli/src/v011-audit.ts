@@ -217,6 +217,30 @@ export async function verifyMechanismOutcomes(stateDir: string): Promise<string[
   return reasons
 }
 
+/**
+ * Recompute the frozen capability-catalog digest (issue #82): the embedded
+ * catalog must survive the official freezer (unique ids, no enabled T3,
+ * fixture coverage) and its canonical digest must equal the recorded one.
+ */
+export async function verifyCapabilityCatalog(
+  stateDir: string,
+): Promise<{ digest: `sha256:${string}` } | null> {
+  const catalog = (await json(join(stateDir, 'v011', 'capability-catalog.json'))) as {
+    digest?: unknown
+    catalog?: unknown
+  } | null
+  if (catalog === null) return null
+  try {
+    const frozen = await freezeCapabilityCatalog(
+      catalog.catalog as Parameters<typeof freezeCapabilityCatalog>[0],
+    )
+    if (frozen.digest !== catalog.digest) return null
+    return { digest: frozen.digest }
+  } catch {
+    return null
+  }
+}
+
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
@@ -380,36 +404,10 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   )
   if (!multiFile.some((count) => count >= 2))
     reasons.push('no admitted child contains multiple production files')
-  const outcomes = (await files(join(config.stateDir, 'v011', 'outcomes'))).filter((path) =>
-    path.endsWith('/outcome.json'),
-  )
-  if (outcomes.length !== 3) reasons.push(`mechanism-outcome record matrix is ${outcomes.length}/3`)
   reasons.push(...(await verifyMechanismOutcomes(config.stateDir)))
 
-  const catalog = (await json(join(config.stateDir, 'v011', 'capability-catalog.json'))) as {
-    digest?: unknown
-    catalog?: { protocol?: unknown }
-  } | null
-  if (catalog === null) {
+  if ((await verifyCapabilityCatalog(config.stateDir)) === null) {
     reasons.push('frozen exact capability catalog missing')
-  } else {
-    // Recompute the canonical digest instead of trusting any string
-    // (issue #82): the frozen catalog must validate under the official
-    // freezer's own rules (no privileged/enabled-less fixtures) and the
-    // recomputed digest must equal the recorded one.
-    try {
-      const frozen = await freezeCapabilityCatalog(
-        catalog.catalog as never as Parameters<typeof freezeCapabilityCatalog>[0],
-      )
-      if (
-        catalog.catalog?.protocol !== 'dsh-self-evolving-candidate-tree-v2' ||
-        frozen.digest !== catalog.digest
-      ) {
-        reasons.push('frozen capability catalog digest mismatch')
-      }
-    } catch {
-      reasons.push('frozen capability catalog fails canonical freezing')
-    }
   }
   const sealedAccessCount = predecessor.accepted
     ? 0

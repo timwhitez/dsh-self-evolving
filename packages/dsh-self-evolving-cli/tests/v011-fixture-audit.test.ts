@@ -11,7 +11,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { deriveFixtureCross, verifyInvalidReplacementFixture } from '../src/v011-audit.js'
+import {
+  deriveFixtureCross,
+  verifyCapabilityCatalog,
+  verifyInvalidReplacementFixture,
+} from '../src/v011-audit.js'
 import type { V011DemoConfig } from '../src/config.js'
 import { assertV011, digestV011, v011SchemaDigest } from '@dsh-self-evolving/candidate-sdk'
 
@@ -311,47 +315,68 @@ describe('deriveFixtureCross chain (issue #208)', () => {
   })
 
   describe('catalog digest recomputation (issue #82)', () => {
-    it('rejects an arbitrary digest string on a protocol-matching catalog', async () => {
-      const root2 = await mkdtemp(join(tmpdir(), 'v011-catalog-'))
-      const { rm: rmDir } = await import('node:fs/promises')
-      setTimeout(() => void rmDir(root2, { recursive: true, force: true }), 0).unref?.()
+    const validCatalog = {
+      schemaVersion: 1,
+      protocol: 'dsh-self-evolving-candidate-tree-v2',
+      dshCommit: 'a'.repeat(40),
+      capabilities: [
+        {
+          id: 'systemPrompt',
+          tier: 'T0',
+          kind: 'service',
+          signature: 'sig',
+          enabled: true,
+          fixtureDigest: 'sha256:' + '1'.repeat(64),
+        },
+      ],
+    }
 
+    async function catalogDir(catalog: unknown, digest: unknown): Promise<string> {
+      const dir = await mkdtemp(join(tmpdir(), 'v011-catalog-'))
       const { mkdir, writeFile: wf } = await import('node:fs/promises')
-      await mkdir(join(root2, 'v011'), { recursive: true })
+      await mkdir(join(dir, 'v011'), { recursive: true })
       await wf(
-        join(root2, 'v011', 'capability-catalog.json'),
-        JSON.stringify({
-          digest: 'not-a-digest',
-          catalog: {
-            schemaVersion: 1,
-            protocol: 'dsh-self-evolving-candidate-tree-v2',
-            dshCommit: 'a'.repeat(40),
-            capabilities: [
-              {
-                id: 'systemPrompt',
-                tier: 'T0',
-                kind: 'service',
-                signature: 'sig',
-                enabled: true,
-                fixtureDigest: 'sha256:' + '1'.repeat(64),
-              },
-            ],
-          },
-        }) + '\n',
+        join(dir, 'v011', 'capability-catalog.json'),
+        JSON.stringify({ digest, catalog }) + '\n',
       )
-      // Direct check of the audit behavior via a minimal harness: reuse
-      // auditStableRun is too heavy; assert through the exported audit's
-      // reason by calling auditV011Run would need full state. Instead pin the
-      // recomputation contract directly.
+      return dir
+    }
+
+    it('accepts a canonically frozen catalog with its recomputed digest', async () => {
       const { freezeCapabilityCatalog } = await import('@dsh-self-evolving/candidate-sdk')
-      const raw = JSON.parse(
-        await (
-          await import('node:fs/promises')
-        ).readFile(join(root2, 'v011', 'capability-catalog.json'), 'utf8'),
-      ) as { digest: string; catalog: unknown }
-      const frozen = await freezeCapabilityCatalog(raw.catalog as never)
-      expect(frozen.digest).not.toBe(raw.digest)
-      expect(frozen.digest).toMatch(/^sha256:[0-9a-f]{64}$/)
+      const { rm: rmDir } = await import('node:fs/promises')
+      const frozen = await freezeCapabilityCatalog(validCatalog as never)
+      const dir = await catalogDir(frozen.catalog, frozen.digest)
+      const result = await verifyCapabilityCatalog(dir)
+      expect(result?.digest).toBe(frozen.digest)
+      await rmDir(dir, { recursive: true, force: true })
+    })
+
+    it('rejects an arbitrary digest string on a valid catalog', async () => {
+      const { rm: rmDir } = await import('node:fs/promises')
+      const dir = await catalogDir(validCatalog, 'not-a-digest')
+      await expect(verifyCapabilityCatalog(dir)).resolves.toBeNull()
+      await rmDir(dir, { recursive: true, force: true })
+    })
+
+    it('rejects a catalog that fails canonical freezing (enabled T3)', async () => {
+      const { rm: rmDir } = await import('node:fs/promises')
+      const privileged = {
+        ...validCatalog,
+        capabilities: [
+          {
+            id: 'agent/request',
+            tier: 'T3',
+            kind: 'event',
+            signature: 'sig',
+            enabled: true,
+            fixtureDigest: 'sha256:' + '2'.repeat(64),
+          },
+        ],
+      }
+      const dir = await catalogDir(privileged, 'sha256:' + '0'.repeat(64))
+      await expect(verifyCapabilityCatalog(dir)).resolves.toBeNull()
+      await rmDir(dir, { recursive: true, force: true })
     })
   })
 })
