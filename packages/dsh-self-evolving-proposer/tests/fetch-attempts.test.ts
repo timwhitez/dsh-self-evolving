@@ -331,4 +331,52 @@ describe('gateway receipts carry attempt logs', () => {
       expect(attempts[1]!.responseId).toBe('resp-final-fail')
     })
   })
+
+  describe('failure receipts carry attempt logs (issue #193)', () => {
+    it('records a failure receipt with every billed attempt when all retries fail', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'gw-fail-'))
+      process.env['DEEPSEEK_API_KEY'] = 'x'
+      const adapter = new TrustedResponsesAdapter({
+        route,
+        contextWindow: 1_048_576,
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        requestMaxRetries: 1,
+        async fetchImpl() {
+          return new Response(JSON.stringify({ id: 'resp-fail', usage: { input_tokens: 25 } }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          })
+        },
+      })
+      const gateway = await startProposalGateway({
+        socketPath: join(root, 'gw.sock'),
+        route,
+        handle: createProposalGatewayLlmHandler(adapter, route) as never,
+      })
+      try {
+        const response = await gateway.request({
+          schemaVersion: 1,
+          requestId: 'fail-1',
+          route,
+          payload: {
+            provider: route.provider,
+            model: route.model,
+            reasoningEffort: route.reasoningEffort,
+            maxTokens: route.maxTokens,
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'go' }] }],
+          },
+        })
+        expect(response.ok).toBe(false)
+        const receipt = gateway.receipts().find((row) => row.requestId === 'fail-1')
+        expect(receipt).toBeDefined()
+        expect(receipt!.error).toMatch(/503|HTTP/)
+        expect(receipt!.attempts).toHaveLength(2)
+        expect(receipt!.attempts!.every((row) => row.ambiguous)).toBe(true)
+        expect(receipt!.attempts![0]!.discardedUsage).toMatchObject({ inputTokens: 25 })
+      } finally {
+        await gateway.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  })
 })

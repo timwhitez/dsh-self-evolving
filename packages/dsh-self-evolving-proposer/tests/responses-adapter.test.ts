@@ -528,4 +528,98 @@ describe('trusted Responses proposal adapter', () => {
       ),
     ).toBe(true)
   })
+
+  describe('non-serializable continuation messages (issue #186)', () => {
+    const wire = (
+      adapter: InstanceType<typeof TrustedResponsesAdapter>,
+      messages: Parameters<typeof adapter.stream>[0]['messages'],
+    ) => {
+      const bodies: Array<Record<string, unknown>> = []
+      return {
+        run: async () => {
+          for await (const _chunk of adapter.stream({
+            provider: route.provider,
+            model: route.model,
+            reasoningEffort: route.reasoningEffort,
+            maxTokens: route.maxTokens,
+            messages,
+            tools: [],
+          })) {
+            void _chunk
+          }
+        },
+        bodies,
+      }
+    }
+
+    it('rejects a continuation message that is entirely non-serializable blocks', async () => {
+      process.env['DEEPSEEK_API_KEY'] = 'x'
+      let fetchCalls = 0
+      const adapter = new TrustedResponsesAdapter({
+        route,
+        contextWindow: 1_048_576,
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        async fetchImpl() {
+          fetchCalls += 1
+          return fetchCalls === 1
+            ? Response.json({
+                id: 'r-img',
+                model: route.model,
+                status: 'completed',
+                output: [
+                  {
+                    id: 'fn-img',
+                    type: 'function_call',
+                    status: 'completed',
+                    call_id: 'call-img',
+                    name: 'run',
+                    arguments: '{}',
+                  },
+                ],
+                usage: { input_tokens: 1, output_tokens: 1 },
+              })
+            : Response.json({
+                id: 'r-img-2',
+                model: route.model,
+                status: 'completed',
+                output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+                usage: { input_tokens: 1, output_tokens: 1 },
+              })
+        },
+      })
+      const { run } = wire(adapter, [
+        createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }),
+      ])
+      await run()
+      // Second turn: an image-only user message must fail closed, not vanish.
+      // The continuation builder only inspects block.type; a minimal shape is
+      // sufficient and avoids attachment-view freezing in message constructors.
+      const imageBlock = { type: 'image' } as never
+      await expect(async () => {
+        for await (const _chunk of adapter.stream({
+          provider: route.provider,
+          model: route.model,
+          reasoningEffort: route.reasoningEffort,
+          maxTokens: route.maxTokens,
+          messages: [
+            createAssistantMessage({
+              content: [
+                { type: 'tool-call', id: CallId('call-img'), name: 'run', arguments: '{}' },
+              ],
+              source: { provider: route.provider, model: route.model },
+            }),
+            createToolResultMessage({
+              callId: CallId('call-img'),
+              content: [{ type: 'text', text: 'out' }],
+              isError: false,
+            }),
+            createUserMessage({ content: [imageBlock], source: { kind: 'user' } }),
+          ],
+          tools: [],
+        })) {
+          void _chunk
+        }
+      }).rejects.toThrow(/no serializable content/)
+    })
+  })
 })

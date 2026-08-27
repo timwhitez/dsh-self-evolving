@@ -35,8 +35,32 @@ export interface ProposalGatewayReceipt {
   requestHash: string
   responseHash: string
   routeHash: string
-  /** Transport-retry attempt log for the trusted provider fetch (issue #123). */
+  /**
+   * Transport-retry attempt log for the trusted provider fetch (issue #123).
+   * Present on failure receipts too, so billed attempts never vanish with a
+   * failed handler (issue #193).
+   */
   attempts?: AdapterFetchAttempt[]
+  /**
+   * Set on failure receipts: the trusted handler did not produce a result.
+   * NOTE: a request that fails and is later retried successfully yields TWO
+   * receipt rows with the same requestId (failure first, success second).
+   */
+  error?: string
+}
+
+/**
+ * A trusted-handler failure carrying its transport-retry attempt log: the
+ * gateway records a failure receipt instead of dropping billed attempts
+ * (issue #193).
+ */
+export class ProposalGatewayHandlerFailure extends Error {
+  constructor(
+    message: string,
+    readonly attempts: AdapterFetchAttempt[],
+  ) {
+    super(message)
+  }
 }
 
 export interface ProposalGatewayHandleContext {
@@ -139,7 +163,20 @@ export async function startProposalGateway(
     let result: unknown
     try {
       result = await options.handle(candidate.payload, context ?? { signal: neverSignal() })
-    } catch {
+    } catch (error) {
+      // A failed handler may still have billed attempts on the wire; record a
+      // durable failure receipt so the attempt log reaches evidence (issue
+      // #193). The client still sees the generic transport error.
+      if (error instanceof ProposalGatewayHandlerFailure && error.attempts.length > 0) {
+        receiptLog.push({
+          requestId,
+          requestHash,
+          responseHash: sha256(stableJson({ failed: true })),
+          routeHash: sha256(stableJson(options.route)),
+          attempts: error.attempts.map((row: AdapterFetchAttempt) => ({ ...row })),
+          error: String(error.message),
+        })
+      }
       return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }
     }
     const responseHash = sha256(stableJson(result))
