@@ -161,7 +161,13 @@ export function verifyGate6Acceptance(input: Gate6AcceptanceInput): Gate6Accepta
         )
         recomputed = ''
       }
-      if (recomputed !== '' && recomputed !== observation.normalizedRecordHash) {
+      if (recomputed === '') {
+        // Undigestible content already fails this observation closed; the
+        // identity check (which re-invokes getters via Object.entries) must
+        // not get a second chance to throw (issue #217).
+        continue
+      }
+      if (recomputed !== observation.normalizedRecordHash) {
         reasons.push(
           `observation normalized record digest mismatch: ${observation.candidateId}/${observation.taskId}`,
         )

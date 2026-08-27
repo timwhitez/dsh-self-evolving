@@ -187,8 +187,9 @@ function validTrialArtifacts(trial: {
   costUsd: number
 }): boolean {
   return (
+    Array.isArray(trial.rawEvidenceDigests) &&
     trial.rawEvidenceDigests.length > 0 &&
-    trial.rawEvidenceDigests.every(validDigest) &&
+    trial.rawEvidenceDigests.every((value) => typeof value === 'string' && validDigest(value)) &&
     validDigest(trial.protocolHash) &&
     (trial.reward === 0 || trial.reward === 1) &&
     Number.isFinite(trial.costUsd) &&
@@ -267,7 +268,7 @@ function trialRecordReason(
 
 export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVerdict {
   const reasons: string[] = []
-  if (input === null || typeof input !== 'object') {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     return {
       protocolValid: false,
       promotionState: 'PROTOCOL_INVALID',
@@ -301,7 +302,9 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
   ) {
     reasons.push('positive development champion was not established')
   }
-  const lock = input.lockedCandidate
+  // Undefined and null normalize to null: a missing sub-object must hit the
+  // null branches, never a property-read TypeError (issue #217).
+  const lock = input.lockedCandidate ?? null
   if (!validDigest(input.baselineCandidateId))
     reasons.push('baseline candidate identity is invalid')
   if (
@@ -322,7 +325,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
   ) {
     reasons.push('signed immutable candidate lock is missing or invalid')
   }
-  const reveal = input.splitReveal
+  const reveal = input.splitReveal ?? null
   if (
     reveal === null ||
     !reveal.commitmentVerified ||
@@ -333,7 +336,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
   ) {
     reasons.push('single reveal/split commitment/pre-lock access evidence is invalid')
   }
-  const plan = input.sealedPlan
+  const plan = input.sealedPlan ?? null
   if (
     plan === null ||
     plan.taskCount !== 29 ||
@@ -345,6 +348,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     !validDigest(plan.statisticsCodeHash) ||
     !validDigest(plan.randomInterleaveReceiptHash) ||
     !validDigest(plan.bootstrapSeedCommitment) ||
+    typeof plan.bootstrapSeed !== 'bigint' ||
     plan.bootstrapSeedCommitment !== bootstrapSeedCommitment(plan.bootstrapSeed) ||
     !Number.isSafeInteger(plan.bootstrapResamples) ||
     plan.bootstrapResamples < 100_000 ||
@@ -440,7 +444,9 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       if (
         reveal.revealedTaskIds.length !== 29 ||
         uniqueRevealed.size !== 29 ||
-        reveal.revealedTaskIds.some((id) => id.length === 0 || id.trim() !== id)
+        reveal.revealedTaskIds.some(
+          (id) => typeof id !== 'string' || id.length === 0 || id.trim() !== id,
+        )
       ) {
         reasons.push('revealed sealed task list is not 29 unique canonical ids')
       }
@@ -462,6 +468,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
         commitment?.sizes?.devObserved !== SPLIT_SIZES.devObserved ||
         commitment?.sizes?.devGuard !== SPLIT_SIZES.devGuard ||
         commitment?.sizes?.sealed !== SPLIT_SIZES.sealed ||
+        !Array.isArray(reveal.inventoryTaskIds) ||
         reveal.inventoryTaskIds.length !== 89
       ) {
         reasons.push('split commitment sizes/inventory do not match the frozen protocol')
@@ -548,8 +555,9 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
   const fullSetEligible = sealedComplete && computedPromotion === 'SEALED_PROMOTED'
 
   let fullSetVerified = false
-  if (input.fullSet !== null) {
-    const full = input.fullSet
+  const fullSet = input.fullSet ?? null
+  if (fullSet !== null) {
+    const full = fullSet
     if (!fullSetEligible)
       reasons.push('full-set evaluation exists without SEALED_PROMOTED eligibility')
     if (
@@ -618,21 +626,27 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     // and the SAME universe the sealed ceremony committed over (spec 04
     // §11: one pinned 89-task dataset for split and full set).
     if (reveal !== null && Array.isArray(reveal.inventoryTaskIds)) {
+      if (!Array.isArray(full.inventoryTaskIds)) {
+        reasons.push('official inventory list is missing or malformed')
+      } else {
       const sealedInventory = [...new Set(reveal.inventoryTaskIds)].sort()
       const fullInventorySorted = [...new Set(full.inventoryTaskIds)].sort()
       if (JSON.stringify(sealedInventory) !== JSON.stringify(fullInventorySorted)) {
         reasons.push('sealed ceremony and full-set inventories are different task universes')
       }
+      }
     }
     if (!Array.isArray(full.inventoryTaskIds)) {
-      reasons.push('official inventory list is missing')
+      reasons.push('official inventory list is missing or malformed')
     } else {
       const uniqueInventory = new Set(full.inventoryTaskIds)
       const inventory = [...uniqueInventory].sort()
       if (
         full.inventoryTaskIds.length !== 89 ||
         uniqueInventory.size !== 89 ||
-        full.inventoryTaskIds.some((id) => id.length === 0 || id.trim() !== id)
+        full.inventoryTaskIds.some(
+          (id) => typeof id !== 'string' || id.length === 0 || id.trim() !== id,
+        )
       ) {
         reasons.push('official inventory list is not 89 unique canonical ids')
       }
@@ -653,8 +667,8 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
   }
 
   let releaseVerified = false
-  if (input.release !== null) {
-    const release = input.release
+  const release = input.release ?? null
+  if (release !== null) {
     const releaseHashes = Object.entries(release).filter(([field]) => field !== 'sourceDigest')
     if (
       !fullSetVerified ||
