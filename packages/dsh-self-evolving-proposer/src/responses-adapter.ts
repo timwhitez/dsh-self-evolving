@@ -120,9 +120,11 @@ function continuationInput(
       pendingText = ''
     }
     const nonSerializable = new Set<string>()
+    let sawSerializableContent = false
     for (const block of message.content) {
       if (block.type === 'text') {
         pendingText += (pendingText ? '\n' : '') + block.text
+        sawSerializableContent = true
         continue
       }
       if (block.type === 'reasoning') {
@@ -132,6 +134,9 @@ function continuationInput(
       if (block.type === 'image') {
         nonSerializable.add('image')
         continue
+      }
+      if (block.type === 'tool-call' || block.type === 'tool-result') {
+        sawSerializableContent = true
       }
       if (block.type === 'tool-call') {
         sawToolHistory = true
@@ -158,15 +163,16 @@ function continuationInput(
         })
         continue
       }
+      // Unknown/extension block types are non-serializable for this adapter.
+      nonSerializable.add(`unsupported:${String((block as { type?: unknown }).type)}`)
     }
-    if (nonSerializable.size > 0 && !pendingText.trim()) {
-      // A message whose content is entirely non-serializable blocks cannot be
-      // faithfully replayed in the text-only Responses protocol; silently
-      // dropping it would degrade history where turn 1 fails closed
-      // (issue #186). Refuse instead of replaying a misrepresenting
-      // conversation.
+    if (nonSerializable.size > 0 && !sawSerializableContent) {
+      // A message with NO serializable content cannot be faithfully replayed
+      // in the text-only Responses protocol; silently dropping it would
+      // degrade history where turn 1 fails closed (issue #186). Refuse
+      // instead of replaying a misrepresenting conversation.
       throw new Error(
-        `responses adapter: continuation history contains a ${[...nonSerializable].sort().join('+')}-only message that cannot be serialized`,
+        `responses adapter: continuation history contains a message with no serializable content (${[...nonSerializable].sort().join('+')})`,
       )
     }
     flush()

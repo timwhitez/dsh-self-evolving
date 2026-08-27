@@ -41,7 +41,11 @@ export interface ProposalGatewayReceipt {
    * failed handler (issue #193).
    */
   attempts?: AdapterFetchAttempt[]
-  /** Set on failure receipts: the trusted handler did not produce a result. */
+  /**
+   * Set on failure receipts: the trusted handler did not produce a result.
+   * NOTE: a request that fails and is later retried successfully yields TWO
+   * receipt rows with the same requestId (failure first, success second).
+   */
   error?: string
 }
 
@@ -163,15 +167,14 @@ export async function startProposalGateway(
       // A failed handler may still have billed attempts on the wire; record a
       // durable failure receipt so the attempt log reaches evidence (issue
       // #193). The client still sees the generic transport error.
-      const failure = error as Partial<ProposalGatewayHandlerFailure>
-      if (Array.isArray(failure.attempts)) {
+      if (error instanceof ProposalGatewayHandlerFailure && error.attempts.length > 0) {
         receiptLog.push({
           requestId,
           requestHash,
           responseHash: sha256(stableJson({ failed: true })),
           routeHash: sha256(stableJson(options.route)),
-          attempts: failure.attempts.map((row: AdapterFetchAttempt) => ({ ...row })),
-          error: String(error instanceof Error ? error.message : error),
+          attempts: error.attempts.map((row: AdapterFetchAttempt) => ({ ...row })),
+          error: String(error.message),
         })
       }
       return { schemaVersion: 1, requestId, ok: false, error: 'trusted provider handler failed' }

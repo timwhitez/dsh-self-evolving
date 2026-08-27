@@ -559,7 +559,7 @@ describe('trusted Responses proposal adapter', () => {
         route,
         contextWindow: 1_048_576,
         apiKeyEnv: 'DEEPSEEK_API_KEY',
-        async fetchImpl(_input, init) {
+        async fetchImpl() {
           fetchCalls += 1
           return fetchCalls === 1
             ? Response.json({
@@ -619,7 +619,7 @@ describe('trusted Responses proposal adapter', () => {
         })) {
           void _chunk
         }
-      }).rejects.toThrow(/cannot be serialized/)
+      }).rejects.toThrow(/no serializable content/)
     })
   })
 })

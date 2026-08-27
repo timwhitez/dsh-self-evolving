@@ -22,6 +22,7 @@ export {
   type ProposalGatewayReceipt,
   type ProposalGatewayOptions,
   type ProposalGatewayHandle,
+  ProposalGatewayHandlerFailure,
 } from './gateway.js'
 export {
   ProposalGatewayAdapter,
