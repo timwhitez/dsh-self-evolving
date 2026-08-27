@@ -16,6 +16,25 @@ import {
   packAcpBinaryArchive,
 } from '../src/index.js'
 
+/**
+ * Phase timing (issue #230): the packed-candidate Harbor run legitimately
+ * spans build → capsule/materialization → archive → HTTPS artifact → Harbor
+ * job (verifier 120s + agent 120s budgets) → normalization; observed wall
+ * time is 166-234s on this class of machine. Durations print on completion
+ * and on failure so a timeout is diagnosable per phase instead of a bare
+ * 300s cutoff with thin headroom.
+ */
+const phaseDurations: Array<[string, number]> = []
+async function timedPhase<T>(name: string, phase: () => Promise<T>): Promise<T> {
+  const started = Date.now()
+  try {
+    return await phase()
+  } finally {
+    phaseDurations.push([name, Date.now() - started])
+    console.log(`[gate2-phase] ${name}: ${Date.now() - started}ms`)
+  }
+}
+
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..', '..', '..')
 const harborDir = join(repoRoot, 'harbor')
@@ -159,15 +178,20 @@ describe.skipIf(
 )('Gate 2 — packed DSH candidate through real Harbor ACP', () => {
   it(
     'produces Harbor-native trajectory, ACP events, summary, and an attributable result',
-    { timeout: 300_000 },
+    // Verifier (120s) + agent (120s) Harbor budgets plus build/pack phases:
+    // 480s leaves real headroom over the observed 166-234s instead of the
+    // 300s budget that times out under parallel load (issue #230).
+    { timeout: 480_000 },
     async () => {
-      const receipt = await buildCandidate({
-        sourceRoot: baselineRoot,
-        sourceFiles,
-        tscBin,
-      })
+      const receipt = await timedPhase('build-candidate', () =>
+        buildCandidate({
+          sourceRoot: baselineRoot,
+          sourceFiles,
+          tscBin,
+        }),
+      )
       const capsuleDir = join(scratch!, 'capsule')
-      await packCapsule({
+      await timedPhase('pack-capsule', () => packCapsule({
         outDir: capsuleDir,
         receipt,
         runnerOverlay: [
@@ -196,14 +220,19 @@ describe.skipIf(
           entryPackage: '@deepseek-ai/dsh-acp-demo',
           entryBin: 'lib/bin.js',
         },
-      })
-      const packed = await packAcpBinaryArchive(
-        join(capsuleDir, 'runtime'),
-        join(scratch!, 'dsh-self-evolving-acp.tar.gz'),
+        }),
+      )
+      const packed = await timedPhase('pack-acp-archive', () =>
+        packAcpBinaryArchive(
+          join(capsuleDir, 'runtime'),
+          join(scratch!, 'dsh-self-evolving-acp.tar.gz'),
+        ),
       )
       const taskDir = join(scratch!, 'smoke-task')
       await cp(fixtureDir, taskDir, { recursive: true })
-      const archiveUrl = await makeTrustedHttpsArtifact(packed.archivePath, taskDir)
+      const archiveUrl = await timedPhase('https-artifact', () =>
+        makeTrustedHttpsArtifact(packed.archivePath, taskDir),
+      )
       const registry = buildRegistryEntry({
         candidateId: receipt.candidateId,
         agentName: 'dsh-self-evolving',
@@ -229,7 +258,9 @@ describe.skipIf(
       })
       const configPath = join(scratch!, 'job.yaml')
       await writeFile(configPath, jobConfigToYaml(config))
-      await execResult(harborBin, ['job', 'start', '-c', configPath], harborDir)
+      await timedPhase('harbor-job', () =>
+        execResult(harborBin, ['job', 'start', '-c', configPath], harborDir),
+      )
 
       const trialDir = await findSingleTrial(join(jobsDir, jobName))
       await writeFile(
@@ -245,13 +276,15 @@ describe.skipIf(
       expect(summary['error'], JSON.stringify(summary)).toBeUndefined()
       expect(summary['prompt_response']).toBeDefined()
 
-      const normalized = await normalizeTrial({
-        trialDir,
-        expectedCandidateId: receipt.candidateId,
-        taskId: 'smoke',
-        expectedAttemptIndex: 0,
-        requireAcpEvidence: true,
-      })
+      const normalized = await timedPhase('normalize-trial', () =>
+        normalizeTrial({
+          trialDir,
+          expectedCandidateId: receipt.candidateId,
+          taskId: 'smoke',
+          expectedAttemptIndex: 0,
+          requireAcpEvidence: true,
+        }),
+      )
       expect(normalized.status).toBe('fail')
       expect(normalized.reward).toBe(0)
       expect(normalized.trajectoryHash).not.toBeNull()
