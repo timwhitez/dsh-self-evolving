@@ -5,6 +5,7 @@ import {
   pairedBootstrapCi,
   type PromotionState,
 } from './stats.js'
+import { commitSplit, SPLIT_SIZES } from './split.js'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 
@@ -65,6 +66,24 @@ export interface Gate8EvidenceInput {
      * matrix must match THIS set exactly, not merely 29 arbitrary ids.
      */
     revealedTaskIds: string[]
+    /**
+     * The complete one-time revealed assignment over the whole inventory
+     * (48 dev-observed + 12 dev-guard + 29 sealed rows), recommitted via the
+     * ceremony's own commitSplit to prove the revealed sealed set is the
+     * committed one (issue #110/#111).
+     */
+    revealedAssignment: Array<{
+      taskId: string
+      label: 'dev-observed' | 'dev-guard' | 'sealed'
+    }>
+    /** The full ceremony commitment (sizes, seed commitment, digests). */
+    commitment: {
+      seedCommitment: string
+      taskInventoryDigest: string
+      sizes: { devObserved: number; devGuard: number; sealed: number }
+    }
+    /** The complete task inventory the commitment was minted over. */
+    inventoryTaskIds: string[]
   } | null
   sealedPlan: {
     taskCount: number
@@ -300,6 +319,54 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       if (JSON.stringify(evaluated) !== JSON.stringify(revealed)) {
         reasons.push('sealed trial matrix does not match the revealed sealed task set')
       }
+      // Recompute the split commitment from the revealed assignment: the
+      // revealed set is provably the committed one, not a self-declared list
+      // (issues #110/#111).
+      // Protocol constants, not caller choices (spec 04 §3.1): the ceremony
+      // is always 48/12/29 over the pinned 89-task inventory. Checked
+      // independently of the recommit so a fabricated small ceremony cannot
+      // slip through on a throw.
+      const commitment = reveal.commitment as
+        | { sizes?: { devObserved?: unknown; devGuard?: unknown; sealed?: unknown } }
+        | undefined
+      if (
+        commitment?.sizes?.devObserved !== SPLIT_SIZES.devObserved ||
+        commitment?.sizes?.devGuard !== SPLIT_SIZES.devGuard ||
+        commitment?.sizes?.sealed !== SPLIT_SIZES.sealed ||
+        reveal.inventoryTaskIds.length !== 89
+      ) {
+        reasons.push('split commitment sizes/inventory do not match the frozen protocol')
+      }
+      if (Array.isArray(reveal.revealedAssignment) && Array.isArray(reveal.inventoryTaskIds)) {
+        try {
+          const recomputed = commitSplit(
+            reveal.revealedAssignment,
+            reveal.commitment.seedCommitment,
+            reveal.inventoryTaskIds,
+            reveal.commitment.sizes,
+          )
+          if (recomputed.merkleRoot !== reveal.merkleRoot) {
+            reasons.push('revealed sealed set is not committed by the split Merkle root')
+          }
+          if (recomputed.taskInventoryDigest !== reveal.commitment.taskInventoryDigest) {
+            reasons.push('revealed inventory does not match the committed task inventory digest')
+          }
+          // The sealed rows of the recommitted assignment must BE the revealed
+          // sealed set, so the evaluated matrix is exactly the committed
+          // sealed stratum.
+          const committedSealed = reveal.revealedAssignment
+            .filter((row) => row.label === 'sealed')
+            .map((row) => row.taskId)
+            .sort()
+          if (JSON.stringify(committedSealed) !== JSON.stringify(revealed)) {
+            reasons.push('revealed sealed set does not match the committed sealed stratum')
+          }
+        } catch {
+          reasons.push('revealed split assignment cannot be recommitted')
+        }
+      } else {
+        reasons.push('revealed split assignment/inventory evidence is missing')
+      }
     } else {
       reasons.push('revealed sealed task list is missing')
     }
@@ -402,7 +469,16 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
     ) {
       reasons.push('full-set 89 x >=5 trial matrix is incomplete')
     }
-    // Exact membership against the official inventory universe (issue #110).
+    // Exact membership against the official inventory universe (issue #110) —
+    // and the SAME universe the sealed ceremony committed over (spec 04
+    // §11: one pinned 89-task dataset for split and full set).
+    if (reveal !== null && Array.isArray(reveal.inventoryTaskIds)) {
+      const sealedInventory = [...new Set(reveal.inventoryTaskIds)].sort()
+      const fullInventorySorted = [...new Set(full.inventoryTaskIds)].sort()
+      if (JSON.stringify(sealedInventory) !== JSON.stringify(fullInventorySorted)) {
+        reasons.push('sealed ceremony and full-set inventories are different task universes')
+      }
+    }
     if (!Array.isArray(full.inventoryTaskIds)) {
       reasons.push('official inventory list is missing')
     } else {
