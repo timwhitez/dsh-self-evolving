@@ -595,6 +595,67 @@ describe('Gate 8 sealed/full/release evidence', () => {
     )
   })
 
+  it('rejects missing sub-objects and array envelopes with verdicts, not TypeErrors (issue #217)', () => {
+    for (const key of [
+      'lockedCandidate',
+      'splitReveal',
+      'sealedPlan',
+      'fullSet',
+      'release',
+    ] as const) {
+      const input = complete()
+      ;(input as unknown as Record<string, unknown>)[key] = undefined
+      input.evidenceCommitment = 'sha256:' + 'c'.repeat(64)
+      expect(() => verifyGate8Evidence(input)).not.toThrow()
+      expect(verifyGate8Evidence(input).sealedComplete).toBe(false)
+    }
+    const arrayEnvelope = [] as unknown as ReturnType<typeof complete>
+    expect(() => verifyGate8Evidence(arrayEnvelope)).not.toThrow()
+    expect(verifyGate8Evidence(arrayEnvelope).reasons.join('\n')).toMatch(
+      /evidence envelope is not an object/,
+    )
+  })
+
+  it('rejects null rawEvidenceDigests, a null bootstrapSeed, null revealed ids, and non-array inventories (issue #217)', () => {
+    const noDigests = complete()
+    ;(noDigests.sealedTrials[1] as unknown as Record<string, unknown>)[
+      'rawEvidenceDigests'
+    ] = null
+    noDigests.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
+    expect(() => verifyGate8Evidence(noDigests)).not.toThrow()
+    expect(verifyGate8Evidence(noDigests).reasons.join('\n')).toMatch(
+      /sealed trial identity\/artifact invalid/,
+    )
+
+    const nullSeed = complete()
+    nullSeed.sealedPlan.bootstrapSeed = null as unknown as bigint
+    nullSeed.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
+    expect(() => verifyGate8Evidence(nullSeed)).not.toThrow()
+    expect(verifyGate8Evidence(nullSeed).reasons.join('\n')).toMatch(
+      /sealed analysis\/schedule plan is missing, mutable, or underpowered/,
+    )
+
+    const nullRevealed = complete()
+    nullRevealed.splitReveal.revealedTaskIds = [null as unknown as string]
+    nullRevealed.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
+    expect(() => verifyGate8Evidence(nullRevealed)).not.toThrow()
+
+    const noInventory = complete()
+    ;(noInventory.splitReveal as unknown as Record<string, unknown>)[
+      'inventoryTaskIds'
+    ] = undefined
+    noInventory.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
+    expect(() => verifyGate8Evidence(noInventory)).not.toThrow()
+
+    const numericFullInventory = complete()
+    numericFullInventory.fullSet.inventoryTaskIds = 5 as unknown as string[]
+    numericFullInventory.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
+    expect(() => verifyGate8Evidence(numericFullInventory)).not.toThrow()
+    expect(verifyGate8Evidence(numericFullInventory).reasons.join('\n')).toMatch(
+      /official inventory list is missing or malformed/,
+    )
+  })
+
   it('rejects null trial matrices with reasons, not TypeErrors (issue #217)', () => {
     const nullSealed = complete()
     ;(nullSealed as unknown as Record<string, unknown>)['sealedTrials'] = null

@@ -236,6 +236,24 @@ describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
     expect(verdict.reasons.join('\n')).toMatch(/required failure fixture not covered: buildReject/)
   })
 
+  it('returns a verdict, never throws, on a record with a throwing getter (issue #217)', () => {
+    const input = complete()
+    const record: Record<string, unknown> = {}
+    Object.defineProperty(record, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('getter boom')
+      },
+    })
+    input.observations[0]!.normalizedRecord = record
+    input.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
+    const verdict = verifyGate6Acceptance(input)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /normalized record digest cannot be computed/,
+    )
+  })
+
   it('rejects a record whose identity lives on a prototype (own-enumerable semantics)', () => {
     const input = complete()
     const template = input.observations[0]!.normalizedRecord as Record<string, unknown>
