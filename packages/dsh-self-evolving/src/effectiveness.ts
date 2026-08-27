@@ -43,8 +43,17 @@ export interface EngineeringEffectReceipt {
   route: EffectRoute
   proposalGatewayReceipts: Array<{
     requestId: string
+    /**
+     * The effect run this receipt belongs to (issue #214): rows from another
+     * run are rejected even when every hash is well-formed.
+     */
+    runId: string
     requestHash: string
     responseHash: string
+    /**
+     * Canonical digest of the effect route (engineeringEffectRouteHash): a
+     * receipt set collected against a different locked route is rejected.
+     */
     routeHash: string
   }>
   usage: EffectUsage
@@ -83,6 +92,15 @@ export interface EngineeringEffectReceipt {
   }
   status: 'ENGINEERING_EFFECT_VERIFIED' | 'NO_MEASURABLE_ENGINEERING_EFFECT'
   claimBoundary: 'MEASURABLE_FIXED_REPLAY_RUNTIME_EFFECT_ONLY_NOT_BENCHMARK_IMPROVEMENT'
+}
+
+/**
+ * Canonical digest of the effect's locked route (issue #214): gateway receipt
+ * rows must carry exactly this value, so a receipt set from another run or
+ * route cannot satisfy the gate.
+ */
+export function engineeringEffectRouteHash(route: EffectRoute): `sha256:${string}` {
+  return digestV011(canonicalV011(route))
 }
 
 function admissionDigest(receipt: V011AdmissionReceipt): `sha256:${string}` {
@@ -147,16 +165,25 @@ export function evaluateEngineeringEffect(input: {
       }
     }
   }
+  // Receipt binding (issue #214): shape alone proves nothing — each row must
+  // belong to THIS run (runId) and THIS locked route (canonical route hash),
+  // with sha256-shaped request/response hashes.
+  const routeHash = engineeringEffectRouteHash(input.route)
   if (
     input.proposalGatewayReceipts.length === 0 ||
     input.proposalGatewayReceipts.some(
       (row) =>
+        typeof row.requestId !== 'string' ||
+        row.requestId.length === 0 ||
+        row.runId !== input.runId ||
         !/^sha256:[0-9a-f]{64}$/.test(row.requestHash) ||
         !/^sha256:[0-9a-f]{64}$/.test(row.responseHash) ||
-        !/^sha256:[0-9a-f]{64}$/.test(row.routeHash),
+        row.routeHash !== routeHash,
     )
   ) {
-    throw new Error('effectiveness: gateway receipts must be well-formed sha256 records')
+    throw new Error(
+      'effectiveness: gateway receipts are not bound to this run and locked route',
+    )
   }
   const targets = new Set(input.modeContract.targetModes)
   const preserved = new Set(input.modeContract.preservedModes)

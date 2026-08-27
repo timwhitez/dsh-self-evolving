@@ -17,6 +17,7 @@ import {
   type EvidenceCitation,
 } from '@dsh-self-evolving/candidate-sdk'
 import {
+  engineeringEffectRouteHash,
   evaluateEngineeringEffect,
   materializeProposerExport,
   publishBytes,
@@ -556,18 +557,31 @@ describe.skipIf(!realApiKey)('v0.2 official Responses tool loop', () => {
           admission(join(mounts.parent, 'tree'), 'baseline'),
           admission(join(childRoot, 'tree'), 'child'),
         ])
+        const effectRunId =
+          process.env['DSH_SELF_EVOLVING_EFFECT_RUN_ID'] ?? 'effectiveness-official-v1'
+        const effectRoute = {
+          provider: 'deepseek-official',
+          endpoint: 'https://api.deepseek.com/v1',
+          model: 'deepseek-v4-flash',
+          wireApi: 'responses',
+          reasoningEffort: 'high',
+          contextWindow: 1_048_576,
+          store: false,
+        } as const
         const effect = evaluateEngineeringEffect({
-          runId: process.env['DSH_SELF_EVOLVING_EFFECT_RUN_ID'] ?? 'effectiveness-official-v1',
-          route: {
-            provider: 'deepseek-official',
-            endpoint: 'https://api.deepseek.com/v1',
-            model: 'deepseek-v4-flash',
-            wireApi: 'responses',
-            reasoningEffort: 'high',
-            contextWindow: 1_048_576,
-            store: false,
-          },
-          proposalGatewayReceipts: gatewayReceipts,
+          runId: effectRunId,
+          route: effectRoute,
+          // Derived from the actual gateway instance (issue #214): request and
+          // response hashes come from the gateway's own receipts; the rows are
+          // stamped with this run's id and the locked effect-route hash so a
+          // foreign receipt set cannot satisfy the gate.
+          proposalGatewayReceipts: gatewayReceipts.map((row) => ({
+            requestId: row.requestId,
+            runId: effectRunId,
+            requestHash: row.requestHash,
+            responseHash: row.responseHash,
+            routeHash: engineeringEffectRouteHash(effectRoute),
+          })),
           usage: collectUsage(providerChunks),
           modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
           baseline: baselineAdmission,
