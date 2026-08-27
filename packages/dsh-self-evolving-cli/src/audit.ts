@@ -2,6 +2,12 @@ import { computeTotals, readAll, readControllerStatus } from '@dsh-self-evolving
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ProjectConfig } from './config.js'
+import {
+  computeCrashReceiptFacts,
+  crashReceiptMatches,
+  parseCrashReceipt,
+  readCrashInjectionRequest,
+} from './crash.js'
 
 export interface StableAuditReport {
   accepted: boolean
@@ -141,22 +147,62 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
   if (events.filter((event) => event.type === 'build.completed').length !== 3) {
     reasons.push('build receipt matrix is incomplete')
   }
+  // One-to-one evidence graph (issue #79): every admitted child must be
+  // covered by EXACTLY one build receipt and the required candidate
+  // observation; replayed/count-expanded rows for one child cannot fill the
+  // matrix while another child has no attributable evidence.
+  {
+    const childIds = new Set(childNodes.map((node) => node.candidateId))
+    const buildByCandidate = new Map<string, number>()
+    for (const event of events.filter((row) => row.type === 'build.completed')) {
+      const candidateId = (event.payload as { candidateId?: unknown }).candidateId
+      if (typeof candidateId !== 'string') {
+        reasons.push('build completion lacks a candidate identity')
+        continue
+      }
+      buildByCandidate.set(candidateId, (buildByCandidate.get(candidateId) ?? 0) + 1)
+    }
+    const observationByCandidate = new Map<string, number>()
+    for (const row of candidateObservations) {
+      observationByCandidate.set(
+        row.candidateId,
+        (observationByCandidate.get(row.candidateId) ?? 0) + 1,
+      )
+    }
+    for (const candidateId of childIds) {
+      if (buildByCandidate.get(candidateId) !== 1) {
+        reasons.push(`admitted child lacks exactly one build receipt: ${candidateId}`)
+      }
+      if ((observationByCandidate.get(candidateId) ?? 0) < 1) {
+        reasons.push(`admitted child lacks an attributable observation: ${candidateId}`)
+      }
+    }
+    const covered = new Set([...buildByCandidate.keys(), ...observationByCandidate.keys()])
+    for (const candidateId of covered) {
+      if (!childIds.has(candidateId)) {
+        reasons.push(`evidence references an unknown candidate: ${candidateId}`)
+      }
+    }
+  }
 
   const crashPath = join(config.stateDir, 'crash-resume-receipt.json')
   const crashReceipt = await stat(crashPath).catch(() => null)
   if (crashReceipt?.isFile() !== true) reasons.push('real crash/resume receipt missing')
   else {
-    const crash = JSON.parse(await readFile(crashPath, 'utf8')) as {
-      launchEvents?: unknown
-      observationEvents?: unknown
-      commitEvents?: unknown
-      replayStateHash?: unknown
-    }
+    // Independently re-derive the crash facts from durable state instead of
+    // trusting the receipt's counters (issue #78), using the SAME shared
+    // field-wise verifier as finalization (review of #210).
+    const crashRequest = await readCrashInjectionRequest(config).catch(() => null)
+    const parsed = parseCrashReceipt(await readFile(crashPath, 'utf8'))
+    const facts =
+      crashRequest === null
+        ? null
+        : await computeCrashReceiptFacts(config, crashRequest).catch(() => null)
     if (
-      crash.launchEvents !== 1 ||
-      crash.observationEvents !== 1 ||
-      crash.commitEvents !== 1 ||
-      crash.replayStateHash !== controller.stateHash
+      parsed === null ||
+      facts === null ||
+      !crashReceiptMatches(parsed, facts) ||
+      facts.replayStateHash !== controller.stateHash
     ) {
       reasons.push('crash/resume exactly-once receipt is invalid')
     }
