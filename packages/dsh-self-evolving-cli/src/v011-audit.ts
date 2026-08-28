@@ -21,7 +21,7 @@ import {
 } from '@dsh-self-evolving/candidate-sdk'
 import { auditStableRun } from './audit.js'
 import { readV011StableBuild } from './v011-identity.js'
-import type { V011DemoConfig } from './config.js'
+import { projectProposalGatewayRoute, type V011DemoConfig } from './config.js'
 import { verifyV011MaterializationAuthority } from './v011-materialization-authority.js'
 import {
   assertV011ProposalExecutionBinding,
@@ -332,6 +332,7 @@ export async function verifyCapabilityCatalog(
 }
 
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
+  const proposalRoute = projectProposalGatewayRoute(config)
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const events = await readAll({
@@ -444,10 +445,11 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     }
     const actionRoot = materialization.path.slice(0, -'/materialization.json'.length)
     const proposalId = materialization.authority.materialization.proposalId
-    const execution = await loadV011ProposalExecution(
-      actionRoot,
-      join(actionRoot, 'children', proposalId, 'worker-output.json'),
-    ).catch(() => null)
+    const execution = await loadV011ProposalExecution({
+      action: actionRoot,
+      route: proposalRoute,
+      workerOutputPath: join(actionRoot, 'children', proposalId, 'worker-output.json'),
+    }).catch(() => null)
     const proposalResource = execution?.resource ?? null
     const proposalResourceValid = verifyV011ProposalResourceBinding(
       materialization.authority.materialization,
@@ -456,7 +458,11 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     let executionBindingValid = false
     if (execution !== null) {
       try {
-        assertV011ProposalExecutionBinding(materialization.authority.materialization, execution)
+        assertV011ProposalExecutionBinding(
+          materialization.authority.materialization,
+          execution,
+          proposalRoute,
+        )
         executionBindingValid = true
       } catch {
         executionBindingValid = false

@@ -6,10 +6,12 @@ import {
   readControllerStatus,
   type EvaluationObservation,
 } from '@dsh-self-evolving/core'
-import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
+import {
+  assertCompletedProposalGatewayReceipts,
+  type ProposalGatewayRoute,
+} from '@dsh-self-evolving/proposer'
 import type { ProjectConfig } from './config.js'
 import {
   computeCrashReceiptFacts,
@@ -41,106 +43,6 @@ function exactKeys(value: Record<string, unknown>, expected: string[]): boolean 
   return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort())
 }
 
-function nonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-function validDiscardedUsage(value: unknown): boolean {
-  if (!isRecord(value)) return false
-  if (!exactKeys(value, ['cacheReadTokens', 'inputTokens', 'outputTokens', 'reasoningTokens'])) {
-    return false
-  }
-  const input = value['inputTokens']
-  const output = value['outputTokens']
-  const cache = value['cacheReadTokens']
-  const reasoning = value['reasoningTokens']
-  return (
-    nonNegativeSafeInteger(input) &&
-    nonNegativeSafeInteger(output) &&
-    nonNegativeSafeInteger(cache) &&
-    nonNegativeSafeInteger(reasoning) &&
-    cache <= input &&
-    reasoning <= output
-  )
-}
-
-function validGatewayAttempt(value: unknown, expectedIndex: number): boolean {
-  if (
-    !isRecord(value) ||
-    !exactKeys(value, [
-      'ambiguous',
-      'attemptIndex',
-      'discardedUsage',
-      'responseId',
-      'retryable',
-      'status',
-    ]) ||
-    value['attemptIndex'] !== expectedIndex ||
-    typeof value['retryable'] !== 'boolean' ||
-    typeof value['ambiguous'] !== 'boolean' ||
-    !(
-      value['status'] === null ||
-      (Number.isSafeInteger(value['status']) &&
-        (value['status'] as number) >= 100 &&
-        (value['status'] as number) <= 599)
-    ) ||
-    !(value['discardedUsage'] === null || validDiscardedUsage(value['discardedUsage'])) ||
-    !(
-      value['responseId'] === null ||
-      (typeof value['responseId'] === 'string' && value['responseId'].length > 0)
-    )
-  ) {
-    return false
-  }
-  const status = value['status'] as number | null
-  const expectedFlags =
-    status === null
-      ? { retryable: true, ambiguous: true }
-      : status === 429
-        ? { retryable: true, ambiguous: false }
-        : status === 408 || status >= 500
-          ? { retryable: true, ambiguous: true }
-          : { retryable: false, ambiguous: false }
-  if (
-    value['retryable'] !== expectedFlags.retryable ||
-    value['ambiguous'] !== expectedFlags.ambiguous
-  ) {
-    return false
-  }
-  if (status !== null && status >= 200 && status < 300) {
-    return value['discardedUsage'] === null && value['responseId'] === null
-  }
-  return true
-}
-
-function gatewayRouteHash(route: ProposalGatewayRoute): string {
-  return `sha256:${createHash('sha256').update(canonicalJson(route)).digest('hex')}`
-}
-
-function validGatewayReceipt(value: unknown, expectedRouteHash: string): boolean {
-  if (!isRecord(value)) return false
-  const required = ['requestHash', 'requestId', 'responseHash', 'routeHash']
-  const optional = ['attempts', 'error']
-  if (
-    Object.keys(value).some((key) => !required.includes(key) && !optional.includes(key)) ||
-    value['requestId'] === undefined ||
-    typeof value['requestId'] !== 'string' ||
-    !/^llm-[0-9a-f]{64}$/.test(value['requestId']) ||
-    !['requestHash', 'responseHash'].every((key) =>
-      /^sha256:[0-9a-f]{64}$/.test(value[key] as string),
-    ) ||
-    value['routeHash'] !== expectedRouteHash ||
-    !Array.isArray(value['attempts']) ||
-    value['attempts'].length === 0 ||
-    value['attempts'].some((attempt, index) => !validGatewayAttempt(attempt, index)) ||
-    (value['error'] !== undefined &&
-      (typeof value['error'] !== 'string' || value['error'].length === 0))
-  ) {
-    return false
-  }
-  return true
-}
-
 function validStableProposal(value: unknown): value is Record<string, unknown> {
   return (
     isRecord(value) &&
@@ -169,7 +71,6 @@ export async function verifyStableProposalPublications(
   proposals: ProposalCompletionEvent[],
 ): Promise<string[]> {
   const reasons: string[] = []
-  const expectedRouteHash = gatewayRouteHash(route)
   for (const event of proposals) {
     const identity = /^proposal:(\d+):(\d+):completed$/.exec(event.eventId)
     if (identity === null || !validStableProposal(event.payload)) {
@@ -232,11 +133,13 @@ export async function verifyStableProposalPublications(
     ) {
       reasons.push(`stable proposal ${event.eventId} idempotency binding mismatch`)
     }
-    if (
-      !Array.isArray(gatewayReceipts) ||
-      gatewayReceipts.length === 0 ||
-      gatewayReceipts.some((receipt) => !validGatewayReceipt(receipt, expectedRouteHash))
-    ) {
+    try {
+      assertCompletedProposalGatewayReceipts(
+        gatewayReceipts,
+        route,
+        `stable proposal ${event.eventId}`,
+      )
+    } catch {
       reasons.push(`stable proposal ${event.eventId} gateway receipt matrix is invalid`)
     }
     try {

@@ -246,7 +246,9 @@ directory fsync。durable request store 的首次父目录也必须持久化。�
 proposal/journal/idempotency binding 与 resource receipt 完整语义，不能只数 proposal event 或相信 digest。
 gateway receipt 还必须把 route hash 重新绑定到冻结 provider/endpoint/model/reasoning/max-token tuple，并逐字段
 验证非空 request identity、transport attempt index/status/retry/ambiguity/usage/response id 与非空 error；合法
-hash 格式、任意数组或空字符串都不是 authority。
+hash 格式、任意数组或空字符串都不是 authority。完成 proposal 的每个 request id 必须具有成功终态；仅
+retryable failure 可被后续 receipt 接续，2xx/non-retryable 终态后不得出现额外 attempt/receipt。该规则必须
+同时在 stable bundle audit 与 V011 execution load/binding/final audit 重放，不能仅绑定 receipt count。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。

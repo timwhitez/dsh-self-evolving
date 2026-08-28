@@ -12,6 +12,7 @@ import {
   PROPOSAL_WRITABLE_MOUNTS_V1,
   type V011MaterializationReceipt,
 } from '@dsh-self-evolving/core'
+import { proposalGatewayRouteHash, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
 import {
   assertV011ProposalExecutionBinding,
   loadV011ProposalExecution,
@@ -21,6 +22,33 @@ import {
 } from '../src/v011-proposal-execution.js'
 
 let root: string | undefined
+
+const route: ProposalGatewayRoute = {
+  provider: 'deepseek',
+  endpoint: 'https://api.deepseek.com/v1',
+  model: 'deepseek-v4-flash',
+  reasoningEffort: 'high',
+  maxTokens: 32_768,
+}
+
+function gatewayReceipt() {
+  return {
+    requestId: `llm-${'1'.repeat(64)}`,
+    requestHash: `sha256:${'2'.repeat(64)}`,
+    responseHash: `sha256:${'3'.repeat(64)}`,
+    routeHash: proposalGatewayRouteHash(route),
+    attempts: [
+      {
+        attemptIndex: 0,
+        status: 200,
+        retryable: false,
+        ambiguous: false,
+        discardedUsage: null,
+        responseId: null,
+      },
+    ],
+  }
+}
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'v011-proposal-execution-'))
@@ -89,17 +117,17 @@ describe('v0.1.1 proposal execution commit', () => {
       action,
       workerOutputBytes: workerBytes,
       resource: resource(),
-      gatewayReceipts: [{ requestId: 'r1' }],
+      gatewayReceipts: [gatewayReceipt()],
       diagnostic: { schemaVersion: 1 },
     })
 
-    const loaded = await loadV011ProposalExecution(action, workerPath)
+    const loaded = await loadV011ProposalExecution({ action, route, workerOutputPath: workerPath })
     expect(loaded?.workerOutputBytes).toBe(workerBytes)
-    expect(loaded?.gatewayReceipts).toEqual([{ requestId: 'r1' }])
+    expect(loaded?.gatewayReceipts).toEqual([gatewayReceipt()])
     await writeFile(workerPath, '{"finishedTreeDigest":"sha256:changed"}\n')
-    await expect(loadV011ProposalExecution(action, workerPath)).rejects.toThrow(
-      /worker output differs/,
-    )
+    await expect(
+      loadV011ProposalExecution({ action, route, workerOutputPath: workerPath }),
+    ).rejects.toThrow(/worker output differs/)
   })
 
   it('quarantines child-export/receipt residue and permits a clean committed retry', async () => {
@@ -117,6 +145,7 @@ describe('v0.1.1 proposal execution commit', () => {
         action,
         childrenRoot: children,
         workerOutputPath: workerPath,
+        route,
       }),
     ).toBe(true)
     expect(await stat(children).catch(() => null)).toBeNull()
@@ -131,12 +160,13 @@ describe('v0.1.1 proposal execution commit', () => {
       action,
       workerOutputBytes: workerBytes,
       resource: resource(),
-      gatewayReceipts: [],
+      gatewayReceipts: [gatewayReceipt()],
       diagnostic: { schemaVersion: 1 },
     })
-    expect((await loadV011ProposalExecution(action, workerPath))?.workerOutputBytes).toBe(
-      workerBytes,
-    )
+    expect(
+      (await loadV011ProposalExecution({ action, route, workerOutputPath: workerPath }))
+        ?.workerOutputBytes,
+    ).toBe(workerBytes)
     expect(await readFile(join(execution, 'worker-output.json'), 'utf8')).toBe(workerBytes)
   })
 
@@ -163,6 +193,7 @@ describe('v0.1.1 proposal execution commit', () => {
           action,
           childrenRoot: children,
           workerOutputPath: workerPath,
+          route,
         }),
       ).toBe(true)
       expect(await stat(children).catch(() => null)).toBeNull()
@@ -175,7 +206,7 @@ describe('v0.1.1 proposal execution commit', () => {
     const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
     const receipt = resource()
     const workerBytes = '{"transcript":{"eventCount":2}}\n'
-    const gatewayReceipts = [{ requestId: 'r1' }]
+    const gatewayReceipts = [gatewayReceipt()]
     const diagnostic = {
       schemaVersion: 1,
       providerFailure: null,
@@ -191,18 +222,43 @@ describe('v0.1.1 proposal execution commit', () => {
       gatewayReceipts,
       diagnostic,
     })
-    const execution = await loadV011ProposalExecution(action, workerPath)
+    const execution = await loadV011ProposalExecution({
+      action,
+      route,
+      workerOutputPath: workerPath,
+    })
     expect(execution).not.toBeNull()
     const materialization = {
       proposerResourceReceiptDigest: digestV011(receipt),
       proposerUsage: { gatewayReceipts: 1, eventCount: 2 },
     } as V011MaterializationReceipt
-    expect(() => assertV011ProposalExecutionBinding(materialization, execution!)).not.toThrow()
+    expect(() =>
+      assertV011ProposalExecutionBinding(materialization, execution!, route),
+    ).not.toThrow()
     expect(() =>
       assertV011ProposalExecutionBinding(
         { ...materialization, proposerUsage: { gatewayReceipts: 2, eventCount: 2 } },
         execution!,
+        route,
       ),
     ).toThrow(/binding mismatch/)
+  })
+
+  it('rejects a manifest-committed malformed gateway matrix before V011 adoption', async () => {
+    const action = join(root!, 'malformed-gateway')
+    const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
+    const workerBytes = '{"transcript":{"eventCount":1}}\n'
+    await mkdir(join(workerPath, '..'), { recursive: true })
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: resource(),
+      gatewayReceipts: [null],
+      diagnostic: { schemaVersion: 1 },
+    })
+    await expect(
+      loadV011ProposalExecution({ action, route, workerOutputPath: workerPath }),
+    ).rejects.toThrow(/gateway receipt/i)
   })
 })

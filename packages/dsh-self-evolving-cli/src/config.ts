@@ -14,6 +14,7 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { canonicalJson } from '@dsh-self-evolving/core'
+import type { ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
 
 export const CONFIG_SCHEMA_VERSION = 12 as const
 export const STABLE_DEMO_PROFILE = 'stable-demo' as const
@@ -58,6 +59,17 @@ export interface V011DemoConfig extends Omit<StableDemoConfig, 'schemaVersion' |
 }
 
 export type ProjectConfig = StableDemoConfig | V011DemoConfig
+
+/** Frozen proposer route used by producers, recovery, and every final audit. */
+export function projectProposalGatewayRoute(config: ProjectConfig): ProposalGatewayRoute {
+  return {
+    provider: config.model.provider,
+    endpoint: config.model.endpoint,
+    model: config.model.requested,
+    reasoningEffort: config.model.reasoningEffort,
+    maxTokens: config.model.maxOutputTokens,
+  }
+}
 
 export interface InitConfigInput {
   runId: string

@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PROPOSAL_RESOURCE_POLICY_V1, PROPOSAL_WRITABLE_MOUNTS_V1 } from '@dsh-self-evolving/core'
 import { resourcePolicyDigest, type ResourceDomainReceipt } from '@dsh-self-evolving/candidate-sdk'
+import { proposalGatewayRouteHash } from '@dsh-self-evolving/proposer'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { verifyStableProposalPublications } from '../src/audit.js'
 import { publishBundle } from '../src/publish.js'
@@ -37,8 +37,18 @@ const route = {
 }
 
 function routeHash(): string {
-  const canonical = JSON.stringify(route, Object.keys(route).sort())
-  return `sha256:${createHash('sha256').update(canonical).digest('hex')}`
+  return proposalGatewayRouteHash(route)
+}
+
+function gatewayAttempt(status: number, attemptIndex = 0) {
+  return {
+    attemptIndex,
+    status,
+    retryable: status === 408 || status === 429 || status >= 500,
+    ambiguous: status === 408 || status >= 500,
+    discardedUsage: null,
+    responseId: null,
+  }
 }
 
 function gatewayReceipt(): Record<string, unknown> {
@@ -47,16 +57,7 @@ function gatewayReceipt(): Record<string, unknown> {
     requestHash: `sha256:${'4'.repeat(64)}`,
     responseHash: `sha256:${'5'.repeat(64)}`,
     routeHash: routeHash(),
-    attempts: [
-      {
-        attemptIndex: 0,
-        status: 200,
-        retryable: false,
-        ambiguous: false,
-        discardedUsage: null,
-        responseId: null,
-      },
-    ],
+    attempts: [gatewayAttempt(200)],
   }
 }
 
@@ -162,6 +163,22 @@ describe('stable proposal publication audit', () => {
     ['foreign route hash', { routeHash: `sha256:${'9'.repeat(64)}` }],
   ] as const)('rejects a gateway receipt with %s', async (_label, mutation) => {
     await publication(resource(), proposal, [{ ...gatewayReceipt(), ...mutation }])
+    const reasons = await verifyStableProposalPublications(root!, 'audit-run', route, [event()])
+    expect(reasons.join('\n')).toMatch(/gateway receipt matrix is invalid/)
+  })
+
+  it.each([
+    [
+      'failure-only evidence',
+      [{ ...gatewayReceipt(), attempts: [gatewayAttempt(503)], error: 'provider failed' }],
+    ],
+    ['a success receipt carrying an error', [{ ...gatewayReceipt(), error: 'impossible' }]],
+    [
+      'a non-retryable attempt followed by success',
+      [{ ...gatewayReceipt(), attempts: [gatewayAttempt(400), gatewayAttempt(200, 1)] }],
+    ],
+  ] as const)('rejects completed proposal gateway matrix with %s', async (_label, receipts) => {
+    await publication(resource(), proposal, [...receipts])
     const reasons = await verifyStableProposalPublications(root!, 'audit-run', route, [event()])
     expect(reasons.join('\n')).toMatch(/gateway receipt matrix is invalid/)
   })

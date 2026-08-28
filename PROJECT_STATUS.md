@@ -121,8 +121,12 @@
   error and any syntactically valid route hash. The audit now requires the exact `llm-<sha256>` request identity, a
   non-empty exact attempt schema with coherent retry/ambiguity flags and usage, non-empty errors, and the hash of the
   frozen provider/endpoint/model/reasoning/max-token route.
-- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 118 files /
-  889 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+- Exact-head review of `13d4976` found receipt-level terminal states were still unchecked and V011 accepted arbitrary
+  gateway arrays. One shared producer-owned validator now requires every logical request id to end in exactly one
+  successful terminal receipt, permits only retryable failures before it, forbids attempts/receipts after success or
+  non-retryable failure, binds same-id request bytes, and runs in both stable and V011 load/binding/final-audit paths.
+- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
+  901 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

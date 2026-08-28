@@ -12,6 +12,11 @@ import {
   PROPOSAL_WRITABLE_MOUNTS_V1,
   type V011MaterializationReceipt,
 } from '@dsh-self-evolving/core'
+import {
+  assertCompletedProposalGatewayReceipts,
+  type ProposalGatewayReceipt,
+  type ProposalGatewayRoute,
+} from '@dsh-self-evolving/proposer'
 import { loadPublishedBundle, publishBundle } from './publish.js'
 
 const EXECUTION_DIRECTORY = 'proposal-execution-v1'
@@ -26,7 +31,7 @@ export interface V011ProposalExecution {
   workerOutputBytes: string
   worker: Record<string, unknown>
   resource: ResourceDomainReceipt
-  gatewayReceipts: unknown[]
+  gatewayReceipts: ProposalGatewayReceipt[]
   diagnostic: Record<string, unknown>
 }
 
@@ -57,18 +62,19 @@ export function v011ProposalExecutionDirectory(action: string): string {
   return join(action, EXECUTION_DIRECTORY)
 }
 
-export async function loadV011ProposalExecution(
-  action: string,
-  workerOutputPath?: string,
-): Promise<V011ProposalExecution | null> {
-  const bundle = await loadPublishedBundle(v011ProposalExecutionDirectory(action))
+export async function loadV011ProposalExecution(input: {
+  action: string
+  route: ProposalGatewayRoute
+  workerOutputPath?: string
+}): Promise<V011ProposalExecution | null> {
+  const bundle = await loadPublishedBundle(v011ProposalExecutionDirectory(input.action))
   if (bundle === null) return null
   if (JSON.stringify(Object.keys(bundle).sort()) !== JSON.stringify([...EXECUTION_FILES])) {
     throw new Error('v0.1.1 proposal execution: committed bundle inventory mismatch')
   }
   const workerOutputBytes = bundle['worker-output.json']!
-  if (workerOutputPath !== undefined) {
-    const installed = await readFile(workerOutputPath, 'utf8').catch(() => null)
+  if (input.workerOutputPath !== undefined) {
+    const installed = await readFile(input.workerOutputPath, 'utf8').catch(() => null)
     if (installed !== workerOutputBytes) {
       throw new Error('v0.1.1 proposal execution: installed worker output differs from commit')
     }
@@ -85,9 +91,14 @@ export async function loadV011ProposalExecution(
   } catch (cause) {
     throw new Error('v0.1.1 proposal execution: committed JSON is invalid', { cause })
   }
-  if (!isRecord(worker) || !Array.isArray(gatewayReceipts) || !isRecord(diagnostic)) {
+  if (!isRecord(worker) || !isRecord(diagnostic)) {
     throw new Error('v0.1.1 proposal execution: committed evidence shape is invalid')
   }
+  const verifiedGatewayReceipts = assertCompletedProposalGatewayReceipts(
+    gatewayReceipts,
+    input.route,
+    'v0.1.1 proposal execution',
+  )
   const verifiedResource = assertCompletedResourceDomainReceipt(resource, {
     policy: PROPOSAL_RESOURCE_POLICY_V1,
     writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
@@ -97,7 +108,7 @@ export async function loadV011ProposalExecution(
     workerOutputBytes,
     worker,
     resource: verifiedResource,
-    gatewayReceipts,
+    gatewayReceipts: verifiedGatewayReceipts,
     diagnostic,
   }
 }
@@ -122,11 +133,23 @@ export async function publishV011ProposalExecution(input: {
 export function assertV011ProposalExecutionBinding(
   materialization: V011MaterializationReceipt,
   execution: V011ProposalExecution,
+  route: ProposalGatewayRoute,
 ): void {
   const usage = materialization.proposerUsage
   const transcript = execution.worker['transcript']
   const sandbox = execution.diagnostic['sandbox']
+  let gatewayValid = true
+  try {
+    assertCompletedProposalGatewayReceipts(
+      execution.gatewayReceipts,
+      route,
+      'v0.1.1 proposal execution binding',
+    )
+  } catch {
+    gatewayValid = false
+  }
   if (
+    !gatewayValid ||
     materialization.proposerResourceReceiptDigest !== digestV011(execution.resource) ||
     !isRecord(usage) ||
     !exactKeys(usage, ['eventCount', 'gatewayReceipts']) ||
@@ -163,8 +186,11 @@ export async function quarantineIncompleteV011ProposalExecution(input: {
   action: string
   childrenRoot: string
   workerOutputPath: string
+  route: ProposalGatewayRoute
 }): Promise<boolean> {
-  if ((await loadV011ProposalExecution(input.action)) !== null) return false
+  if ((await loadV011ProposalExecution({ action: input.action, route: input.route })) !== null) {
+    return false
+  }
   const execution = v011ProposalExecutionDirectory(input.action)
   const [executionInfo, workerInfo] = await Promise.all([
     stat(execution).catch(() => null),

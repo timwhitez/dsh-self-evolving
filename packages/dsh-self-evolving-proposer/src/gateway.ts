@@ -125,6 +125,11 @@ function sha256(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
 
+/** Canonical route identity shared by the producer and every final auditor. */
+export function proposalGatewayRouteHash(route: ProposalGatewayRoute): string {
+  return sha256(stableJson(route))
+}
+
 function validRoute(route: ProposalGatewayRoute): boolean {
   return (
     typeof route.provider === 'string' &&
@@ -360,7 +365,7 @@ export async function startProposalGateway(
       }
       return active.promise
     }
-    const routeHash = sha256(stableJson(options.route))
+    const routeHash = proposalGatewayRouteHash(options.route)
     const dispatch = (async (): Promise<ProposalGatewayResponse> => {
       // Durable reservation runs INSIDE the shared dispatch promise so a
       // concurrent same-id caller joins this dispatch instead of observing

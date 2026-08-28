@@ -52,7 +52,7 @@ import {
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
 import { claimStagingDir, clearBuildIntent, publishClaimedStagingDir } from './build-claim.js'
-import type { V011DemoConfig } from './config.js'
+import { projectProposalGatewayRoute, type V011DemoConfig } from './config.js'
 import type {
   BuiltCandidate,
   StableBuildInput,
@@ -767,6 +767,7 @@ async function realV011Proposal(
   catalog: FrozenCapabilityCatalog,
   input: StableProposalInput,
 ): Promise<StableProposal> {
+  const proposalRoute = projectProposalGatewayRoute(config)
   const action = join(
     config.stateDir,
     'v011',
@@ -787,11 +788,15 @@ async function realV011Proposal(
       authority.materialization.proposalId,
       'worker-output.json',
     )
-    const execution = await loadV011ProposalExecution(action, workerOutput)
+    const execution = await loadV011ProposalExecution({
+      action,
+      route: proposalRoute,
+      workerOutputPath: workerOutput,
+    })
     if (execution === null) {
       throw new Error('v0.1.1 proposal: cached materialization lacks execution commit')
     }
-    assertV011ProposalExecutionBinding(authority.materialization, execution)
+    assertV011ProposalExecutionBinding(authority.materialization, execution, proposalRoute)
     return authority.stableProposal
   }
   const exported = await exportForProposal(config, input.generation, input.attempt)
@@ -824,15 +829,17 @@ async function realV011Proposal(
   const childrenRoot = join(action, 'children')
   const slot = join(childrenRoot, proposalId)
   const workerOutput = join(slot, 'worker-output.json')
-  let execution: V011ProposalExecution | null = await loadV011ProposalExecution(
+  let execution: V011ProposalExecution | null = await loadV011ProposalExecution({
     action,
-    workerOutput,
-  )
+    route: proposalRoute,
+    workerOutputPath: workerOutput,
+  })
   if (execution === null) {
     await quarantineIncompleteV011ProposalExecution({
       action,
       childrenRoot,
       workerOutputPath: workerOutput,
+      route: proposalRoute,
     })
   }
   if ((await stat(slot).catch(() => null)) === null) {
@@ -901,12 +908,9 @@ async function realV011Proposal(
     }
     const route = await loadTrustedRoute()
     const sandboxTimeoutMs = 1_800_000
-    const lockedRoute: ProposalGatewayRoute = {
-      provider: 'deepseek',
-      endpoint: route.baseUrl,
-      model: config.model.requested,
-      reasoningEffort: config.model.reasoningEffort,
-      maxTokens: config.model.maxOutputTokens,
+    const lockedRoute: ProposalGatewayRoute = proposalRoute
+    if (route.baseUrl !== lockedRoute.endpoint) {
+      throw new Error('v0.1.1 proposer: trusted route differs from frozen config')
     }
     await writeFile(
       join(contractsInput, 'request.json'),
@@ -1067,7 +1071,11 @@ async function realV011Proposal(
         ? cleanupErrors[0]
         : new Error(String(cleanupErrors[0]))
     }
-    execution = await loadV011ProposalExecution(action, workerOutput)
+    execution = await loadV011ProposalExecution({
+      action,
+      route: proposalRoute,
+      workerOutputPath: workerOutput,
+    })
     if (execution === null) {
       throw new Error('v0.1.1 proposal: execution commit missing after successful sandbox')
     }
@@ -1148,7 +1156,7 @@ async function realV011Proposal(
     artifactDigest: `sha256:${materialized.receiptRef.digest}`,
   }
   const cacheValue = { stableProposal, materialization: materialized.receipt }
-  assertV011ProposalExecutionBinding(materialized.receipt, execution)
+  assertV011ProposalExecutionBinding(materialized.receipt, execution, proposalRoute)
   await writeExclusive(cache, JSON.stringify(cacheValue, null, 2) + '\n')
   const authority = await verifyV011MaterializationAuthority({
     store,
