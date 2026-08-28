@@ -178,6 +178,11 @@ Each profile gets a fresh run lineage and retains the original split, budget, no
 Repeated small development runs may improve the harness over time; sealed results never feed the same run back into
 selection. Skipping Gate 8 must be reported as `BENCHMARK_PROFILES_NOT_RUN`, not as failure of the open-source tool.
 
+Gate 8 的公开 acceptance verifier 只有在真实 profile producer 已生成 versioned receipts、可信 artifact-store
+reader、外部 signature authority、journal/action replay 和 immutable launch-manifest reconstruction 后才能
+启用。在此之前，synthetic consistency tests 可以保留，但 public verdict 必须固定 fail closed，不能把内部
+自洽 envelope 报告为 promotion/full-set/release evidence。
+
 ## 11. Test matrix
 
 | Layer                     | Fast CI                     | Integration                      | Paid/slow            |

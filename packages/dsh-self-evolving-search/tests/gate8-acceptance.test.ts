@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
+import * as SearchRoot from '../src/index.js'
 import {
   commitSplit,
-  gate8EvidenceCommitment,
-  verifyGate8Evidence,
+  verifyGate8Evidence as verifyAuthenticGate8Evidence,
   type Gate8EvidenceInput,
   type SealedTrialEvidence,
 } from '../src/index.js'
+import {
+  assessGate8EvidenceConsistency as verifyGate8Evidence,
+  gate8EvidenceCommitment,
+} from '../src/gate8-acceptance.js'
 
 const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`
 const recordDigest = (record: unknown) => digestV011(canonicalV011(record))
@@ -198,8 +202,30 @@ function complete(): Gate8EvidenceInput {
   return input
 }
 
-describe('Gate 8 sealed/full/release evidence', () => {
-  it('accepts complete paired sealed promotion, 89x5 local full set, and release evidence', () => {
+describe('Gate 8 public authentication boundary (issue #111)', () => {
+  it('does not expose the synthetic assessor or caller-recomputable commitment from package root', () => {
+    expect(SearchRoot).not.toHaveProperty('assessGate8EvidenceConsistency')
+    expect(SearchRoot).not.toHaveProperty('gate8EvidenceCommitment')
+  })
+
+  it('refuses a fully self-consistent envelope when no authentic artifact authority exists', () => {
+    const verdict = verifyAuthenticGate8Evidence(complete())
+    expect(verdict).toMatchObject({
+      protocolValid: false,
+      promotionState: 'PROTOCOL_INVALID',
+      sealedComplete: false,
+      fullSetEligible: false,
+      fullSetVerified: false,
+      releaseVerified: false,
+    })
+    expect(verdict.reasons.join('\n')).toMatch(
+      /authentic Gate 8 artifact verification is unavailable/,
+    )
+  })
+})
+
+describe('Gate 8 synthetic consistency assessment (not acceptance)', () => {
+  it('classifies a complete paired sealed/full/release fixture as internally consistent', () => {
     const verdict = verifyGate8Evidence(complete())
     expect(verdict.reasons, verdict.reasons.join('\n')).toEqual([])
     expect(verdict).toMatchObject({
