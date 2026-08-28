@@ -1,11 +1,12 @@
 /**
  * Trusted PID-namespace supervisor used by resource-sandbox.ts.
  *
- * It starts with mount capabilities only long enough to create size/inode
- * bounded tmpfs mounts, then launches the untrusted target through setpriv
- * with an empty capability bounding set and no-new-privileges. The target
- * never inherits control fd 3. After the target exits, all remaining namespace
- * processes are killed before any exported tree is read.
+ * It starts with private-user-namespace capabilities only long enough to
+ * create size/inode-bounded tmpfs mounts and freeze the nested-namespace
+ * quota, then launches the untrusted target through setpriv with an empty
+ * capability bounding set and no-new-privileges. The target never inherits
+ * control fd 3. After the target exits, all remaining namespace processes are
+ * killed before any exported tree is read.
  */
 import { spawn } from 'node:child_process'
 import { writeSync } from 'node:fs'

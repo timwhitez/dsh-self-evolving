@@ -282,7 +282,7 @@ export async function spawnResourceBoundSandbox(input: {
   mounts: WritableSandboxMount[]
   policy: ResourcePolicyV1
 }): Promise<ResourceSandboxProcess> {
-  const forbiddenWritableOptions = new Set([
+  const forbiddenBaseOptions = [
     '--bind',
     '--bind-try',
     '--dev-bind',
@@ -292,13 +292,23 @@ export async function spawnResourceBoundSandbox(input: {
     '--bind-data',
     '--overlay',
     '--tmp-overlay',
-  ])
+    '--cap-add',
+    '--cap-drop',
+    '--uid',
+    '--gid',
+    '--unshare-user',
+    '--userns',
+    '--userns2',
+    '--disable-userns',
+    '--assert-userns-disabled',
+  ]
+  const hasOption = (option: string) =>
+    input.bwrapArgs.some((argument) => argument === option || argument.startsWith(`${option}=`))
   if (
     input.bwrapArgs.includes('--') ||
     !input.bwrapArgs.includes('--unshare-all') ||
     !input.bwrapArgs.includes('--clearenv') ||
-    input.bwrapArgs.includes('--cap-drop') ||
-    input.bwrapArgs.some((argument) => forbiddenWritableOptions.has(argument))
+    forbiddenBaseOptions.some(hasOption)
   ) {
     throw new Error('resource sandbox: bwrap base args violate supervisor contract')
   }
@@ -316,6 +326,21 @@ export async function spawnResourceBoundSandbox(input: {
     supervisor,
     '/resource-sandbox-supervisor.mjs',
     '--unshare-user',
+    // Bubblewrap preserves an unprivileged caller's uid and otherwise drops
+    // every capability. The trusted supervisor needs CAP_SYS_ADMIN to create
+    // bounded tmpfs mounts, CAP_SYS_RESOURCE to freeze the namespace quota,
+    // and CAP_SETPCAP to clear the target's bounding set. All three are scoped
+    // to the private user namespace and are removed before target exec.
+    '--uid',
+    '0',
+    '--gid',
+    '0',
+    '--cap-add',
+    'CAP_SYS_ADMIN',
+    '--cap-add',
+    'CAP_SYS_RESOURCE',
+    '--cap-add',
+    'CAP_SETPCAP',
     '--remount-ro',
     '/',
     '--remount-ro',

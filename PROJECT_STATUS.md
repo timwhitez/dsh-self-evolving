@@ -86,14 +86,15 @@
   domains. Frozen policies apply memory with zero swap, CPU bandwidth/time, PID and block-I/O limits plus rlimits for
   CPU time, file size, open files and core dumps; teardown uses whole-domain `cgroup.kill`.
 - Every writable path, including `/tmp` and `/dev/shm`, is a size/inode-bounded tmpfs. A trusted supervisor seeds and
-  exports trees while retaining mount capability; untrusted targets run with an empty capability set and never inherit
-  its control FD. Root and `/dev` are read-only, and nested user namespaces are disabled after trusted mount setup.
-  Missing delegation/control or any quota failure is fail closed.
+  exports trees with only mount, namespace-quota and capability-drop privileges in its private user namespace;
+  untrusted targets run with an empty capability set and never inherit its control FD. Root and `/dev` are read-only,
+  and nested user namespaces are disabled after trusted mount setup. Missing delegation/control or any quota failure
+  is fail closed.
 - Resource receipts record full limits/digest, enforcement, peaks/events and termination cause. Build/admission and
   proposer evidence retain these receipts. Memory-bomb, fork-bomb, CPU throttle/time and disk-fill E2E tests exercise
   the kernel boundaries. Non-root CI commands enter an executor child through a minimal privileged launcher, then
   drop back to the runner UID; resource domains are siblings under the delegated root. Format/docs/lint/typecheck/
-  integrity pass; unit is 110 files / 852 passed + 1 skipped and no-key E2E is 42 passed + 4 credential-gated skips.
+  integrity pass; unit is 111 files / 853 passed + 1 skipped and no-key E2E is 42 passed + 4 credential-gated skips.
   Hosted CI and independent exact-head review remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or
   release evidence.

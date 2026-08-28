@@ -42,7 +42,7 @@ describe('Gate 4 — outer proposal process sandbox', () => {
       "await readFile('/input/archive/catalog.json', 'utf8')",
       "await readFile('/input/evidence/trace.txt', 'utf8')",
       "const processStatus = await readFile('/proc/self/status', 'utf8')",
-      'const targetPrivilegesDropped = /^CapEff:\\s+0+$/m.test(processStatus) && /^CapBnd:\\s+0+$/m.test(processStatus) && /^NoNewPrivs:\\s+1$/m.test(processStatus)',
+      'const targetPrivilegesDropped = /^CapInh:\\s+0+$/m.test(processStatus) && /^CapPrm:\\s+0+$/m.test(processStatus) && /^CapEff:\\s+0+$/m.test(processStatus) && /^CapBnd:\\s+0+$/m.test(processStatus) && /^CapAmb:\\s+0+$/m.test(processStatus) && /^NoNewPrivs:\\s+1$/m.test(processStatus)',
       'let parentWriteDenied = false',
       "try { await writeFile('/input/parent/forbidden.txt', 'x') } catch { parentWriteDenied = true }",
       'let hostPathAbsent = false',

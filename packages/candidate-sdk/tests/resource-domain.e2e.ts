@@ -154,7 +154,9 @@ describe('cgroup-v2 resource domain', () => {
         targetArgs: [
           '--eval',
           [
-            "const { writeFileSync } = require('node:fs')",
+            "const { readFileSync, writeFileSync } = require('node:fs')",
+            "const status = readFileSync('/proc/self/status', 'utf8')",
+            "if (!/^CapInh:\\s+0+$/m.test(status) || !/^CapPrm:\\s+0+$/m.test(status) || !/^CapEff:\\s+0+$/m.test(status) || !/^CapBnd:\\s+0+$/m.test(status) || !/^CapAmb:\\s+0+$/m.test(status) || !/^NoNewPrivs:\\s+1$/m.test(status)) throw new Error('target retained supervisor privileges')",
             "process.stdout.write('START\\n')",
             'try {',
             '  for (let i = 0; ; i += 1) { writeFileSync(`/work/children/${i}`, Buffer.alloc(64 * 1024, 1)); if (i % 16 === 0) process.stdout.write(`WROTE:${i}\\n`) }',

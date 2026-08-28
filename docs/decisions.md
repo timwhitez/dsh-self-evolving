@@ -328,12 +328,16 @@ repository command executes. This avoids a runtime dependency on a user/system D
 a kernel-enforced accounting boundary.
 
 All writable sandbox paths, including `/tmp` and `/dev/shm`, are size/inode-bounded tmpfs mounts created by a trusted
-PID-namespace supervisor. The supervisor alone temporarily retains mount capability. It starts the target through
-`setpriv` with an empty capability bounding set and `no_new_privs`; the target never inherits the export control FD.
-The outer root and `/dev` are read-only, and after mounting the supervisor freezes its private user namespace's nested
-namespace quota at zero so the target cannot reacquire mount capability. Seed trees enter through a read-only mount,
-and output is inspected/exported only after namespace descendants are killed. Resource policies have versioned ids;
-every receipt carries the full policy and its digest, and build identity also binds the build policy digests.
+PID-namespace supervisor. The supervisor alone temporarily retains the required private-namespace capabilities. It
+starts the target through `setpriv` with an empty capability bounding set and `no_new_privs`; the target never inherits
+the export control FD.
+For an unprivileged host caller, Bubblewrap maps the trusted supervisor to uid/gid 0 inside its private user namespace
+and grants only `CAP_SYS_ADMIN` for bounded mounts, `CAP_SYS_RESOURCE` for the namespace quota and `CAP_SETPCAP` to
+clear the target's bounding set; caller-supplied capability options are rejected. The outer root and `/dev` are
+read-only, and after mounting the supervisor freezes its private user namespace's nested namespace quota at zero so
+the target cannot reacquire mount capability. Seed trees enter through a read-only mount, and output is
+inspected/exported only after namespace descendants are killed. Resource policies have versioned ids; every receipt
+carries the full policy and its digest, and build identity also binds the build policy digests.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they
