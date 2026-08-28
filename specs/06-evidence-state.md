@@ -245,7 +245,9 @@ fsync action directory；不得直接在最终 authority path 写入。cache 已
 任一侧损坏时，必须在 cache adoption 前把 cache、execution 与 child 一起隔离，同时保留 durable gateway
 request store 供确定性重放。active cache 在 adoption 全程必须是 regular single-link inode；存在外部 hard-link
 alias 时不得规范化后采用，隔离留存必须复制为新的 fsynced inode 后删除 active name。staging path 无法检查或
-清理也必须使 publication fail closed。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
+清理也必须使 publication fail closed。publisher 必须持有 directory/staging descriptor，cleanup 后验证请求目录
+仍是同一 dev/inode、final path 仍是 staged 的 stable single-link inode 且 bytes 未变，再 fsync held directory 并
+重复验证；目录替换或 final name 删除必须失败。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
 stable proposal artifact digest 交叉验证。candidate staging claim 在最终 rename 前清除且 fsync；rename 后
 fsync parent directory，正式 candidate root 不得携带 live claim marker。
 稳定 proposer 的 proposal/resource/gateway/idempotency bundle 服从同一规则：manifest 必须先在 staging

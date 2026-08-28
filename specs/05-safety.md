@@ -109,6 +109,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - materialization cache adoption 只接受全程保持 regular single-link 的 inode；外部 hard-link alias 必须触发
   cache/execution/children 一起隔离。隔离多链接文件时必须把当时 bytes 写入并 fsync 到新 inode 后移除 active
   name，不能让外部 alias 继续修改 retained evidence；publication staging 的探测或清理错误不得被吞掉。
+- materialization publication 必须持有 directory/staging descriptor 到 cleanup 结束，验证 requested directory
+  与 held dev/inode 相同、final path 与 staged single-link inode/metadata/bytes 相同，fsync held directory 后再次
+  验证。早先 directory fsync 后发生目录替换或 final name 删除仍必须 fail closed。
 
 ### 5.3 Task sandbox
 

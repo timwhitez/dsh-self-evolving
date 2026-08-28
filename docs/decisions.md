@@ -384,6 +384,10 @@ together while leaving durable gateway requests in place for deterministic repla
 regular single-link inode throughout adoption; a hard-linked cache is never normalized into authority. Quarantine copies
 multi-link file bytes into fresh fsynced inodes before removing the active name so an external alias cannot mutate retained
 evidence. Failure to inspect or remove the publication staging path is itself a failed publication, not ignorable cleanup.
+The publisher holds the action directory and staging descriptors through cleanup, then proves the requested directory
+still names the held directory and the final path names the exact stable single-link staged inode with unchanged bytes.
+It fsyncs the held directory and repeats those checks before returning; directory replacement or final-name removal is
+a failed publication even if an earlier fsync completed.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

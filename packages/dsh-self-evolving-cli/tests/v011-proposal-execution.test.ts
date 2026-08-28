@@ -527,6 +527,41 @@ describe('v0.1.1 proposal execution commit', () => {
     expect(await stat(children).catch(() => null)).toBeNull()
   })
 
+  it('rejects publication when the authority directory is replaced after its first fsync', async () => {
+    const action = join(root!, 'cache-directory-replaced')
+    const movedAction = join(root!, 'cache-directory-replaced-moved')
+    const cache = join(action, 'materialization.json')
+    const bytes = '{"directory":"bound"}\n'
+    await expect(
+      publishV011MaterializationCache({
+        path: cache,
+        bytes,
+        async afterCheckpoint(checkpoint) {
+          if (checkpoint !== 'directory-fsynced') return
+          await rename(action, movedAction)
+          await mkdir(action)
+        },
+      }),
+    ).rejects.toThrow(/authority directory changed/)
+    expect(await stat(cache).catch(() => null)).toBeNull()
+    expect(await readFile(join(movedAction, 'materialization.json'), 'utf8')).toBe(bytes)
+  })
+
+  it('rejects publication when the final authority name is removed after its first fsync', async () => {
+    const action = join(root!, 'cache-final-removed')
+    const cache = join(action, 'materialization.json')
+    await expect(
+      publishV011MaterializationCache({
+        path: cache,
+        bytes: '{"final":"bound"}\n',
+        async afterCheckpoint(checkpoint) {
+          if (checkpoint === 'directory-fsynced') await rm(cache)
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await stat(cache).catch(() => null)).toBeNull()
+  })
+
   it('quarantines a crash residue left between child-tree replacement renames', async () => {
     const action = join(root!, 'interrupted-export-rename')
     const children = join(action, 'children')

@@ -146,8 +146,12 @@
   authority must be a regular single-link inode before and during adoption; any multi-link cache is de-authorized with
   its execution/tree, and quarantined bytes are copied into fresh fsynced inodes so external aliases cannot mutate the
   retained evidence. Durable gateway requests remain outside quarantine for deterministic replay.
+- Exact-head review of `f6a6754` found publication could still report success if the action directory was replaced or
+  the final authority name was unlinked after the first directory fsync. Publication now holds both directory and
+  staging descriptors, verifies directory dev/inode plus exact final single-link inode/metadata/bytes after cleanup,
+  fsyncs the held directory, and repeats the authority checks before returning.
 - Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
-  910 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
+  912 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

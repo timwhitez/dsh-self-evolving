@@ -85,6 +85,26 @@ function sameStableSingleLinkFile(
   )
 }
 
+function sameRegularFileIdentity(
+  left: Awaited<ReturnType<typeof lstat>>,
+  right: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino
+}
+
+function sameDirectoryIdentity(
+  left: Awaited<ReturnType<typeof lstat>>,
+  right: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return (
+    left.isDirectory() &&
+    right.isDirectory() &&
+    !right.isSymbolicLink() &&
+    left.dev === right.dev &&
+    left.ino === right.ino
+  )
+}
+
 async function readStableSingleLinkTextFile(path: string): Promise<{
   bytes: string
   info: Awaited<ReturnType<typeof lstat>>
@@ -274,17 +294,33 @@ export async function publishV011MaterializationCache(input: {
 }): Promise<void> {
   const directory = dirname(input.path)
   await mkdir(directory, { recursive: true, mode: 0o700 })
-  await fsyncDirectory(directory)
+  const directoryHandle = await open(
+    directory,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  )
+  let heldDirectoryInfo: Awaited<ReturnType<typeof lstat>>
+  try {
+    heldDirectoryInfo = await directoryHandle.stat()
+    const pathDirectoryInfo = await lstat(directory)
+    if (!sameDirectoryIdentity(heldDirectoryInfo, pathDirectoryInfo)) {
+      throw new Error('v0.1.1 materialization cache directory is not one stable directory')
+    }
+    await directoryHandle.sync()
+  } catch (error) {
+    await directoryHandle.close().catch(() => {})
+    throw error
+  }
   const staging = join(directory, `.${basename(input.path)}.staging-${process.pid}-${randomUUID()}`)
   let publicationError: unknown
+  let stagingHandle: Awaited<ReturnType<typeof open>> | undefined
   try {
-    const handle = await open(staging, 'wx', 0o600)
-    try {
-      await handle.writeFile(input.bytes)
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
+    stagingHandle = await open(
+      staging,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    )
+    await stagingHandle.writeFile(input.bytes)
+    await stagingHandle.sync()
     await input.afterCheckpoint?.('staging-fsynced')
     try {
       await link(staging, input.path)
@@ -297,7 +333,7 @@ export async function publishV011MaterializationCache(input: {
       throw error
     }
     await input.afterCheckpoint?.('final-linked')
-    await fsyncDirectory(directory)
+    await directoryHandle.sync()
     await input.afterCheckpoint?.('directory-fsynced')
   } catch (error) {
     publicationError = error
@@ -312,14 +348,62 @@ export async function publishV011MaterializationCache(input: {
   }
   if (stagingInfo !== null) {
     try {
+      if (stagingHandle === undefined) {
+        throw new Error('v0.1.1 materialization cache staging identity is unavailable')
+      }
+      const heldStagingInfo = await stagingHandle.stat()
+      if (!sameRegularFileIdentity(heldStagingInfo, stagingInfo)) {
+        throw new Error('v0.1.1 materialization cache staging path changed before cleanup')
+      }
       await rm(staging, { force: true })
-      await fsyncDirectory(directory)
+      await directoryHandle.sync()
     } catch (error) {
       cleanupError = error
     }
   }
-  if (publicationError !== undefined) throw publicationError
-  if (cleanupError !== undefined) throw cleanupError
+  try {
+    if (publicationError !== undefined) throw publicationError
+    if (cleanupError !== undefined) throw cleanupError
+    if (stagingHandle === undefined) {
+      throw new Error('v0.1.1 materialization cache staging identity is unavailable')
+    }
+    const verifyFinalAuthority = async (): Promise<void> => {
+      const currentDirectory = await lstat(directory)
+      if (!sameDirectoryIdentity(heldDirectoryInfo, currentDirectory)) {
+        throw new Error('v0.1.1 materialization cache authority directory changed')
+      }
+      const finalHandle = await open(input.path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+      try {
+        const heldStagingInfo = await stagingHandle!.stat()
+        const before = await finalHandle.stat()
+        const pathBefore = await lstat(input.path)
+        if (
+          !sameStableSingleLinkFile(heldStagingInfo, before) ||
+          !sameStableSingleLinkFile(before, pathBefore)
+        ) {
+          throw new Error('v0.1.1 materialization cache final authority identity changed')
+        }
+        const contents = await finalHandle.readFile()
+        const after = await finalHandle.stat()
+        const pathAfter = await lstat(input.path)
+        if (
+          !sameStableSingleLinkFile(before, after) ||
+          !sameStableSingleLinkFile(after, pathAfter) ||
+          !contents.equals(Buffer.from(input.bytes))
+        ) {
+          throw new Error('v0.1.1 materialization cache final authority bytes changed')
+        }
+      } finally {
+        await finalHandle.close()
+      }
+    }
+    await verifyFinalAuthority()
+    await directoryHandle.sync()
+    await verifyFinalAuthority()
+  } finally {
+    await stagingHandle?.close().catch(() => {})
+    await directoryHandle.close().catch(() => {})
+  }
 }
 
 export function assertV011ProposalExecutionBinding(
