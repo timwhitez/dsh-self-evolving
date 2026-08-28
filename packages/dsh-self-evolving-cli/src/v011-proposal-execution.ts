@@ -113,6 +113,34 @@ export async function loadV011ProposalExecution(input: {
   }
 }
 
+/**
+ * Load one materialized proposal's committed execution and bind every byte of
+ * that execution to the materialization authority. Final audit uses this for
+ * every completed proposal attempt, including attempts whose later build was
+ * rejected and therefore never became a generation candidate.
+ */
+export async function loadBoundV011ProposalExecution(input: {
+  action: string
+  materialization: V011MaterializationReceipt
+  route: ProposalGatewayRoute
+}): Promise<V011ProposalExecution> {
+  const execution = await loadV011ProposalExecution({
+    action: input.action,
+    route: input.route,
+    workerOutputPath: join(
+      input.action,
+      'children',
+      input.materialization.proposalId,
+      'worker-output.json',
+    ),
+  })
+  if (execution === null) {
+    throw new Error('v0.1.1 proposal execution: committed execution is missing')
+  }
+  assertV011ProposalExecutionBinding(input.materialization, execution, input.route)
+  return execution
+}
+
 export async function publishV011ProposalExecution(input: {
   action: string
   workerOutputBytes: string

@@ -15,6 +15,7 @@ import {
 import { proposalGatewayRouteHash, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
 import {
   assertV011ProposalExecutionBinding,
+  loadBoundV011ProposalExecution,
   loadV011ProposalExecution,
   publishV011ProposalExecution,
   quarantineIncompleteV011ProposalExecution,
@@ -260,5 +261,40 @@ describe('v0.1.1 proposal execution commit', () => {
     await expect(
       loadV011ProposalExecution({ action, route, workerOutputPath: workerPath }),
     ).rejects.toThrow(/gateway receipt/i)
+  })
+
+  it('replays every materialized attempt execution, including an unretained build attempt', async () => {
+    const action = join(root!, 'proposal-2-2')
+    const proposalId = `p_${'7'.repeat(32)}`
+    const workerPath = join(action, 'children', proposalId, 'worker-output.json')
+    const workerBytes = '{"transcript":{"eventCount":1}}\n'
+    const receipt = resource()
+    await mkdir(join(workerPath, '..'), { recursive: true })
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: receipt,
+      gatewayReceipts: [gatewayReceipt()],
+      diagnostic: {
+        schemaVersion: 1,
+        providerFailure: null,
+        gatewayReceiptCount: 1,
+        sandbox: { exitCode: 0, signal: null, resource: receipt },
+      },
+    })
+    const materialization = {
+      proposalId,
+      proposerResourceReceiptDigest: digestV011(receipt),
+      proposerUsage: { gatewayReceipts: 1, eventCount: 1 },
+    } as V011MaterializationReceipt
+    await expect(
+      loadBoundV011ProposalExecution({ action, materialization, route }),
+    ).resolves.toMatchObject({ gatewayReceipts: [gatewayReceipt()] })
+
+    await writeFile(workerPath, '{"tampered":true}\n')
+    await expect(
+      loadBoundV011ProposalExecution({ action, materialization, route }),
+    ).rejects.toThrow(/worker output differs/)
   })
 })

@@ -368,6 +368,8 @@ usage fields; well-formed hashes or arrays alone are not evidence. A shared vali
 adoption/audit: every logical request id must terminate in success, only retryable failure receipts may precede it,
 and no attempt or receipt may follow a 2xx or non-retryable terminal row. Success cannot carry `error`, failure must,
 and a completed proposal cannot be justified by a failure-only matrix.
+V011 final audit enumerates every `proposal.completed` materialization and replays its committed execution against the
+journal, even when a later build rejection means that proposal never becomes one of the three retained generations.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

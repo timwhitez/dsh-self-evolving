@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
   PROPOSAL_RESOURCE_POLICY_V1,
@@ -14,6 +14,7 @@ import {
   assertCompletedResourceDomainReceipt,
   assertV011AdmissionResourceReceipt,
   assertV011,
+  canonicalV011,
   digestV011,
   freezeCapabilityCatalog,
   validateV011,
@@ -24,8 +25,8 @@ import { readV011StableBuild } from './v011-identity.js'
 import { projectProposalGatewayRoute, type V011DemoConfig } from './config.js'
 import { verifyV011MaterializationAuthority } from './v011-materialization-authority.js'
 import {
-  assertV011ProposalExecutionBinding,
-  loadV011ProposalExecution,
+  loadBoundV011ProposalExecution,
+  type V011ProposalExecution,
 } from './v011-proposal-execution.js'
 
 export interface V011AuditReport {
@@ -370,8 +371,11 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     reasons.push(`materialization receipt matrix is ${actionFiles.length}/at-least-3`)
   const materializations: Array<{
     path: string
+    actionRoot: string
     authority: Awaited<ReturnType<typeof verifyV011MaterializationAuthority>>
+    execution: V011ProposalExecution | null
   }> = []
+  const auditedProposalEvents = new Set<string>()
   for (const path of actionFiles) {
     const actionRoot = path.slice(0, -'/materialization.json'.length)
     try {
@@ -380,9 +384,41 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
         value: await json(path),
         actionRoot,
       })
-      materializations.push({ path, authority })
+      const identity = /^proposal-(\d+)-(\d+)$/.exec(basename(actionRoot))
+      const eventId = identity === null ? null : `proposal:${identity[1]}:${identity[2]}:completed`
+      const matchingEvents =
+        eventId === null
+          ? []
+          : events.filter(
+              (event) => event.type === 'proposal.completed' && event.eventId === eventId,
+            )
+      if (
+        eventId === null ||
+        matchingEvents.length !== 1 ||
+        canonicalV011(matchingEvents[0]!.payload) !== canonicalV011(authority.stableProposal)
+      ) {
+        reasons.push(`materialization journal binding is invalid: ${path}`)
+      } else {
+        auditedProposalEvents.add(eventId)
+      }
+      let execution: V011ProposalExecution | null = null
+      try {
+        execution = await loadBoundV011ProposalExecution({
+          action: actionRoot,
+          materialization: authority.materialization,
+          route: proposalRoute,
+        })
+      } catch {
+        reasons.push(`materialization proposal execution is invalid: ${path}`)
+      }
+      materializations.push({ path, actionRoot, authority, execution })
     } catch {
       reasons.push(`materialization authority is invalid: ${path}`)
+    }
+  }
+  for (const event of events.filter((candidate) => candidate.type === 'proposal.completed')) {
+    if (!auditedProposalEvents.has(event.eventId)) {
+      reasons.push(`proposal completion has no audited materialization execution: ${event.eventId}`)
     }
   }
   const generated = []
@@ -443,32 +479,9 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
       reasons.push(`generation ${generation} has no matching materialization`)
       continue
     }
-    const actionRoot = materialization.path.slice(0, -'/materialization.json'.length)
-    const proposalId = materialization.authority.materialization.proposalId
-    const execution = await loadV011ProposalExecution({
-      action: actionRoot,
-      route: proposalRoute,
-      workerOutputPath: join(actionRoot, 'children', proposalId, 'worker-output.json'),
-    }).catch(() => null)
-    const proposalResource = execution?.resource ?? null
-    const proposalResourceValid = verifyV011ProposalResourceBinding(
-      materialization.authority.materialization,
-      proposalResource,
-    )
-    let executionBindingValid = false
-    if (execution !== null) {
-      try {
-        assertV011ProposalExecutionBinding(
-          materialization.authority.materialization,
-          execution,
-          proposalRoute,
-        )
-        executionBindingValid = true
-      } catch {
-        executionBindingValid = false
-      }
-    }
-    if (!proposalResourceValid || !executionBindingValid) {
+    const actionRoot = materialization.actionRoot
+    const execution = materialization.execution
+    if (execution === null) {
       reasons.push(`generation ${generation} proposal resource receipt invalid`)
       continue
     }

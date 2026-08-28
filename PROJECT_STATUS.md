@@ -125,8 +125,11 @@
   gateway arrays. One shared producer-owned validator now requires every logical request id to end in exactly one
   successful terminal receipt, permits only retryable failures before it, forbids attempts/receipts after success or
   non-retryable failure, binds same-id request bytes, and runs in both stable and V011 load/binding/final-audit paths.
+- Exact-head review of `e7d1bd8` then found V011 final audit replayed execution only for the three retained generations,
+  not every completed proposal attempt. Final audit now binds every materialization to its exact journal completion and
+  replays its worker/resource/gateway execution, so a later build rejection cannot exempt that paid proposal evidence.
 - Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
-  901 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+  902 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

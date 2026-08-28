@@ -249,6 +249,8 @@ gateway receipt 还必须把 route hash 重新绑定到冻结 provider/endpoint/
 hash 格式、任意数组或空字符串都不是 authority。完成 proposal 的每个 request id 必须具有成功终态；仅
 retryable failure 可被后续 receipt 接续，2xx/non-retryable 终态后不得出现额外 attempt/receipt。该规则必须
 同时在 stable bundle audit 与 V011 execution load/binding/final audit 重放，不能仅绑定 receipt count。
+V011 final audit 必须枚举每一个 `proposal.completed` action 并重放其 materialization、resource、gateway、
+worker-output 与 journal binding；后续 build rejection 或未进入最终三代不能豁免已经完成的 proposal execution。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。
