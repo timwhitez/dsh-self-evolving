@@ -321,8 +321,11 @@ child of a delegated cgroup v2 root. The trusted launcher stops before untrusted
 continues under frozen memory/swap, CPU bandwidth, PID and block-I/O controls plus CPU-time, file-size, open-file and
 core-dump rlimits. Teardown uses `cgroup.kill` and records controller events and peak usage. A host may use
 the default root-owned subtree or provide `DSH_SELF_EVOLVING_CGROUP_ROOT`; absence of all required delegated
-controllers fails closed. CI explicitly creates and delegates an ephemeral subtree. This avoids a runtime dependency
-on a user/system D-Bus or `systemd-run` while retaining a kernel-enforced accounting boundary.
+controllers fails closed. A non-root launcher must itself start in an executor child beneath that root, so Linux grants
+it migration authority between the executor and each sibling resource domain. CI explicitly creates and delegates an
+ephemeral subtree, enters the executor through a minimal root launcher, then drops back to the runner UID before any
+repository command executes. This avoids a runtime dependency on a user/system D-Bus or `systemd-run` while retaining
+a kernel-enforced accounting boundary.
 
 All writable sandbox paths, including `/tmp` and `/dev/shm`, are size/inode-bounded tmpfs mounts created by a trusted
 PID-namespace supervisor. The supervisor alone temporarily retains mount capability. It starts the target through

@@ -70,6 +70,8 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - parent/contracts/evidence 只读，child root 唯一可写；
 - 每次 proposal 启动先进入独立 delegated cgroup v2 domain，再继续执行 untrusted worker；memory/swap、
   CPU rate/time、PID、block I/O、file-size/open-file 与 writable bytes/inodes 必须使用版本化固定上限；
+- 非 root launcher 必须由可信 service manager 先放入 delegated root 下的 executor child；每个资源域
+  是其 sibling，确保 launcher 只在已委派的公共祖先内迁移进程，不能依赖对 host cgroup root 的写权限；
 - writable root、`/tmp` 与 `/dev/shm` 必须是 size/inode-bounded tmpfs。需要预置 child tree 时由可信
   supervisor 从只读 seed 复制；target 启动前移除全部 capabilities，退出后先杀净 PID namespace 再导出；
 - sandbox root 与 `/dev` 只读；可信 supervisor 完成 mount 后必须禁用其 private user namespace 下继续

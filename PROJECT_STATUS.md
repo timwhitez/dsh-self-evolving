@@ -91,9 +91,10 @@
   Missing delegation/control or any quota failure is fail closed.
 - Resource receipts record full limits/digest, enforcement, peaks/events and termination cause. Build/admission and
   proposer evidence retain these receipts. Memory-bomb, fork-bomb, CPU throttle/time and disk-fill E2E tests exercise
-  the kernel boundaries. Format/docs/lint/typecheck/integrity pass; unit is 110 files / 852 passed + 1 skipped and
-  no-key E2E is 42 passed + 4 credential-gated skipped. Hosted CI and independent exact-head review remain required
-  before merge/closure.
+  the kernel boundaries. Non-root CI commands enter an executor child through a minimal privileged launcher, then
+  drop back to the runner UID; resource domains are siblings under the delegated root. Format/docs/lint/typecheck/
+  integrity pass; unit is 110 files / 852 passed + 1 skipped and no-key E2E is 42 passed + 4 credential-gated skips.
+  Hosted CI and independent exact-head review remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or
   release evidence.
 

@@ -245,6 +245,24 @@ async function writeControl(path: string, value: string): Promise<void> {
   await writeFile(path, value.endsWith('\n') ? value : `${value}\n`)
 }
 
+async function assertLauncherInsideDelegatedRoot(root: string): Promise<void> {
+  if (typeof process.geteuid === 'function' && process.geteuid() === 0) return
+  const unifiedEntry = (await readFile('/proc/self/cgroup', 'utf8'))
+    .trim()
+    .split('\n')
+    .find((line) => line.startsWith('0::'))
+  if (unifiedEntry === undefined) {
+    throw new Error('resource domain: launcher unified cgroup identity is unavailable')
+  }
+  const launcherPath = unifiedEntry.slice('0::'.length)
+  const delegatedPath = root.slice('/sys/fs/cgroup'.length)
+  if (!launcherPath.startsWith(`${delegatedPath}/`)) {
+    throw new Error(
+      'resource domain: non-root launcher must run in an executor child beneath the delegated cgroup root',
+    )
+  }
+}
+
 async function prepareCgroupRoot(): Promise<string> {
   if (process.platform !== 'linux') {
     throw new Error('resource domain: cgroup v2 requires Linux')
@@ -276,6 +294,7 @@ async function prepareCgroupRoot(): Promise<string> {
   if ((await realpath(root)) !== root) {
     throw new Error('resource domain: cgroup root path must be canonical')
   }
+  await assertLauncherInsideDelegatedRoot(root)
   const available = new Set(
     (await readFile(join(root, 'cgroup.controllers'), 'utf8')).trim().split(/\s+/),
   )

@@ -69,12 +69,12 @@ jobs:
         run: pnpm typecheck
 
       - name: Unit tests
-        run: pnpm test
+        run: bash scripts/run-in-delegated-cgroup.sh pnpm test
 
       - name: Real Loader and local E2E
         env:
           DEEPSEEK_API_KEY: ''
-        run: pnpm test:e2e
+        run: bash scripts/run-in-delegated-cgroup.sh pnpm test:e2e
 
       - name: Provenance and release integrity
         run: |
