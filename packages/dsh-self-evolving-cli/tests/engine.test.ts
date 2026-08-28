@@ -12,6 +12,7 @@ import {
 import {
   createStableDemoConfig,
   createV011DemoConfig,
+  auditStableRun,
   evaluationReserveUsd,
   initializeState,
   runStableDemo,
@@ -62,12 +63,13 @@ async function fixture(v011 = false) {
   await initializeState(config)
   const counters = { proposals: 0, builds: 0, launches: 0, collects: 0 }
   const providers = new Map<string, { externalJobId: string; terminal: boolean }>()
+  const baselineCandidateId = v011 ? digest('baseline-source') : 'baseline'
   const capabilities: StableDemoCapabilities = {
     async preflight() {
       return { ready: true, checks: [] }
     },
     baseline: {
-      candidateId: 'baseline',
+      candidateId: baselineCandidateId,
       sourceDigest: digest('baseline-source'),
       capsuleDigest: digest('baseline-capsule'),
       buildManifestDigest: digest('baseline-build'),
@@ -120,7 +122,7 @@ async function fixture(v011 = false) {
         async collect() {
           counters.collects += 1
           const baselineFailure =
-            spec.candidate.candidateId === 'baseline' && spec.taskId === 'task-2'
+            spec.candidate.candidateId === baselineCandidateId && spec.taskId === 'task-2'
           return {
             candidateId: spec.candidate.candidateId,
             taskId: spec.taskId,
@@ -278,7 +280,8 @@ describe('stable-demo engine', () => {
       const collect = provider.collect.bind(provider)
       provider.collect = async (externalJobId) => {
         const observation = await collect(externalJobId)
-        return spec.candidate.candidateId === 'baseline' && spec.taskId === 'task-2'
+        return spec.candidate.candidateId === capabilities.baseline.candidateId &&
+          spec.taskId === 'task-2'
           ? { ...observation, status: 'invalid' as const, reward: null }
           : observation
       }
@@ -300,6 +303,10 @@ describe('stable-demo engine', () => {
     expect(result.candidateTrials).toBe(3)
     expect(result.solverTrials).toBe(5)
     expect(counters.launches).toBe(5)
+    const audit = await auditStableRun(config)
+    expect(audit.reasons.join('\n')).not.toMatch(
+      /candidate observation matrix|failure pool contains|baseline batch is incomplete/,
+    )
     await expect(readFile(join(config.stateDir, 'failure-pool.json'), 'utf8')).resolves.toContain(
       '"batchSize": 1',
     )

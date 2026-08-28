@@ -34,6 +34,11 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
   const state = controller.state
   const nodes = Object.values(state.candidates)
   const childNodes = nodes.filter((node) => node.canonicalParent !== null)
+  const baselineNodes = nodes.filter((node) => node.canonicalParent === null)
+  if (baselineNodes.length !== 1) {
+    reasons.push(`baseline identity matrix is ${baselineNodes.length}/1`)
+  }
+  const baselineCandidateId = baselineNodes[0]?.candidateId ?? '__missing_baseline_identity__'
   const byId = new Map(nodes.map((node) => [node.candidateId, node]))
   const depthOf = (candidateId: string): number => {
     let depth = 0
@@ -55,7 +60,9 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
   if (Math.max(0, ...childNodes.map((node) => depthOf(node.candidateId))) < 2) {
     reasons.push('lineage depth is below 2')
   }
-  const candidateObservations = state.observations.filter((row) => row.candidateId !== 'baseline')
+  const candidateObservations = state.observations.filter(
+    (row) => row.candidateId !== baselineCandidateId,
+  )
   if (candidateObservations.length !== 3)
     reasons.push('candidate observation matrix is not exactly 3')
   if (state.sealedAccessCount !== 0) reasons.push('sealed state was accessed')
@@ -73,7 +80,7 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
       )
       const baselineByTask = new Map(
         state.observations
-          .filter((row) => row.candidateId === 'baseline')
+          .filter((row) => row.candidateId === baselineCandidateId)
           .map((row) => [row.taskId, row]),
       )
       if (
@@ -101,7 +108,7 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
   const firstCandidateObservation = events.find(
     (event) =>
       event.type === 'evaluation.observed' &&
-      (event.payload as { candidateId?: string }).candidateId !== 'baseline',
+      (event.payload as { candidateId?: string }).candidateId !== baselineCandidateId,
   )
   if (
     frozen === undefined ||
@@ -112,7 +119,9 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
   if (state.observations.length > config.limits.solverTrialsMax) {
     reasons.push('solver trial limit exceeded')
   }
-  const baselineTrials = state.observations.filter((row) => row.candidateId === 'baseline').length
+  const baselineTrials = state.observations.filter(
+    (row) => row.candidateId === baselineCandidateId,
+  ).length
   const validBaselineTrialCount =
     config.profile === 'v011-stable-demo'
       ? baselineTrials >= 1 && baselineTrials <= config.limits.baselineFailureDiscoveryMax

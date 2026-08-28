@@ -33,6 +33,8 @@ export interface V011AdmissionReceipt {
   schemaVersion: 1
   protocol: typeof V011_PROTOCOL
   candidateDigest: `sha256:${string}`
+  /** Candidate SDK canonical-tar identity cross-bound to candidateDigest. */
+  buildCandidateId: string
   materializationDigest: `sha256:${string}`
   capabilityCatalogDigest: `sha256:${string}`
   stageReceipts: {
@@ -462,6 +464,7 @@ export async function admitV011Candidate(input: {
     const capsule = await packCapsule({
       outDir: input.capsuleOutDir,
       receipt: buildReceipt,
+      canonicalCandidateId: candidateDigest,
       runnerOverlay: resolvedOverlay,
       ...(input.runnerFiles === undefined ? {} : { runnerFiles: input.runnerFiles }),
       provenanceJson: input.provenanceJson,
@@ -486,6 +489,7 @@ export async function admitV011Candidate(input: {
       schemaVersion: 1,
       protocol: V011_PROTOCOL,
       candidateDigest,
+      buildCandidateId: buildReceipt.candidateId,
       materializationDigest: input.materializationDigest,
       capabilityCatalogDigest: input.capabilityCatalogDigest,
       stageReceipts: {

@@ -125,6 +125,19 @@ describe('v0.1.1 generated-plugin admission', () => {
       })
       expect(result.receipt.admitted).toBe(true)
       expect(result.buildReceipt.doubleBuildIdentical).toBe(true)
+      const capsuleManifest = JSON.parse(
+        await readFile(join(outputRoot, 'capsule.json'), 'utf8'),
+      ) as {
+        candidateId: string
+        candidate: { buildCandidateId: string }
+      }
+      // The v0.1.1 admission digest is the one canonical identity consumed by
+      // the controller, overlay, capsule and evaluator. Preserve the SDK's
+      // c_<base32> build identity as an explicit cross-binding instead of
+      // letting it silently replace the controller identity (issue #198).
+      expect(capsuleManifest.candidateId).toBe(result.receipt.candidateDigest)
+      expect(capsuleManifest.candidate.buildCandidateId).toBe(result.buildReceipt.candidateId)
+      expect(result.receipt.buildCandidateId).toBe(result.buildReceipt.candidateId)
       // The packed runtime must receive the EXACT admitted identity, never a
       // placeholder (issue #114): the overlay is rewritten with the digest
       // before it lands in the capsule.

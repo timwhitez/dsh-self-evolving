@@ -58,6 +58,11 @@ import { evaluationReserveUsd } from './engine.js'
 import { runDoctor } from './doctor.js'
 import { loadTrustedRoute } from './trusted-route.js'
 import {
+  createV011OutcomeObservationSelector,
+  readV011StableBuild,
+  v011BuiltIdentity,
+} from './v011-identity.js'
+import {
   createRealEvaluationProvider,
   selectFailureSeekingObservedTasks,
 } from './real-capabilities.js'
@@ -400,9 +405,8 @@ async function prepareBaseline(
   catalog: FrozenCapabilityCatalog,
 ): Promise<BuiltCandidate> {
   const root = join(config.stateDir, 'candidates', 'v011-baseline')
-  const recordPath = join(root, 'stable-build.json')
-  const existing = await readFile(recordPath, 'utf8').catch(() => null)
-  if (existing !== null) return JSON.parse(existing) as BuiltCandidate
+  const existing = await readV011StableBuild(root)
+  if (existing !== null) return existing
   if ((await stat(root).catch(() => null)) !== null)
     throw new Error('v0.1.1 baseline: incomplete prior directory')
   const staging = `${root}.staging`
@@ -446,8 +450,7 @@ async function prepareBaseline(
   }
   await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
   const built: BuiltCandidate = {
-    candidateId: 'baseline',
-    sourceDigest: admission.receipt.candidateDigest,
+    ...v011BuiltIdentity(admission.receipt),
     capsuleDigest: admission.receipt.capsuleDigest,
     buildManifestDigest: digestV011(admission.receipt),
     sourceRoot: join(root, 'tree'),
@@ -1018,8 +1021,8 @@ async function realV011BuildUnretained(
   input: StableBuildInput,
 ): Promise<BuiltCandidate> {
   const root = join(config.stateDir, 'candidates', `generation-${input.generation}`)
-  const record = await readFile(join(root, 'stable-build.json'), 'utf8').catch(() => null)
-  if (record !== null) return JSON.parse(record) as BuiltCandidate
+  const existing = await readV011StableBuild(root)
+  if (existing !== null) return existing
   if ((await stat(root).catch(() => null)) !== null)
     throw new Error('v0.1.1 builder: incomplete candidate directory')
   const parsed = JSON.parse(input.proposal.sourceDiff) as { slot?: unknown }
@@ -1066,8 +1069,7 @@ async function realV011BuildUnretained(
     selectedCluster: string
   }
   const built: BuiltCandidate = {
-    candidateId: admission.receipt.candidateDigest,
-    sourceDigest: admission.receipt.candidateDigest,
+    ...v011BuiltIdentity(admission.receipt),
     capsuleDigest: admission.receipt.capsuleDigest,
     buildManifestDigest: digestV011(admission.receipt),
     sourceRoot: join(root, 'tree'),
@@ -1137,6 +1139,7 @@ export async function createV011RealCapabilities(
   const route = await loadTrustedRoute()
   const catalog = await capabilityCatalog(config)
   const baseline = await prepareBaseline(config, catalog)
+  const selectOutcomeObservations = createV011OutcomeObservationSelector(baseline.candidateId)
   return {
     preflight: () => runDoctor(config as never),
     baseline,
@@ -1153,15 +1156,11 @@ export async function createV011RealCapabilities(
       ) {
         throw new Error('v0.1.1 outcome: child proposal binding missing')
       }
-      const baselineObservation = input.observations.find(
-        (row) => row.candidateId === 'baseline' && row.taskId === input.taskId,
-      )
-      const childObservation = input.observations.find(
-        (row) => row.candidateId === input.child.candidateId && row.taskId === input.taskId,
-      )
-      if (baselineObservation === undefined || childObservation === undefined) {
-        throw new Error('v0.1.1 outcome: target observation pair incomplete')
-      }
+      const { baseline: baselineObservation, child: childObservation } = selectOutcomeObservations({
+        childCandidateId: input.child.candidateId,
+        taskId: input.taskId,
+        observations: input.observations,
+      })
       const outcomePath = join(
         config.stateDir,
         'v011',

@@ -195,13 +195,16 @@ function eventPayload<T>(events: JournalEvent[], eventId: string): T | undefined
   return events.find((event) => event.eventId === eventId)?.payload as T | undefined
 }
 
-function isBaselineNonPassingSignal(row: {
-  candidateId: string
-  status: 'pass' | 'fail' | 'invalid'
-  reward: number | null
-}): boolean {
+function isBaselineNonPassingSignal(
+  baselineCandidateId: string,
+  row: {
+    candidateId: string
+    status: 'pass' | 'fail' | 'invalid'
+    reward: number | null
+  },
+): boolean {
   return (
-    row.candidateId === 'baseline' &&
+    row.candidateId === baselineCandidateId &&
     ((row.status === 'fail' && row.reward === 0) ||
       (row.status === 'invalid' && row.reward === null))
   )
@@ -301,10 +304,13 @@ async function evaluate(
 async function suspendedResult(
   config: ProjectConfig,
   service: SelfEvolvingBundle.SelfEvolvingService,
+  baselineCandidateId: string,
 ): Promise<StableDemoResult> {
   const events = await readAll(service.journal)
   const state = replay(events)
-  const baselineTrials = state.observations.filter((row) => row.candidateId === 'baseline').length
+  const baselineTrials = state.observations.filter(
+    (row) => row.candidateId === baselineCandidateId,
+  ).length
   const lineage = lineageDepth(events)
   return {
     status: 'PENDING_EVALUATIONS',
@@ -396,17 +402,19 @@ export async function runStableDemo(
             if (action.status === 'pending') {
               // Still-running durably launched job: suspend WITHOUT freezing
               // the failure pool or recording any dependent state (issue #70).
-              return await suspendedResult(config, service)
+              return await suspendedResult(config, service, caps.baseline.candidateId)
             }
             evaluated += 1
           }
           events = await readAll(service.journal)
-          const failures = replay(events).observations.filter(isBaselineNonPassingSignal)
+          const failures = replay(events).observations.filter((row) =>
+            isBaselineNonPassingSignal(caps.baseline.candidateId, row),
+          )
           if (failures.length > 0) break
         }
         events = await readAll(service.journal)
         const taskIds = replay(events)
-          .observations.filter(isBaselineNonPassingSignal)
+          .observations.filter((row) => isBaselineNonPassingSignal(caps.baseline.candidateId, row))
           .map((row) => row.taskId)
           .sort()
         pool = {
@@ -424,7 +432,9 @@ export async function runStableDemo(
         const evaluatedPrefix = planned.slice(0, pool.evaluatedTaskIds.length)
         const frozenSignals = replay(events)
           .observations.filter(
-            (row) => isBaselineNonPassingSignal(row) && pool!.evaluatedTaskIds.includes(row.taskId),
+            (row) =>
+              isBaselineNonPassingSignal(caps.baseline.candidateId, row) &&
+              pool!.evaluatedTaskIds.includes(row.taskId),
           )
           .map((row) => row.taskId)
           .sort()
@@ -611,7 +621,7 @@ export async function runStableDemo(
           }
           const candidateAction = await evaluate(config, service, caps, spec)
           if (candidateAction.status === 'pending') {
-            return await suspendedResult(config, service)
+            return await suspendedResult(config, service, caps.baseline.candidateId)
           }
           if (caps.afterCandidateEvaluation !== undefined) {
             const outcome = await caps.afterCandidateEvaluation({
@@ -653,7 +663,9 @@ export async function runStableDemo(
       'run:terminal',
     )
     if (terminalStatus === undefined) throw new Error('stable engine: terminal receipt missing')
-    const baselineTrials = state.observations.filter((row) => row.candidateId === 'baseline').length
+    const baselineTrials = state.observations.filter(
+      (row) => row.candidateId === caps.baseline.candidateId,
+    ).length
     const candidateTrials = state.observations.length - baselineTrials
     const lineage = lineageDepth(events)
     return {

@@ -8,6 +8,7 @@
     "schemaVersion",
     "protocol",
     "candidateDigest",
+    "buildCandidateId",
     "materializationDigest",
     "capabilityCatalogDigest",
     "stageReceipts",
@@ -18,6 +19,7 @@
     "schemaVersion": { "const": 1 },
     "protocol": { "const": "dsh-self-evolving-candidate-tree-v2" },
     "candidateDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "buildCandidateId": { "type": "string", "pattern": "^c_[a-z2-7]{26}$" },
     "materializationDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "capabilityCatalogDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "stageReceipts": {
