@@ -90,8 +90,10 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - proposal resource receipt 必须独立持久化，其 digest 必须进入 materialization receipt；cache/audit 缺失
   任一侧或语义不一致时不得采用既有 proposal。
 - sandbox 导出的 child/worker output 本身不是完成标记；resource/gateway/diagnostic/worker bytes 必须先进入
-  fsync + manifest-last 的 execution bundle。无 commit marker 的 residue 要隔离后从 immutable parent 重建，
-  provider 请求仅能经 durable idempotency record 重放；cache/audit 还必须读回 materialization CAS 原文。
+  fsync + manifest-last 的 execution bundle。导出器必须在返回前依次 fsync 每个 child 文件、完整目录树和
+  原子替换的 parent directory；无 commit marker，或虽有 marker 但安装 worker/tree 缺失或漂移的 residue，
+  要隔离后从 immutable parent 重建。provider 请求仅能经 durable idempotency record 重放；cache/audit 还
+  必须读回 materialization CAS 原文。
 - provider idempotency reservation 必须在任何付费 dispatch 前 fsync file 与 parent directory；完成记录使用
   fsynced temp + atomic rename + directory fsync。bundle manifest 同样先完整 fsync staging，再 no-clobber 发布；
   最终 audit 读回并重放 stable proposal 的 resource/gateway/idempotency/proposal 全 bundle。
@@ -99,6 +101,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
   usage 语义不一致；只验证字符串/hash/array 外形不构成可信收据。stable 与 V011 必须复用同一验证器；
   每个 logical request id 最终必须成功，只允许 retryable failure 在前，2xx 或 non-retryable row 后不得再有
   attempt/receipt，success 不得带 error，failure 必须带非空 error。
+- V011 final audit 必须对 active action namespace 中的 execution manifest 与 materialization 做一一 inventory；
+  任一额外 committed execution 或任一缺 execution 的 materialization 都拒绝。`incomplete-executions/` 是显式
+  去权且保留审计的恢复 namespace，不能重新计为 active authority。
 
 ### 5.3 Task sandbox
 

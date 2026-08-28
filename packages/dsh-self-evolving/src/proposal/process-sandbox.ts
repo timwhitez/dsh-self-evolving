@@ -1,6 +1,6 @@
 /** Bubblewrap-backed one-shot proposal process sandbox (spec 05 §§5.2, 9). */
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   spawnResourceBoundSandbox,
@@ -29,6 +29,20 @@ export interface ProposalSandboxInput {
   maxOutputBytes?: number
   /** Optional fixed trusted gateway Unix socket; the sandbox still has no network. */
   gatewaySocket?: string
+  /** Test-only crash-boundary observer for the trusted export commit. */
+  exportHooks?: ProposalExportHooks
+}
+
+export type ProposalExportCommitBoundary =
+  | 'stage-create-directory-fsync'
+  | 'stage-file-fsync'
+  | 'stage-tree-directory-fsync'
+  | 'original-rename-directory-fsync'
+  | 'install-rename-directory-fsync'
+  | 'backup-remove-directory-fsync'
+
+export interface ProposalExportHooks {
+  afterBoundary?: (boundary: ProposalExportCommitBoundary) => void | Promise<void>
 }
 
 export interface ProposalSandboxResult {
@@ -141,10 +155,51 @@ function validateCommand(command: string): void {
   }
 }
 
-async function materializeExport(root: string, files: ResourceSandboxFile[]): Promise<void> {
-  const stage = join(dirname(root), `.${basename(root)}-resource-export-${randomUUID()}`)
-  const backup = join(dirname(root), `.${basename(root)}-resource-backup-${randomUUID()}`)
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function fsyncTreeDirectories(root: string): Promise<void> {
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) await walk(join(directory, entry.name))
+    }
+    await fsyncDirectory(directory)
+  }
+  await walk(root)
+}
+
+async function writeDurableExclusive(
+  path: string,
+  bytes: Uint8Array,
+  hooks: ProposalExportHooks | undefined,
+): Promise<void> {
+  const handle = await open(path, 'wx', 0o600)
+  try {
+    await handle.writeFile(bytes)
+    await handle.sync()
+    await hooks?.afterBoundary?.('stage-file-fsync')
+  } finally {
+    await handle.close()
+  }
+}
+
+async function materializeExport(
+  root: string,
+  files: ResourceSandboxFile[],
+  hooks: ProposalExportHooks | undefined,
+): Promise<void> {
+  const parent = dirname(root)
+  const stage = join(parent, `.${basename(root)}-resource-export-${randomUUID()}`)
+  const backup = join(parent, `.${basename(root)}-resource-backup-${randomUUID()}`)
   await mkdir(stage, { mode: 0o700 })
+  await fsyncDirectory(parent)
+  await hooks?.afterBoundary?.('stage-create-directory-fsync')
   let movedOriginal = false
   let installed = false
   try {
@@ -158,18 +213,39 @@ async function materializeExport(root: string, files: ResourceSandboxFile[]): Pr
         throw new Error(`proposal sandbox: exported path escapes childrenRoot: ${file.path}`)
       }
       await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-      await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
+      await writeDurableExclusive(destination, file.bytes, hooks)
     }
+    // A directory rename cannot make unsynced descendants durable. Flush the
+    // complete staged tree bottom-up before publishing its root name.
+    await fsyncTreeDirectories(stage)
+    await hooks?.afterBoundary?.('stage-tree-directory-fsync')
     await rename(root, backup)
     movedOriginal = true
+    await fsyncDirectory(parent)
+    await hooks?.afterBoundary?.('original-rename-directory-fsync')
     await rename(stage, root)
     installed = true
+    await fsyncDirectory(parent)
+    await hooks?.afterBoundary?.('install-rename-directory-fsync')
     await rm(backup, { recursive: true, force: true })
+    movedOriginal = false
+    await fsyncDirectory(parent)
+    await hooks?.afterBoundary?.('backup-remove-directory-fsync')
   } catch (error) {
-    if (movedOriginal && !installed) await rename(backup, root).catch(() => undefined)
+    if (movedOriginal) {
+      // This is runtime rollback, not the crash-safety boundary. If rollback
+      // itself fails the caller still fails closed and the next replay treats
+      // the non-authoritative tree as residue.
+      if (installed) await rm(root, { recursive: true, force: true }).catch(() => undefined)
+      await rename(backup, root).catch(() => undefined)
+      await fsyncDirectory(parent).catch(() => undefined)
+    }
     throw error
   } finally {
-    if (!installed) await rm(stage, { recursive: true, force: true }).catch(() => undefined)
+    if ((await stat(stage).catch(() => null)) !== null) {
+      await rm(stage, { recursive: true, force: true }).catch(() => undefined)
+      await fsyncDirectory(parent).catch(() => undefined)
+    }
   }
 }
 
@@ -327,7 +403,8 @@ export async function runProposalSandbox(
     clearTimeout(timer)
   }
   const completed = sandboxResult.resource.terminationCause === 'COMPLETED'
-  if (completed) await materializeExport(resolved.childrenRoot, sandboxResult.files)
+  if (completed)
+    await materializeExport(resolved.childrenRoot, sandboxResult.files, input.exportHooks)
   const result: ProposalSandboxResult = {
     exitCode: completed ? sandboxResult.exitCode : null,
     signal: sandboxResult.signal,

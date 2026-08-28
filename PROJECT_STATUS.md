@@ -128,8 +128,15 @@
 - Exact-head review of `e7d1bd8` then found V011 final audit replayed execution only for the three retained generations,
   not every completed proposal attempt. Final audit now binds every materialization to its exact journal completion and
   replays its worker/resource/gateway execution, so a later build rejection cannot exempt that paid proposal evidence.
+- Exact-head review of `aeaea55` found an extra manifest-committed V011 execution could still sit outside the
+  materialization inventory, and child export did not fsync its files/tree/parent rename boundaries before execution
+  publication. Final audit now requires a one-to-one active manifest/materialization inventory. Export publication
+  fsyncs all file and directory data before each parent-durable replacement boundary; recovery quarantines a committed
+  execution together with an absent or digest-drifted installed tree, plus interrupted random export/backup directories,
+  and replays from immutable input. Quarantined history remains retained evidence but is explicitly outside the active
+  authority namespace.
 - Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
-  902 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+  905 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  canonicalizeV011Tree,
   digestV011,
   resourcePolicyDigest,
+  snapshotV011Tree,
   type ResourceDomainReceipt,
 } from '@dsh-self-evolving/candidate-sdk'
 import {
@@ -13,6 +15,7 @@ import {
   type V011MaterializationReceipt,
 } from '@dsh-self-evolving/core'
 import { proposalGatewayRouteHash, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
+import { verifyV011ProposalExecutionInventory } from '../src/v011-audit.js'
 import {
   assertV011ProposalExecutionBinding,
   loadBoundV011ProposalExecution,
@@ -108,6 +111,30 @@ function resource(): ResourceDomainReceipt {
 }
 
 describe('v0.1.1 proposal execution commit', () => {
+  it('rejects every manifest-committed execution outside the materialization inventory', () => {
+    const actionsRoot = join(root!, 'actions')
+    const bound = join(actionsRoot, 'proposal-1-1')
+    const dangling = join(actionsRoot, 'proposal-9-9')
+    const quarantined = join(
+      bound,
+      'incomplete-executions',
+      'retained-crash',
+      'proposal-execution-v1',
+      'publish-manifest.json',
+    )
+    expect(
+      verifyV011ProposalExecutionInventory({
+        actionsRoot,
+        actionTreeFiles: [
+          join(bound, 'materialization.json'),
+          join(bound, 'proposal-execution-v1', 'publish-manifest.json'),
+          join(dangling, 'proposal-execution-v1', 'publish-manifest.json'),
+          quarantined,
+        ],
+      }),
+    ).toEqual([`committed proposal execution has no materialization: ${dangling}`])
+  })
+
   it('adopts only one manifest-committed execution whose worker bytes match the installed tree', async () => {
     const action = join(root!, 'action')
     const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
@@ -169,6 +196,79 @@ describe('v0.1.1 proposal execution commit', () => {
         ?.workerOutputBytes,
     ).toBe(workerBytes)
     expect(await readFile(join(execution, 'worker-output.json'), 'utf8')).toBe(workerBytes)
+  })
+
+  it('quarantines a committed execution when its installed worker tree disappeared', async () => {
+    const action = join(root!, 'committed-missing-tree')
+    const children = join(action, 'children')
+    const slot = join(children, 'p_1')
+    const tree = join(slot, 'tree')
+    const workerPath = join(slot, 'worker-output.json')
+    await mkdir(join(tree, 'src'), { recursive: true })
+    await writeFile(join(tree, 'src', 'index.ts'), 'export const value = 1\n')
+    const finishedTreeDigest = digestV011(
+      (await canonicalizeV011Tree(await snapshotV011Tree(tree))).bytes,
+    )
+    const workerBytes = `${JSON.stringify({ finishedTreeDigest })}\n`
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: resource(),
+      gatewayReceipts: [gatewayReceipt()],
+      diagnostic: { schemaVersion: 1 },
+    })
+    await rm(tree, { recursive: true })
+
+    expect(
+      await quarantineIncompleteV011ProposalExecution({
+        action,
+        childrenRoot: children,
+        workerOutputPath: workerPath,
+        workerTreePath: tree,
+        route,
+      }),
+    ).toBe(true)
+    expect(await stat(children).catch(() => null)).toBeNull()
+    expect(await stat(v011ProposalExecutionDirectory(action)).catch(() => null)).toBeNull()
+    const quarantined = await readdir(join(action, 'incomplete-executions'))
+    expect(quarantined).toHaveLength(1)
+    expect(
+      await stat(join(action, 'incomplete-executions', quarantined[0]!, 'proposal-execution-v1')),
+    ).not.toBeNull()
+  })
+
+  it('quarantines a crash residue left between child-tree replacement renames', async () => {
+    const action = join(root!, 'interrupted-export-rename')
+    const children = join(action, 'children')
+    const backup = join(action, '.children-resource-backup-crash-boundary')
+    await mkdir(backup, { recursive: true })
+    await writeFile(join(backup, 'seed.txt'), 'retained-before-rename\n')
+
+    expect(
+      await quarantineIncompleteV011ProposalExecution({
+        action,
+        childrenRoot: children,
+        workerOutputPath: join(children, 'p_1', 'worker-output.json'),
+        workerTreePath: join(children, 'p_1', 'tree'),
+        route,
+      }),
+    ).toBe(true)
+    expect(await stat(backup).catch(() => null)).toBeNull()
+    const quarantined = await readdir(join(action, 'incomplete-executions'))
+    expect(quarantined).toHaveLength(1)
+    expect(
+      await readFile(
+        join(
+          action,
+          'incomplete-executions',
+          quarantined[0]!,
+          '.children-resource-backup-crash-boundary',
+          'seed.txt',
+        ),
+        'utf8',
+      ),
+    ).toBe('retained-before-rename\n')
   })
 
   it('recovers every pre-manifest receipt publication boundary', async () => {
@@ -267,9 +367,17 @@ describe('v0.1.1 proposal execution commit', () => {
     const action = join(root!, 'proposal-2-2')
     const proposalId = `p_${'7'.repeat(32)}`
     const workerPath = join(action, 'children', proposalId, 'worker-output.json')
-    const workerBytes = '{"transcript":{"eventCount":1}}\n'
+    const tree = join(action, 'children', proposalId, 'tree')
+    await mkdir(join(tree, 'src'), { recursive: true })
+    await writeFile(join(tree, 'src', 'index.ts'), 'export const attempt = 2\n')
+    const sourceDigest = digestV011(
+      (await canonicalizeV011Tree(await snapshotV011Tree(tree))).bytes,
+    )
+    const workerBytes = `${JSON.stringify({
+      transcript: { eventCount: 1 },
+      finishedTreeDigest: sourceDigest,
+    })}\n`
     const receipt = resource()
-    await mkdir(join(workerPath, '..'), { recursive: true })
     await writeFile(workerPath, workerBytes)
     await publishV011ProposalExecution({
       action,
@@ -285,6 +393,7 @@ describe('v0.1.1 proposal execution commit', () => {
     })
     const materialization = {
       proposalId,
+      sourceDigest,
       proposerResourceReceiptDigest: digestV011(receipt),
       proposerUsage: { gatewayReceipts: 1, eventCount: 1 },
     } as V011MaterializationReceipt

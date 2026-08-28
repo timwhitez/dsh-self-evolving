@@ -236,7 +236,11 @@ control receipt；主动杀整个 cgroup 只能记录失败。proposal 的 resou
 receipt 的 required 顶层字段，cache 和正式 audit 必须同时验证 receipt bytes、语义与 digest binding。
 proposal execution 使用 manifest-last commit：manifest 精确绑定 worker output、resource receipt、gateway
 receipts 和 diagnostic。child export 后但 manifest 前的任何崩溃都只能留下 quarantined residue，不能成为
-resume authority。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
+resume authority。导出文件与 staging 目录树必须先 fsync，原 tree → backup、staging → active 和 backup
+删除的每个 rename/remove 边界都必须 fsync parent；只有随后才可提交 execution manifest。已提交 manifest
+若与安装 worker/tree 缺失或 digest 漂移，必须把两侧一起移入 `incomplete-executions/` 后从 immutable parent
+重放；rename 中断留下的随机 staging/backup 目录也必须移入同一去权 namespace，不能永久卡住 action 或
+形成隐形 active tree。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
 stable proposal artifact digest 交叉验证。candidate staging claim 在最终 rename 前清除且 fsync；rename 后
 fsync parent directory，正式 candidate root 不得携带 live claim marker。
 稳定 proposer 的 proposal/resource/gateway/idempotency bundle 服从同一规则：manifest 必须先在 staging
@@ -249,8 +253,11 @@ gateway receipt 还必须把 route hash 重新绑定到冻结 provider/endpoint/
 hash 格式、任意数组或空字符串都不是 authority。完成 proposal 的每个 request id 必须具有成功终态；仅
 retryable failure 可被后续 receipt 接续，2xx/non-retryable 终态后不得出现额外 attempt/receipt。该规则必须
 同时在 stable bundle audit 与 V011 execution load/binding/final audit 重放，不能仅绑定 receipt count。
-V011 final audit 必须枚举每一个 `proposal.completed` action 并重放其 materialization、resource、gateway、
-worker-output 与 journal binding；后续 build rejection 或未进入最终三代不能豁免已经完成的 proposal execution。
+V011 final audit 必须先对 active action namespace 中的 manifest-committed execution 与 materialization 做严格
+一一 inventory，再枚举每一个 `proposal.completed` action 并重放其 materialization、resource、gateway、
+worker-output/tree 与 journal binding；额外 committed execution、缺 execution 的 materialization、后续 build
+rejection 或未进入最终三代都不能逃过审计。`incomplete-executions/` 下的留存 bytes 已显式去权，不属于 active
+inventory，但必须继续作为 crash/corruption evidence 保留。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。

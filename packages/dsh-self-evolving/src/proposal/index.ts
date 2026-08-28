@@ -40,6 +40,8 @@ export {
   type ProposalSandboxMounts,
   type ProposalSandboxInput,
   type ProposalSandboxResult,
+  type ProposalExportCommitBoundary,
+  type ProposalExportHooks,
 } from './process-sandbox.js'
 export * from './v011-citations.js'
 export * from './v011-materializer.js'

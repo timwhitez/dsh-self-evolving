@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
   PROPOSAL_RESOURCE_POLICY_V1,
@@ -141,6 +141,57 @@ async function files(root: string): Promise<string[]> {
   }
   if ((await stat(root).catch(() => null))?.isDirectory()) await walk(root)
   return output.sort()
+}
+
+const V011_EXECUTION_MANIFEST_SUFFIX = `${sep}proposal-execution-v1${sep}publish-manifest.json`
+const V011_MATERIALIZATION_SUFFIX = `${sep}materialization.json`
+
+/**
+ * Final audit requires a one-to-one inventory before trusting any individual
+ * receipt. Otherwise an extra manifest-committed paid execution can sit beside
+ * the materialization/event set and evade semantic replay entirely.
+ */
+export function verifyV011ProposalExecutionInventory(input: {
+  actionsRoot: string
+  actionTreeFiles: string[]
+}): string[] {
+  const reasons: string[] = []
+  const materializationRoots = new Set<string>()
+  const executionRoots = new Set<string>()
+  for (const path of input.actionTreeFiles) {
+    const relativePath = path.startsWith(input.actionsRoot + sep)
+      ? path.slice(input.actionsRoot.length + 1)
+      : path
+    // Recovery evidence is deliberately retained below the action but moved
+    // out of the active authority namespace. It must remain inspectable
+    // without being mistaken for a second live execution.
+    if (relativePath.split(sep)[1] === 'incomplete-executions') continue
+    let root: string | null = null
+    let kind: 'materialization' | 'execution' | null = null
+    if (path.endsWith(V011_MATERIALIZATION_SUFFIX)) {
+      root = path.slice(0, -V011_MATERIALIZATION_SUFFIX.length)
+      kind = 'materialization'
+      materializationRoots.add(root)
+    } else if (path.endsWith(V011_EXECUTION_MANIFEST_SUFFIX)) {
+      root = path.slice(0, -V011_EXECUTION_MANIFEST_SUFFIX.length)
+      kind = 'execution'
+      executionRoots.add(root)
+    }
+    if (root !== null && dirname(root) !== input.actionsRoot) {
+      reasons.push(`v0.1.1 ${kind} is outside a direct proposal action: ${path}`)
+    }
+  }
+  for (const root of executionRoots) {
+    if (!materializationRoots.has(root)) {
+      reasons.push(`committed proposal execution has no materialization: ${root}`)
+    }
+  }
+  for (const root of materializationRoots) {
+    if (!executionRoots.has(root)) {
+      reasons.push(`materialization has no committed proposal execution: ${root}`)
+    }
+  }
+  return reasons
 }
 
 export interface FixtureCrossBinding {
@@ -364,9 +415,15 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   if (baselineMigration?.inheritedResultsPolicy !== 'none') {
     reasons.push('v0.1 to v0.1.1 migration receipt missing or inherited results')
   }
-  const actionFiles = (await files(join(config.stateDir, 'v011', 'actions'))).filter((path) =>
-    path.endsWith('/materialization.json'),
+  const actionsRoot = join(config.stateDir, 'v011', 'actions')
+  const actionTreeFiles = await files(actionsRoot)
+  reasons.push(
+    ...verifyV011ProposalExecutionInventory({
+      actionsRoot,
+      actionTreeFiles,
+    }),
   )
+  const actionFiles = actionTreeFiles.filter((path) => path.endsWith(V011_MATERIALIZATION_SUFFIX))
   if (actionFiles.length < 3)
     reasons.push(`materialization receipt matrix is ${actionFiles.length}/at-least-3`)
   const materializations: Array<{

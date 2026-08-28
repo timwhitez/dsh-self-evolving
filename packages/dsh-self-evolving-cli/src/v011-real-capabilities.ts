@@ -75,6 +75,7 @@ import {
 import { verifyV011MaterializationAuthority } from './v011-materialization-authority.js'
 import {
   assertV011ProposalExecutionBinding,
+  loadBoundV011ProposalExecution,
   loadV011ProposalExecution,
   publishV011ProposalExecution,
   quarantineIncompleteV011ProposalExecution,
@@ -782,21 +783,11 @@ async function realV011Proposal(
       value: JSON.parse(existing) as unknown,
       actionRoot: action,
     })
-    const workerOutput = join(
+    await loadBoundV011ProposalExecution({
       action,
-      'children',
-      authority.materialization.proposalId,
-      'worker-output.json',
-    )
-    const execution = await loadV011ProposalExecution({
-      action,
+      materialization: authority.materialization,
       route: proposalRoute,
-      workerOutputPath: workerOutput,
     })
-    if (execution === null) {
-      throw new Error('v0.1.1 proposal: cached materialization lacks execution commit')
-    }
-    assertV011ProposalExecutionBinding(authority.materialization, execution, proposalRoute)
     return authority.stableProposal
   }
   const exported = await exportForProposal(config, input.generation, input.attempt)
@@ -829,19 +820,20 @@ async function realV011Proposal(
   const childrenRoot = join(action, 'children')
   const slot = join(childrenRoot, proposalId)
   const workerOutput = join(slot, 'worker-output.json')
+  const workerTree = join(slot, 'tree')
+  await quarantineIncompleteV011ProposalExecution({
+    action,
+    childrenRoot,
+    workerOutputPath: workerOutput,
+    workerTreePath: workerTree,
+    route: proposalRoute,
+  })
   let execution: V011ProposalExecution | null = await loadV011ProposalExecution({
     action,
     route: proposalRoute,
     workerOutputPath: workerOutput,
+    workerTreePath: workerTree,
   })
-  if (execution === null) {
-    await quarantineIncompleteV011ProposalExecution({
-      action,
-      childrenRoot,
-      workerOutputPath: workerOutput,
-      route: proposalRoute,
-    })
-  }
   if ((await stat(slot).catch(() => null)) === null) {
     await mkdir(parentInput, { recursive: true, mode: 0o700 })
     await cp(input.parent.sourceRoot, join(parentInput, 'tree'), { recursive: true })
@@ -1075,6 +1067,7 @@ async function realV011Proposal(
       action,
       route: proposalRoute,
       workerOutputPath: workerOutput,
+      workerTreePath: workerTree,
     })
     if (execution === null) {
       throw new Error('v0.1.1 proposal: execution commit missing after successful sandbox')

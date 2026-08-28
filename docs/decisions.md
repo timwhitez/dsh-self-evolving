@@ -352,8 +352,12 @@ Worker output is not a completion marker. Worker bytes, the resource receipt, ga
 as one fsynced manifest-last execution bundle. A crash before that marker quarantines the exported child and partial
 bundle, recreates the declared slot from the immutable parent and reuses durable gateway requests without a second
 provider dispatch. Cache/build/audit require an exact wrapper, recompute the stable proposal artifact digest, and read
-the canonical materialization and analysis bytes back from the object store. Baseline and generated-candidate staging
-use durable ownership claims, remove the claim before publication, and fsync the parent after rename.
+the canonical materialization and analysis bytes back from the object store. The trusted child exporter fsyncs every
+file and the staged directory tree before rename, then fsyncs the parent after moving the original aside, installing
+the staged tree and removing the backup. A committed bundle with an absent or mismatched installed worker/tree is
+quarantined together and deterministically replayed rather than stranding the action; interrupted random export/backup
+directories are moved into that same non-authoritative history. Baseline and generated-candidate staging use durable
+ownership claims, remove the claim before publication, and fsync the parent after rename.
 The stable proposer applies the same authority rule to its proposal/resource/gateway/idempotency bundle. Its durable
 gateway request store lives outside the publication directory; a manifest-less directory is atomically quarantined as
 audit residue before retry, so no-clobber evidence paths cannot strand recovery and paid requests still replay.
@@ -370,6 +374,9 @@ and no attempt or receipt may follow a 2xx or non-retryable terminal row. Succes
 and a completed proposal cannot be justified by a failure-only matrix.
 V011 final audit enumerates every `proposal.completed` materialization and replays its committed execution against the
 journal, even when a later build rejection means that proposal never becomes one of the three retained generations.
+It first requires a one-to-one inventory between active execution manifests and materializations, so an extra committed
+execution cannot hide outside the journal set. Recovery history under `incomplete-executions/` is retained evidence but
+is explicitly outside the active authority namespace.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they
