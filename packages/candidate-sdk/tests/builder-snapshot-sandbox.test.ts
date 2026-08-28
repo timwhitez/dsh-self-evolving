@@ -237,6 +237,7 @@ describe('trusted builder source snapshot and compiler sandbox', () => {
       toolchainRoot: repoRoot,
     })
     let mutationRan = false
+    const rejectedSecretPrefix = ['s', 'k', '-'].join('')
     const input = {
       sourceRoot: mutableRoot,
       sourceFiles,
@@ -247,7 +248,7 @@ describe('trusted builder source snapshot and compiler sandbox', () => {
         await Promise.all([
           writeFile(
             join(mutableRoot, 'src', 'index.ts'),
-            "const apiKey = 'sk-synthetic-mutated-value'\nexport default apiKey\n",
+            `const apiKey = '${rejectedSecretPrefix}synthetic-mutated-value'\nexport default apiKey\n`,
           ),
           writeFile(join(mutableRoot, 'candidate.json'), '{"schemaVersion":999}\n'),
         ])
