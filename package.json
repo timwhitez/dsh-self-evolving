@@ -34,6 +34,7 @@
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:provider:official": "tsx scripts/run-official-responses-provider.ts",
+    "test:provider:responses-continuation": "vitest run --config vitest.e2e.config.ts packages/dsh-self-evolving-proposer/tests/responses-continuation-real.e2e.ts --maxWorkers=1 --no-file-parallelism",
     "effectiveness:official": "tsx scripts/run-official-responses-provider.ts --effectiveness",
     "provenance:check": "tsx scripts/check-provenance.ts",
     "upstream:check": "tsx scripts/check-upstream-clean.ts",

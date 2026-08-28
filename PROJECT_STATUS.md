@@ -7,10 +7,22 @@
 
 - Issue #238 records that commit `22a5a5a3f9c488db5b0b4f365c193907af036f41` failed the required hosted
   Prettier step, so the remaining CI steps did not execute.
-- The repair branch contains formatting-only changes to the 15 files rejected by pinned Prettier. Local gate and
-  repository-integrity checks pass; unit is 105 files / 809 passed + 1 skipped and no-key E2E is 36 passed + 3
-  credential-gated skipped. Hosted-PR status remains pending until GitHub Actions completes. This repair makes no
-  benchmark, promotion, or release-performance claim.
+- The merged repair contains formatting-only changes to the 15 files rejected by pinned Prettier. Local gate and
+  repository-integrity checks pass; unit is 105 files / 809 passed + 1 skipped. PR #239 passed hosted CI and was
+  independently reviewed before merge. This repair makes no benchmark, promotion, or release-performance claim.
+
+## 2026-08-28 Responses continuation compatibility
+
+- Issue #187 was narrowed after current-code verification: a real provider tool-loop already existed, while explicit
+  cross-round context survival remained untested.
+- The dedicated provider-configurable Responses E2E carries unpredictable user/assistant markers through two real
+  function-call/output rounds and requires the final provider text to reproduce all prior markers. It is skipped
+  unless all four `OPENAI_*` route variables are supplied, and it never persists or prints the credential.
+- On 2026-08-28 it passed against `http://64.186.236.156:24634/v1/`, model `gpt-5.6-luna`, Responses wire API and
+  reasoning effort `max`: two tool rounds completed and all six unpredictable context/result markers survived into
+  the final text. No-key E2E now reports 36 passed + 4 credential-gated skipped.
+- Passing this compatibility test proves only the exercised Responses item shapes on the locked endpoint/model; it
+  is not benchmark, candidate-improvement, sealed, promotion, or release evidence.
 
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
