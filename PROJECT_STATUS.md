@@ -39,6 +39,27 @@
 - This is an attribution/correctness repair only. It creates no new benchmark, improvement, promotion, sealed or
   release evidence.
 
+## 2026-08-28 v0.1.1 packed-overlay admission repair
+
+- Issue #197 identified that V011 admission tested a hand-built candidate composition but never executed the packed
+  production overlay shipped in the capsule.
+- Admission now requires byte identity between `runner/cordis.patch.yml` and the launcher's `runtime/cordis.yml`, then
+  boots that exact config through the packed ACP runtime inside a `bwrap --unshare-all` process with a cleared
+  environment. A model-free ACP initialize/session handshake must complete and is digest-bound in the admission
+  receipt; the existing isolated solve/propose probes remain as separate candidate-mode evidence.
+- Divergent runner/runtime overlay bytes, startup failure, timeout, missing ACP/session identity, or premature process
+  termination all fail closed. The test probe receives no provider credential and makes no model request.
+- The trusted worker writes a 256-bit random challenge before loading candidate code and accepts exactly one matching
+  post-import ready receipt; early, malformed, repeated, or late control records kill the probe. ACP stdout is rejected
+  before ready and is then bounded to 2 MiB with strict UTF-8, NDJSON, and JSON-RPC envelope validation.
+- Resume and audit now validate the complete current admission schema, so a digest-self-consistent historical receipt
+  without `packedOverlayBoot` evidence cannot be adopted.
+- The combined identity/overlay branch passes format, docs, lint, typecheck, 823 unit tests (+1 platform skip), and 36
+  no-key E2E tests (+4 credential-gated skips), including real Harbor ACP, extract-elf smoke, offline packed Loader,
+  V011 admission and process crash/replay paths.
+- This is an admission fidelity repair only. It creates no benchmark, improvement, sealed, promotion, or release
+  evidence.
+
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
 > successor proves an admitted child changes the preregistered solve replay while preserving propose replay.

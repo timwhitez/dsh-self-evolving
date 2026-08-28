@@ -31,6 +31,7 @@
     "clean": "rm -rf lib .tsbuildinfo"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "0.25.1",
     "@dsh-self-evolving/candidate-baseline": "workspace:*",
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.1",

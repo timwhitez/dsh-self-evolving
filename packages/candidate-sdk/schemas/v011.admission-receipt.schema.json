@@ -33,6 +33,7 @@
         "doubleBuild",
         "loaderSolve",
         "loaderPropose",
+        "packedOverlayBoot",
         "fixedReplay",
         "offlineCapsule"
       ],
@@ -44,6 +45,7 @@
         "doubleBuild": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "loaderSolve": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "loaderPropose": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "packedOverlayBoot": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "fixedReplay": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "offlineCapsule": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       }

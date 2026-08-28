@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { digestV011, isValidCandidateId } from '@dsh-self-evolving/candidate-sdk'
+import { digestV011, isValidCandidateId, validateV011 } from '@dsh-self-evolving/candidate-sdk'
 import type { BuiltCandidate } from './engine.js'
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/
@@ -50,12 +50,14 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
     candidateId?: unknown
     candidate?: { buildCandidateId?: unknown }
   }
+  const admissionValidation = await validateV011('admission-receipt', admission)
 
   const expectedSourceRoot = resolve(root, 'tree')
   const expectedCapsuleRoot = resolve(root, 'capsule')
   const matches =
     typeof built.candidateId === 'string' &&
     DIGEST.test(built.candidateId) &&
+    admissionValidation.valid &&
     built.sourceDigest === built.candidateId &&
     admission.admitted === true &&
     admission.candidateDigest === built.candidateId &&

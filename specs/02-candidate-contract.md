@@ -275,6 +275,13 @@ Trusted builder 按顺序执行；任一步失败即停止后续 paid evaluation
 只有 1–10 全部通过的 candidate 才进入 Archive，状态为 `ADMITTED_UNEVALUATED`。Admission 表示
 “安全可运行”，不表示 performance acceptance。
 
+Loader admission 必须同时保留两类证据：隔离的一次性 solve/propose candidate-mode probe，以及对最终
+packed production overlay 的真实启动。后者必须验证 `runner/cordis.patch.yml` 与 launcher 实际读取的
+`runtime/cordis.yml` 字节相同，并在断网、清空环境的隔离进程中完成真实 ACP initialize/session；手工重建
+等价 plugin composition 不能替代该证据。启动完成信号必须由候选加载前生成的随机 challenge 绑定，候选
+写入同一诊断通道的提前/重复信号必须 fail closed；ACP stdout 必须在读取前接受总字节上限、严格 UTF-8、
+逐行 JSON 和 JSON-RPC envelope 校验。
+
 ## 12. Evaluation capsule
 
 Capsule MUST 自包含且不可变：

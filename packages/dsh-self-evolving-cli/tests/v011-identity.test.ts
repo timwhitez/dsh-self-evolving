@@ -24,6 +24,7 @@ async function stableFixture(
     builtCandidateId?: string
     manifestCandidateId?: string
     omitBuildCandidateId?: boolean
+    omitPackedOverlayBoot?: boolean
   } = {},
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-v011-identity-'))
@@ -36,6 +37,20 @@ async function stableFixture(
     protocol: 'dsh-self-evolving-candidate-tree-v2',
     candidateDigest: PARENT,
     ...(overrides.omitBuildCandidateId ? {} : { buildCandidateId: BUILD_ID }),
+    materializationDigest: `sha256:${'5'.repeat(64)}`,
+    capabilityCatalogDigest: `sha256:${'6'.repeat(64)}`,
+    stageReceipts: {
+      containment: `sha256:${'7'.repeat(64)}`,
+      schema: `sha256:${'8'.repeat(64)}`,
+      policy: `sha256:${'9'.repeat(64)}`,
+      candidateTests: `sha256:${'a'.repeat(64)}`,
+      doubleBuild: `sha256:${'b'.repeat(64)}`,
+      loaderSolve: `sha256:${'c'.repeat(64)}`,
+      loaderPropose: `sha256:${'d'.repeat(64)}`,
+      ...(overrides.omitPackedOverlayBoot ? {} : { packedOverlayBoot: `sha256:${'e'.repeat(64)}` }),
+      fixedReplay: `sha256:${'f'.repeat(64)}`,
+      offlineCapsule: `sha256:${'0'.repeat(64)}`,
+    },
     capsuleDigest: `sha256:${'3'.repeat(64)}`,
     admitted: true,
   }
@@ -86,6 +101,11 @@ describe('v0.1.1 canonical candidate identity (issue #198)', () => {
       builtCandidateId: 'baseline',
       omitBuildCandidateId: true,
     })
+    await expect(readV011StableBuild(legacy)).rejects.toThrow(/identity chain mismatch/)
+  })
+
+  it('rejects a self-consistent pre-#197 receipt that lacks packed-overlay boot evidence', async () => {
+    const legacy = await stableFixture({ omitPackedOverlayBoot: true })
     await expect(readV011StableBuild(legacy)).rejects.toThrow(/identity chain mismatch/)
   })
 
