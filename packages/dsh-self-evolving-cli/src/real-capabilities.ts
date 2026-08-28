@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   chmod,
   cp,
@@ -34,7 +34,7 @@ import {
   startProposalGateway,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
-import { loadPublishedBundle, PUBLISH_MANIFEST, publishBundle } from './publish.js'
+import { loadPublishedBundle, publishBundle } from './publish.js'
 import { runDoctor } from './doctor.js'
 import type { StableDemoConfig } from './config.js'
 import type {
@@ -232,6 +232,62 @@ async function prepareProposalRuntime(config: StableDemoConfig): Promise<string>
   }
 }
 
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * A manifest-less stable proposal directory is a crashed publication, never
+ * authority. Move the entire residue aside before retrying so no final entry
+ * can collide with the next no-clobber publish. The legacy durable gateway
+ * request store is migrated first and kept outside the publication directory:
+ * provider calls can replay without adopting any uncommitted evidence bytes.
+ */
+export async function recoverIncompleteStableProposalPublication(input: {
+  stateDir: string
+  artifactDir: string
+  gatewayStateDir: string
+}): Promise<{ quarantined: boolean; quarantinePath: string | null }> {
+  const artifactInfo = await stat(input.artifactDir).catch(() => null)
+  if (artifactInfo === null) return { quarantined: false, quarantinePath: null }
+  if (!artifactInfo.isDirectory()) {
+    throw new Error(
+      `real proposer: proposal publication path is not a directory: ${input.artifactDir}`,
+    )
+  }
+
+  const legacyGatewayState = join(input.artifactDir, 'gateway-requests')
+  const [legacyInfo, currentInfo] = await Promise.all([
+    stat(legacyGatewayState).catch(() => null),
+    stat(input.gatewayStateDir).catch(() => null),
+  ])
+  if (legacyInfo !== null && currentInfo !== null) {
+    throw new Error('real proposer: conflicting legacy and current durable gateway request stores')
+  }
+  if (legacyInfo !== null) {
+    if (!legacyInfo.isDirectory()) {
+      throw new Error('real proposer: legacy durable gateway request store is not a directory')
+    }
+    await mkdir(dirname(input.gatewayStateDir), { recursive: true, mode: 0o700 })
+    await rename(legacyGatewayState, input.gatewayStateDir)
+    await fsyncDirectory(input.artifactDir)
+    await fsyncDirectory(dirname(input.gatewayStateDir))
+  }
+
+  const quarantineRoot = join(input.stateDir, 'incomplete-proposal-publications')
+  await mkdir(quarantineRoot, { recursive: true, mode: 0o700 })
+  const quarantinePath = join(quarantineRoot, `${basename(input.artifactDir)}-${randomUUID()}`)
+  await rename(input.artifactDir, quarantinePath)
+  await fsyncDirectory(dirname(input.artifactDir))
+  await fsyncDirectory(quarantineRoot)
+  return { quarantined: true, quarantinePath }
+}
+
 async function realProposal(
   config: StableDemoConfig,
   input: StableProposalInput,
@@ -241,7 +297,11 @@ async function realProposal(
     'artifacts',
     `proposal-${input.generation}-${input.attempt}`,
   )
-  const outputPath = join(artifactDir, 'proposal.json')
+  const gatewayStateDir = join(
+    config.stateDir,
+    'proposal-gateway-requests',
+    `proposal-${input.generation}-${input.attempt}`,
+  )
   // Resume gates on the bundle commit marker, not bare proposal.json: a crash
   // between the proposal write and its receipts used to be adopted as a
   // complete evidenced result (issue #55).
@@ -271,14 +331,11 @@ async function realProposal(
     assertProposalResourceReceipt(JSON.parse(published['sandbox-resource.json']!) as unknown)
     return JSON.parse(published['proposal.json']!) as StableProposal
   }
-  if (
-    (await stat(outputPath).catch(() => null)) !== null ||
-    (await stat(join(artifactDir, PUBLISH_MANIFEST)).catch(() => null)) !== null
-  ) {
-    throw new Error(
-      `real proposer: incomplete prior proposal publication without commit manifest: ${artifactDir}`,
-    )
-  }
+  await recoverIncompleteStableProposalPublication({
+    stateDir: config.stateDir,
+    artifactDir,
+    gatewayStateDir,
+  })
   await mkdir(artifactDir, { recursive: true, mode: 0o700 })
   const runtimeRoot = await prepareProposalRuntime(config)
   const scratch = await mkdtemp(
@@ -341,10 +398,10 @@ async function realProposal(
       route: lockedRoute,
       requestTimeoutMs: sandboxTimeoutMs,
       handle: createProposalGatewayLlmHandler(adapter, lockedRoute),
-      // Stable across restarts: artifactDir is the generation+attempt-addressed
-      // proposal artifact directory, so a resumed run re-enters the same store
-      // and replays instead of re-billing (issue #56).
-      stateDir: join(artifactDir, 'gateway-requests'),
+      // Stable across restarts and outside the manifest-last publication
+      // directory: a resumed generation+attempt can quarantine partial
+      // evidence while reusing the same request records instead of re-billing.
+      stateDir: gatewayStateDir,
     })
     try {
       const result = await runProposalSandbox({

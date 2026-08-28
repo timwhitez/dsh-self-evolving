@@ -108,8 +108,12 @@
   incomplete exports are quarantined and rebuilt while durable gateway ids prevent duplicate dispatch. Cache/build/
   audit require an exact wrapper plus materialization/analysis CAS bytes. Baseline and generated staging use durable
   claims, clear them before rename, and fsync the publication parent.
-- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 116 files /
-  868 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+- Exact-head review of `7812f2e` found one further stable-proposer recovery gap: a crash after any pre-manifest bundle
+  entry left a no-clobber final path that made retry permanently fail. Stable proposal publication now keeps durable
+  gateway request records outside the commit directory, quarantines every manifest-less publication as one directory,
+  and retries from clean final paths while replaying the paid request. Regression tests cover all four entry boundaries.
+- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 117 files /
+  873 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

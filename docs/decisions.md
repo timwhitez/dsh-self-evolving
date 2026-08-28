@@ -354,6 +354,9 @@ bundle, recreates the declared slot from the immutable parent and reuses durable
 provider dispatch. Cache/build/audit require an exact wrapper, recompute the stable proposal artifact digest, and read
 the canonical materialization and analysis bytes back from the object store. Baseline and generated-candidate staging
 use durable ownership claims, remove the claim before publication, and fsync the parent after rename.
+The stable proposer applies the same authority rule to its proposal/resource/gateway/idempotency bundle. Its durable
+gateway request store lives outside the publication directory; a manifest-less directory is atomically quarantined as
+audit residue before retry, so no-clobber evidence paths cannot strand recovery and paid requests still replay.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they
