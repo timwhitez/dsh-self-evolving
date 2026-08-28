@@ -376,7 +376,11 @@ V011 final audit enumerates every `proposal.completed` materialization and repla
 journal, even when a later build rejection means that proposal never becomes one of the three retained generations.
 It first requires a one-to-one inventory between active execution manifests and materializations, so an extra committed
 execution cannot hide outside the journal set. Recovery history under `incomplete-executions/` is retained evidence but
-is explicitly outside the active authority namespace.
+is explicitly outside the active authority namespace. One canonical direct-action scanner supplies both inventory and
+semantic replay, rejects active symlink/hardlink/special entries, and never traverses quarantine history. Materialization
+cache publication uses a fsynced staging inode, no-clobber link and action-directory fsync. Cache parsing/CAS/binding and
+installed execution/tree validation happen before adoption; any mismatch quarantines cache, execution and children
+together while leaving durable gateway requests in place for deterministic replay.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

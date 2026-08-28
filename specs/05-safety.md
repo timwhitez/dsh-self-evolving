@@ -103,7 +103,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
   attempt/receipt，success 不得带 error，failure 必须带非空 error。
 - V011 final audit 必须对 active action namespace 中的 execution manifest 与 materialization 做一一 inventory；
   任一额外 committed execution 或任一缺 execution 的 materialization 都拒绝。`incomplete-executions/` 是显式
-  去权且保留审计的恢复 namespace，不能重新计为 active authority。
+  去权且保留审计的恢复 namespace，不能重新计为 active authority。inventory 与后续 semantic replay 必须复用
+  同一个只含 direct canonical action 的扫描结果；active namespace 内 symlink、hardlink、socket/FIFO/device 或
+  其他 special entry 一律 fail closed，不能被 walker 静默忽略。
 
 ### 5.3 Task sandbox
 

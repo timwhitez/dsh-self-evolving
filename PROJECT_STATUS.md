@@ -135,8 +135,14 @@
   execution together with an absent or digest-drifted installed tree, plus interrupted random export/backup directories,
   and replays from immutable input. Quarantined history remains retained evidence but is explicitly outside the active
   authority namespace.
+- Exact-head review of `4224a08` found semantic replay still rescanned quarantined materializations after inventory,
+  active symlink/special entries were silently ignored, and a present/torn materialization cache bypassed recovery.
+  One canonical direct-action scanner now drives inventory and replay, never traverses quarantine, and rejects active
+  symlink/hardlink/special entries. Materialization publication is fsynced staging + no-clobber link + directory fsync;
+  cache validation now precedes adoption and quarantines cache/execution/children together on any parse, CAS, worker or
+  tree mismatch while preserving durable gateway requests for replay.
 - Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
-  905 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
+  908 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

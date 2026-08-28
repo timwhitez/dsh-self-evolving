@@ -240,7 +240,10 @@ resume authority。导出文件与 staging 目录树必须先 fsync，原 tree �
 删除的每个 rename/remove 边界都必须 fsync parent；只有随后才可提交 execution manifest。已提交 manifest
 若与安装 worker/tree 缺失或 digest 漂移，必须把两侧一起移入 `incomplete-executions/` 后从 immutable parent
 重放；rename 中断留下的随机 staging/backup 目录也必须移入同一去权 namespace，不能永久卡住 action 或
-形成隐形 active tree。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
+形成隐形 active tree。materialization cache 只能把完整 fsynced staging inode 以 no-clobber link 发布，随后
+fsync action directory；不得直接在最终 authority path 写入。cache 已存在但 JSON/CAS/execution/worker/tree
+任一侧损坏时，必须在 cache adoption 前把 cache、execution 与 child 一起隔离，同时保留 durable gateway
+request store 供确定性重放。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
 stable proposal artifact digest 交叉验证。candidate staging claim 在最终 rename 前清除且 fsync；rename 后
 fsync parent directory，正式 candidate root 不得携带 live claim marker。
 稳定 proposer 的 proposal/resource/gateway/idempotency bundle 服从同一规则：manifest 必须先在 staging
@@ -257,7 +260,9 @@ V011 final audit 必须先对 active action namespace 中的 manifest-committed 
 一一 inventory，再枚举每一个 `proposal.completed` action 并重放其 materialization、resource、gateway、
 worker-output/tree 与 journal binding；额外 committed execution、缺 execution 的 materialization、后续 build
 rejection 或未进入最终三代都不能逃过审计。`incomplete-executions/` 下的留存 bytes 已显式去权，不属于 active
-inventory，但必须继续作为 crash/corruption evidence 保留。
+inventory，但必须继续作为 crash/corruption evidence 保留。inventory 和 semantic replay 必须来自同一份
+direct-action scan；quarantine subtree 不得被第二次递归选中，active symlink/hardlink/special entry 必须产生明确
+拒绝原因。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。

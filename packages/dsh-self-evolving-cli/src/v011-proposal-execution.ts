@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, readdir, rename, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { link, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import {
   assertCompletedResourceDomainReceipt,
   canonicalizeV011Tree,
@@ -19,7 +19,7 @@ import {
   type ProposalGatewayReceipt,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
-import { loadPublishedBundle, publishBundle } from './publish.js'
+import { loadPublishedBundle, PUBLISH_MANIFEST, publishBundle } from './publish.js'
 
 const EXECUTION_DIRECTORY = 'proposal-execution-v1'
 const EXECUTION_FILES = [
@@ -60,6 +60,13 @@ async function fsyncDirectory(path: string): Promise<void> {
   }
 }
 
+async function lstatOrNull(path: string) {
+  return lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+}
+
 export function v011ProposalExecutionDirectory(action: string): string {
   return join(action, EXECUTION_DIRECTORY)
 }
@@ -70,13 +77,43 @@ export async function loadV011ProposalExecution(input: {
   workerOutputPath?: string
   workerTreePath?: string
 }): Promise<V011ProposalExecution | null> {
-  const bundle = await loadPublishedBundle(v011ProposalExecutionDirectory(input.action))
+  const executionDirectory = v011ProposalExecutionDirectory(input.action)
+  const directoryInfo = await lstatOrNull(executionDirectory)
+  if (directoryInfo === null) return null
+  if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) {
+    throw new Error('v0.1.1 proposal execution: commit root is not a real directory')
+  }
+  const expectedNames = [...EXECUTION_FILES, PUBLISH_MANIFEST].sort()
+  const actualEntries = await readdir(executionDirectory, { withFileTypes: true })
+  if (
+    actualEntries.some((entry) => !entry.isFile()) ||
+    JSON.stringify(actualEntries.map((entry) => entry.name).sort()) !==
+      JSON.stringify(expectedNames)
+  ) {
+    throw new Error('v0.1.1 proposal execution: committed directory inventory mismatch')
+  }
+  for (const name of expectedNames) {
+    const info = await lstatOrNull(join(executionDirectory, name))
+    if (info === null || !info.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
+      throw new Error(`v0.1.1 proposal execution: committed file is not canonical: ${name}`)
+    }
+  }
+  const bundle = await loadPublishedBundle(executionDirectory)
   if (bundle === null) return null
   if (JSON.stringify(Object.keys(bundle).sort()) !== JSON.stringify([...EXECUTION_FILES])) {
     throw new Error('v0.1.1 proposal execution: committed bundle inventory mismatch')
   }
   const workerOutputBytes = bundle['worker-output.json']!
   if (input.workerOutputPath !== undefined) {
+    const workerInfo = await lstatOrNull(input.workerOutputPath)
+    if (
+      workerInfo === null ||
+      !workerInfo.isFile() ||
+      workerInfo.isSymbolicLink() ||
+      workerInfo.nlink !== 1
+    ) {
+      throw new Error('v0.1.1 proposal execution: installed worker output is not canonical')
+    }
     const installed = await readFile(input.workerOutputPath, 'utf8').catch(() => null)
     if (installed !== workerOutputBytes) {
       throw new Error('v0.1.1 proposal execution: installed worker output differs from commit')
@@ -97,14 +134,14 @@ export async function loadV011ProposalExecution(input: {
   if (!isRecord(worker) || !isRecord(diagnostic)) {
     throw new Error('v0.1.1 proposal execution: committed evidence shape is invalid')
   }
+  const finishedTreeDigest = worker['finishedTreeDigest']
+  if (typeof finishedTreeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(finishedTreeDigest)) {
+    throw new Error('v0.1.1 proposal execution: worker tree digest is invalid')
+  }
   if (input.workerTreePath !== undefined) {
-    const expected = worker['finishedTreeDigest']
-    if (typeof expected !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(expected)) {
-      throw new Error('v0.1.1 proposal execution: worker tree digest is invalid')
-    }
     const snapshot = await snapshotV011Tree(input.workerTreePath)
     const actual = digestV011((await canonicalizeV011Tree(snapshot)).bytes)
-    if (actual !== expected) {
+    if (actual !== finishedTreeDigest) {
       throw new Error('v0.1.1 proposal execution: installed worker tree differs from commit')
     }
   }
@@ -177,6 +214,62 @@ export async function publishV011ProposalExecution(input: {
   await fsyncDirectory(input.action)
 }
 
+export type V011MaterializationPublishCheckpoint =
+  'staging-fsynced' | 'final-linked' | 'directory-fsynced'
+
+/**
+ * Publish the materialization cache without ever writing partial bytes at its
+ * final authority path. The fsynced staging inode is hard-linked no-clobber,
+ * then the action directory is synced before the call can succeed.
+ */
+export async function publishV011MaterializationCache(input: {
+  path: string
+  bytes: string
+  afterCheckpoint?: (checkpoint: V011MaterializationPublishCheckpoint) => void | Promise<void>
+}): Promise<void> {
+  const directory = dirname(input.path)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  await fsyncDirectory(directory)
+  const staging = join(directory, `.${basename(input.path)}.staging-${process.pid}-${randomUUID()}`)
+  let publicationError: unknown
+  try {
+    const handle = await open(staging, 'wx', 0o600)
+    try {
+      await handle.writeFile(input.bytes)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await input.afterCheckpoint?.('staging-fsynced')
+    try {
+      await link(staging, input.path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new Error(`v0.1.1 materialization cache already exists: ${input.path}`, {
+          cause: error,
+        })
+      }
+      throw error
+    }
+    await input.afterCheckpoint?.('final-linked')
+    await fsyncDirectory(directory)
+    await input.afterCheckpoint?.('directory-fsynced')
+  } catch (error) {
+    publicationError = error
+  }
+  let cleanupError: unknown
+  if ((await lstatOrNull(staging).catch(() => null)) !== null) {
+    try {
+      await rm(staging, { force: true })
+      await fsyncDirectory(directory)
+    } catch (error) {
+      cleanupError = error
+    }
+  }
+  if (publicationError !== undefined) throw publicationError
+  if (cleanupError !== undefined) throw cleanupError
+}
+
 export function assertV011ProposalExecutionBinding(
   materialization: V011MaterializationReceipt,
   execution: V011ProposalExecution,
@@ -197,6 +290,8 @@ export function assertV011ProposalExecutionBinding(
   }
   if (
     !gatewayValid ||
+    typeof materialization.sourceDigest !== 'string' ||
+    !/^sha256:[0-9a-f]{64}$/.test(materialization.sourceDigest) ||
     execution.worker['finishedTreeDigest'] !== materialization.sourceDigest ||
     materialization.proposerResourceReceiptDigest !== digestV011(execution.resource) ||
     !isRecord(usage) ||
@@ -224,58 +319,92 @@ export function assertV011ProposalExecutionBinding(
 }
 
 /**
- * An exported child without the execution commit marker is not authority. Keep
- * every byte for audit, move it out of the deterministic paths, and let the
- * caller recreate the child slot from its immutable parent. Gateway durable
- * request records stay at action/gateway/requests and therefore replay rather
- * than issue a second paid call.
+ * An exported child/cache without a mutually valid execution commit is not
+ * authority. Keep every byte for audit, move deterministic authority paths and
+ * publication residue aside, and let the caller recreate the slot from its
+ * immutable parent. Gateway durable request records remain in place and replay
+ * rather than issue a second paid call.
  */
 export async function quarantineIncompleteV011ProposalExecution(input: {
   action: string
   childrenRoot: string
   workerOutputPath: string
   workerTreePath?: string
+  materializationPath?: string
+  force?: boolean
   route: ProposalGatewayRoute
 }): Promise<boolean> {
-  let executionAdoptable = false
-  try {
-    if (
-      (await loadV011ProposalExecution({
-        action: input.action,
-        route: input.route,
-        workerOutputPath: input.workerOutputPath,
-        ...(input.workerTreePath === undefined ? {} : { workerTreePath: input.workerTreePath }),
-      })) !== null
-    ) {
-      executionAdoptable = true
-    }
-  } catch {
-    // A manifest is not adoptable authority when its installed worker bytes or
-    // tree are absent/corrupt. Preserve both sides and allow deterministic
-    // replay from the immutable parent and durable gateway request store.
-  }
   const execution = v011ProposalExecutionDirectory(input.action)
-  const exportPrefix = `.${basename(input.childrenRoot)}-resource-`
-  const [executionInfo, childrenInfo, exportResidues] = await Promise.all([
-    stat(execution).catch(() => null),
-    stat(input.childrenRoot).catch(() => null),
-    readdir(input.action, { withFileTypes: true })
-      .then((entries) =>
-        entries
-          .filter(
-            (entry) =>
-              entry.isDirectory() &&
-              (entry.name.startsWith(`${exportPrefix}export-`) ||
-                entry.name.startsWith(`${exportPrefix}backup-`)),
-          )
-          .map((entry) => entry.name)
-          .sort(),
-      )
-      .catch(() => []),
+  const [executionInfo, childrenInfo, materializationInfo] = await Promise.all([
+    lstatOrNull(execution),
+    lstatOrNull(input.childrenRoot),
+    input.materializationPath === undefined
+      ? Promise.resolve(null)
+      : lstatOrNull(input.materializationPath),
   ])
+  const executionIsRealDirectory =
+    executionInfo?.isDirectory() === true && !executionInfo.isSymbolicLink()
+  const childrenIsRealDirectory =
+    childrenInfo?.isDirectory() === true && !childrenInfo.isSymbolicLink()
+  const materializationIsRealFile =
+    materializationInfo === null ||
+    (materializationInfo.isFile() && !materializationInfo.isSymbolicLink())
+  let executionAdoptable = false
+  if (
+    input.force !== true &&
+    executionIsRealDirectory &&
+    childrenIsRealDirectory &&
+    materializationIsRealFile
+  ) {
+    try {
+      if (
+        (await loadV011ProposalExecution({
+          action: input.action,
+          route: input.route,
+          workerOutputPath: input.workerOutputPath,
+          ...(input.workerTreePath === undefined ? {} : { workerTreePath: input.workerTreePath }),
+        })) !== null
+      ) {
+        executionAdoptable = true
+      }
+    } catch {
+      // A manifest is not adoptable authority when its installed worker bytes
+      // or tree are absent/corrupt.
+    }
+  }
+  const exportPrefix = `.${basename(input.childrenRoot)}-resource-`
+  const materializationStagingPrefix =
+    input.materializationPath === undefined
+      ? null
+      : `.${basename(input.materializationPath)}.staging-`
+  const exportResidues = await readdir(input.action, { withFileTypes: true })
+    .then((entries) =>
+      entries
+        .filter(
+          (entry) =>
+            entry.name.startsWith(`${exportPrefix}export-`) ||
+            entry.name.startsWith(`${exportPrefix}backup-`) ||
+            (materializationStagingPrefix !== null &&
+              entry.name.startsWith(materializationStagingPrefix)),
+        )
+        .map((entry) => entry.name)
+        .sort(),
+    )
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    })
   const quarantineExecution = !executionAdoptable && executionInfo !== null
   const quarantineChildren = !executionAdoptable && childrenInfo !== null
-  if (!quarantineExecution && !quarantineChildren && exportResidues.length === 0) return false
+  const quarantineMaterialization =
+    !executionAdoptable && materializationInfo !== null && input.materializationPath !== undefined
+  if (
+    !quarantineExecution &&
+    !quarantineChildren &&
+    !quarantineMaterialization &&
+    exportResidues.length === 0
+  )
+    return false
   const quarantineRoot = join(input.action, 'incomplete-executions')
   await mkdir(quarantineRoot, { recursive: true, mode: 0o700 })
   await fsyncDirectory(input.action)
@@ -284,10 +413,83 @@ export async function quarantineIncompleteV011ProposalExecution(input: {
   await fsyncDirectory(quarantineRoot)
   if (quarantineExecution) await rename(execution, join(quarantine, EXECUTION_DIRECTORY))
   if (quarantineChildren) await rename(input.childrenRoot, join(quarantine, 'children'))
+  if (quarantineMaterialization) {
+    await rename(input.materializationPath!, join(quarantine, 'materialization.json'))
+  }
   for (const residue of exportResidues) {
-    await rename(join(input.action, residue), join(quarantine, residue))
+    const source = join(input.action, residue)
+    const destination = join(quarantine, residue)
+    const info = await lstat(source)
+    if (info.isFile() && info.nlink > 1) {
+      const bytes = await readFile(source)
+      const handle = await open(destination, 'wx', 0o600)
+      try {
+        await handle.writeFile(bytes)
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      await rm(source)
+    } else {
+      await rename(source, destination)
+    }
   }
   await fsyncDirectory(quarantine)
   await fsyncDirectory(input.action)
   return true
+}
+
+/**
+ * Validate cache bytes and every bound execution/tree byte before adoption.
+ * Any present but invalid cache is de-authorized together with its execution
+ * and child; a missing cache still triggers normal incomplete-publication
+ * recovery. The loader runs again after residue cleanup to close TOCTOU gaps.
+ */
+export async function recoverV011ProposalCache<T>(input: {
+  action: string
+  childrenRoot: string
+  workerOutputPath: string
+  workerTreePath: string
+  materializationPath: string
+  route: ProposalGatewayRoute
+  load: (bytes: string) => Promise<T>
+}): Promise<T | null> {
+  const cacheInfo = await lstatOrNull(input.materializationPath)
+  if (cacheInfo === null) {
+    await quarantineIncompleteV011ProposalExecution({
+      action: input.action,
+      childrenRoot: input.childrenRoot,
+      workerOutputPath: input.workerOutputPath,
+      workerTreePath: input.workerTreePath,
+      materializationPath: input.materializationPath,
+      route: input.route,
+    })
+    return null
+  }
+  try {
+    if (!cacheInfo.isFile() || cacheInfo.isSymbolicLink()) {
+      throw new Error('v0.1.1 materialization cache is not a real file')
+    }
+    await input.load(await readFile(input.materializationPath, 'utf8'))
+    await quarantineIncompleteV011ProposalExecution({
+      action: input.action,
+      childrenRoot: input.childrenRoot,
+      workerOutputPath: input.workerOutputPath,
+      workerTreePath: input.workerTreePath,
+      materializationPath: input.materializationPath,
+      route: input.route,
+    })
+    return await input.load(await readFile(input.materializationPath, 'utf8'))
+  } catch {
+    await quarantineIncompleteV011ProposalExecution({
+      action: input.action,
+      childrenRoot: input.childrenRoot,
+      workerOutputPath: input.workerOutputPath,
+      workerTreePath: input.workerTreePath,
+      materializationPath: input.materializationPath,
+      force: true,
+      route: input.route,
+    })
+    return null
+  }
 }

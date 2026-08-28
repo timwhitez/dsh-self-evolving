@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { basename, dirname, join, sep } from 'node:path'
+import { lstat, readFile, readdir, stat } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
   PROPOSAL_RESOURCE_POLICY_V1,
@@ -145,6 +145,96 @@ async function files(root: string): Promise<string[]> {
 
 const V011_EXECUTION_MANIFEST_SUFFIX = `${sep}proposal-execution-v1${sep}publish-manifest.json`
 const V011_MATERIALIZATION_SUFFIX = `${sep}materialization.json`
+const V011_ACTION_NAME = /^proposal-[1-9]\d*-[1-9]\d*$/
+
+export interface V011ActiveActionScan {
+  actionRoots: string[]
+  files: string[]
+  reasons: string[]
+}
+
+/**
+ * Enumerate the active authority namespace exactly once. Recovery history is
+ * an immediate, real `incomplete-executions/` directory beneath an action and
+ * is never traversed. Every other symlink, hardlink, socket, fifo, device or
+ * unknown direct action entry fails closed instead of disappearing from audit.
+ */
+export async function scanV011ActiveActions(actionsRoot: string): Promise<V011ActiveActionScan> {
+  const actionRoots: string[] = []
+  const activeFiles: string[] = []
+  const reasons: string[] = []
+
+  async function walk(directory: string, actionRoot: string): Promise<void> {
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch {
+      reasons.push(`v0.1.1 active action directory is unreadable: ${directory}`)
+      return
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      if (directory === actionRoot && entry.name === 'incomplete-executions') {
+        if (!entry.isDirectory()) {
+          reasons.push(`v0.1.1 quarantine boundary is not a real directory: ${path}`)
+        }
+        continue
+      }
+      if (entry.isDirectory()) {
+        await walk(path, actionRoot)
+        continue
+      }
+      if (entry.isFile()) {
+        const info = await lstat(path).catch(() => null)
+        if (info === null || !info.isFile() || info.nlink !== 1) {
+          reasons.push(`v0.1.1 active action file is missing or hardlinked: ${path}`)
+        } else {
+          activeFiles.push(path)
+        }
+        continue
+      }
+      reasons.push(`v0.1.1 active action contains a symlink or special entry: ${path}`)
+    }
+  }
+
+  const rootInfo = await lstat(actionsRoot).catch(() => null)
+  if (rootInfo === null || !rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    return {
+      actionRoots,
+      files: activeFiles,
+      reasons: [`v0.1.1 active actions root is missing or not a real directory: ${actionsRoot}`],
+    }
+  }
+  let entries
+  try {
+    entries = await readdir(actionsRoot, { withFileTypes: true })
+  } catch {
+    return {
+      actionRoots,
+      files: activeFiles,
+      reasons: [`v0.1.1 active actions root is unreadable: ${actionsRoot}`],
+    }
+  }
+  for (const entry of entries) {
+    const actionRoot = join(actionsRoot, entry.name)
+    if (!entry.isDirectory() || !V011_ACTION_NAME.test(entry.name)) {
+      reasons.push(`v0.1.1 actions root contains a non-canonical action entry: ${actionRoot}`)
+      continue
+    }
+    const info = await lstat(actionRoot).catch(() => null)
+    if (info === null || !info.isDirectory() || info.isSymbolicLink()) {
+      reasons.push(`v0.1.1 action root is missing or not a real directory: ${actionRoot}`)
+      continue
+    }
+    actionRoots.push(actionRoot)
+    await walk(actionRoot, actionRoot)
+  }
+  return {
+    actionRoots: actionRoots.sort(),
+    files: activeFiles.sort(),
+    reasons: reasons.sort(),
+  }
+}
 
 /**
  * Final audit requires a one-to-one inventory before trusting any individual
@@ -152,33 +242,31 @@ const V011_MATERIALIZATION_SUFFIX = `${sep}materialization.json`
  * the materialization/event set and evade semantic replay entirely.
  */
 export function verifyV011ProposalExecutionInventory(input: {
-  actionsRoot: string
+  actionRoots: string[]
   actionTreeFiles: string[]
 }): string[] {
   const reasons: string[] = []
+  const activeActionRoots = new Set(input.actionRoots)
   const materializationRoots = new Set<string>()
   const executionRoots = new Set<string>()
   for (const path of input.actionTreeFiles) {
-    const relativePath = path.startsWith(input.actionsRoot + sep)
-      ? path.slice(input.actionsRoot.length + 1)
-      : path
-    // Recovery evidence is deliberately retained below the action but moved
-    // out of the active authority namespace. It must remain inspectable
-    // without being mistaken for a second live execution.
-    if (relativePath.split(sep)[1] === 'incomplete-executions') continue
-    let root: string | null = null
-    let kind: 'materialization' | 'execution' | null = null
     if (path.endsWith(V011_MATERIALIZATION_SUFFIX)) {
-      root = path.slice(0, -V011_MATERIALIZATION_SUFFIX.length)
-      kind = 'materialization'
-      materializationRoots.add(root)
+      const root = path.slice(0, -V011_MATERIALIZATION_SUFFIX.length)
+      if (activeActionRoots.has(root) && path === join(root, 'materialization.json')) {
+        materializationRoots.add(root)
+      } else {
+        reasons.push(`v0.1.1 materialization is outside a direct proposal action: ${path}`)
+      }
     } else if (path.endsWith(V011_EXECUTION_MANIFEST_SUFFIX)) {
-      root = path.slice(0, -V011_EXECUTION_MANIFEST_SUFFIX.length)
-      kind = 'execution'
-      executionRoots.add(root)
-    }
-    if (root !== null && dirname(root) !== input.actionsRoot) {
-      reasons.push(`v0.1.1 ${kind} is outside a direct proposal action: ${path}`)
+      const root = path.slice(0, -V011_EXECUTION_MANIFEST_SUFFIX.length)
+      if (
+        activeActionRoots.has(root) &&
+        path === join(root, 'proposal-execution-v1', 'publish-manifest.json')
+      ) {
+        executionRoots.add(root)
+      } else {
+        reasons.push(`v0.1.1 execution manifest is outside a direct proposal action: ${path}`)
+      }
     }
   }
   for (const root of executionRoots) {
@@ -416,14 +504,18 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     reasons.push('v0.1 to v0.1.1 migration receipt missing or inherited results')
   }
   const actionsRoot = join(config.stateDir, 'v011', 'actions')
-  const actionTreeFiles = await files(actionsRoot)
+  const actionScan = await scanV011ActiveActions(actionsRoot)
+  reasons.push(...actionScan.reasons)
   reasons.push(
     ...verifyV011ProposalExecutionInventory({
-      actionsRoot,
-      actionTreeFiles,
+      actionRoots: actionScan.actionRoots,
+      actionTreeFiles: actionScan.files,
     }),
   )
-  const actionFiles = actionTreeFiles.filter((path) => path.endsWith(V011_MATERIALIZATION_SUFFIX))
+  const actionFileSet = new Set(actionScan.files)
+  const actionFiles = actionScan.actionRoots
+    .map((root) => join(root, 'materialization.json'))
+    .filter((path) => actionFileSet.has(path))
   if (actionFiles.length < 3)
     reasons.push(`materialization receipt matrix is ${actionFiles.length}/at-least-3`)
   const materializations: Array<{

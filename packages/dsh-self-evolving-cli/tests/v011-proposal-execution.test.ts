@@ -1,4 +1,15 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -15,17 +26,21 @@ import {
   type V011MaterializationReceipt,
 } from '@dsh-self-evolving/core'
 import { proposalGatewayRouteHash, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
-import { verifyV011ProposalExecutionInventory } from '../src/v011-audit.js'
+import { scanV011ActiveActions, verifyV011ProposalExecutionInventory } from '../src/v011-audit.js'
 import {
   assertV011ProposalExecutionBinding,
   loadBoundV011ProposalExecution,
   loadV011ProposalExecution,
+  publishV011MaterializationCache,
   publishV011ProposalExecution,
   quarantineIncompleteV011ProposalExecution,
+  recoverV011ProposalCache,
   v011ProposalExecutionDirectory,
 } from '../src/v011-proposal-execution.js'
 
 let root: string | undefined
+const TREE_DIGEST_A = `sha256:${'a'.repeat(64)}`
+const TREE_DIGEST_B = `sha256:${'b'.repeat(64)}`
 
 const route: ProposalGatewayRoute = {
   provider: 'deepseek',
@@ -115,30 +130,62 @@ describe('v0.1.1 proposal execution commit', () => {
     const actionsRoot = join(root!, 'actions')
     const bound = join(actionsRoot, 'proposal-1-1')
     const dangling = join(actionsRoot, 'proposal-9-9')
-    const quarantined = join(
-      bound,
-      'incomplete-executions',
-      'retained-crash',
-      'proposal-execution-v1',
-      'publish-manifest.json',
-    )
     expect(
       verifyV011ProposalExecutionInventory({
-        actionsRoot,
+        actionRoots: [bound, dangling],
         actionTreeFiles: [
           join(bound, 'materialization.json'),
           join(bound, 'proposal-execution-v1', 'publish-manifest.json'),
           join(dangling, 'proposal-execution-v1', 'publish-manifest.json'),
-          quarantined,
         ],
       }),
     ).toEqual([`committed proposal execution has no materialization: ${dangling}`])
   })
 
+  it('uses one active-action scan for inventory and replay, excluding quarantine and rejecting symlinks', async () => {
+    const actionsRoot = join(root!, 'actions')
+    const action = join(actionsRoot, 'proposal-1-1')
+    const hardlinkedAction = join(actionsRoot, 'proposal-2-1')
+    const nonCanonicalAction = join(actionsRoot, 'proposal-01-1')
+    const quarantine = join(action, 'incomplete-executions', 'retained', 'proposal-1-1')
+    await mkdir(join(action, 'proposal-execution-v1'), { recursive: true })
+    await mkdir(join(quarantine, 'proposal-execution-v1'), { recursive: true })
+    await writeFile(join(action, 'materialization.json'), '{}\n')
+    await writeFile(join(quarantine, 'materialization.json'), '{}\n')
+    await writeFile(join(quarantine, 'proposal-execution-v1', 'publish-manifest.json'), '{}\n')
+    await symlink(
+      join(action, 'materialization.json'),
+      join(action, 'proposal-execution-v1', 'publish-manifest.json'),
+    )
+    await mkdir(hardlinkedAction, { recursive: true })
+    await writeFile(join(hardlinkedAction, 'aliased-evidence.json'), '{}\n')
+    await link(
+      join(hardlinkedAction, 'aliased-evidence.json'),
+      join(hardlinkedAction, 'second-name.json'),
+    )
+    await mkdir(nonCanonicalAction, { recursive: true })
+
+    const scan = await scanV011ActiveActions(actionsRoot)
+    expect(scan.actionRoots).toEqual([action, hardlinkedAction])
+    expect(scan.files).toEqual([join(action, 'materialization.json')])
+    expect(scan.reasons.join('\n')).toMatch(/symlink or special entry/)
+    expect(scan.reasons.join('\n')).toMatch(/hardlinked/)
+    expect(scan.reasons.join('\n')).toMatch(/non-canonical action entry/)
+    const inventory = verifyV011ProposalExecutionInventory({
+      actionRoots: scan.actionRoots,
+      actionTreeFiles: scan.files,
+    })
+    expect(inventory).toEqual([`materialization has no committed proposal execution: ${action}`])
+    const replayMaterializations = scan.actionRoots
+      .map((actionRoot) => join(actionRoot, 'materialization.json'))
+      .filter((path) => scan.files.includes(path))
+    expect(replayMaterializations).toEqual([join(action, 'materialization.json')])
+  })
+
   it('adopts only one manifest-committed execution whose worker bytes match the installed tree', async () => {
     const action = join(root!, 'action')
     const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
-    const workerBytes = '{"finishedTreeDigest":"sha256:abc"}\n'
+    const workerBytes = `${JSON.stringify({ finishedTreeDigest: TREE_DIGEST_A })}\n`
     await mkdir(join(workerPath, '..'), { recursive: true })
     await writeFile(workerPath, workerBytes)
     await publishV011ProposalExecution({
@@ -152,7 +199,12 @@ describe('v0.1.1 proposal execution commit', () => {
     const loaded = await loadV011ProposalExecution({ action, route, workerOutputPath: workerPath })
     expect(loaded?.workerOutputBytes).toBe(workerBytes)
     expect(loaded?.gatewayReceipts).toEqual([gatewayReceipt()])
-    await writeFile(workerPath, '{"finishedTreeDigest":"sha256:changed"}\n')
+    await writeFile(join(v011ProposalExecutionDirectory(action), 'unexpected-residue'), 'x')
+    await expect(
+      loadV011ProposalExecution({ action, route, workerOutputPath: workerPath }),
+    ).rejects.toThrow(/directory inventory mismatch/)
+    await rm(join(v011ProposalExecutionDirectory(action), 'unexpected-residue'))
+    await writeFile(workerPath, `${JSON.stringify({ finishedTreeDigest: TREE_DIGEST_B })}\n`)
     await expect(
       loadV011ProposalExecution({ action, route, workerOutputPath: workerPath }),
     ).rejects.toThrow(/worker output differs/)
@@ -181,7 +233,7 @@ describe('v0.1.1 proposal execution commit', () => {
     const quarantined = await readdir(join(action, 'incomplete-executions'))
     expect(quarantined).toHaveLength(1)
 
-    const workerBytes = '{"finishedTreeDigest":"sha256:retry"}\n'
+    const workerBytes = `${JSON.stringify({ finishedTreeDigest: TREE_DIGEST_A })}\n`
     await mkdir(join(workerPath, '..'), { recursive: true })
     await writeFile(workerPath, workerBytes)
     await publishV011ProposalExecution({
@@ -218,24 +270,178 @@ describe('v0.1.1 proposal execution commit', () => {
       gatewayReceipts: [gatewayReceipt()],
       diagnostic: { schemaVersion: 1 },
     })
+    const cache = join(action, 'materialization.json')
+    await publishV011MaterializationCache({ path: cache, bytes: '{"committed":true}\n' })
+    const durableRequest = join(action, 'gateway', 'requests', 'request-retained.json')
+    await mkdir(join(durableRequest, '..'), { recursive: true })
+    await writeFile(durableRequest, '{"phase":"complete"}\n')
     await rm(tree, { recursive: true })
 
-    expect(
-      await quarantineIncompleteV011ProposalExecution({
+    await expect(
+      recoverV011ProposalCache({
         action,
         childrenRoot: children,
         workerOutputPath: workerPath,
         workerTreePath: tree,
+        materializationPath: cache,
         route,
+        async load(bytes) {
+          JSON.parse(bytes)
+          const loaded = await loadV011ProposalExecution({
+            action,
+            route,
+            workerOutputPath: workerPath,
+            workerTreePath: tree,
+          })
+          if (loaded === null) throw new Error('missing execution')
+          return loaded
+        },
       }),
-    ).toBe(true)
+    ).resolves.toBeNull()
     expect(await stat(children).catch(() => null)).toBeNull()
     expect(await stat(v011ProposalExecutionDirectory(action)).catch(() => null)).toBeNull()
+    expect(await stat(cache).catch(() => null)).toBeNull()
+    expect(await readFile(durableRequest, 'utf8')).toBe('{"phase":"complete"}\n')
     const quarantined = await readdir(join(action, 'incomplete-executions'))
     expect(quarantined).toHaveLength(1)
     expect(
       await stat(join(action, 'incomplete-executions', quarantined[0]!, 'proposal-execution-v1')),
     ).not.toBeNull()
+    expect(
+      await stat(join(action, 'incomplete-executions', quarantined[0]!, 'materialization.json')),
+    ).not.toBeNull()
+  })
+
+  it('quarantines a torn materialization cache with execution/tree while preserving gateway replay', async () => {
+    const action = join(root!, 'torn-materialization')
+    const children = join(action, 'children')
+    const slot = join(children, 'p_1')
+    const tree = join(slot, 'tree')
+    const workerPath = join(slot, 'worker-output.json')
+    await mkdir(join(tree, 'src'), { recursive: true })
+    await writeFile(join(tree, 'src', 'index.ts'), 'export const value = 2\n')
+    const finishedTreeDigest = digestV011(
+      (await canonicalizeV011Tree(await snapshotV011Tree(tree))).bytes,
+    )
+    const workerBytes = `${JSON.stringify({ finishedTreeDigest })}\n`
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: resource(),
+      gatewayReceipts: [gatewayReceipt()],
+      diagnostic: { schemaVersion: 1 },
+    })
+    const cache = join(action, 'materialization.json')
+    await writeFile(cache, '{"torn":')
+    const durableRequest = join(action, 'gateway', 'requests', 'request-retained.json')
+    await mkdir(join(durableRequest, '..'), { recursive: true })
+    await writeFile(durableRequest, '{"phase":"complete"}\n')
+
+    await expect(
+      recoverV011ProposalCache({
+        action,
+        childrenRoot: children,
+        workerOutputPath: workerPath,
+        workerTreePath: tree,
+        materializationPath: cache,
+        route,
+        async load(bytes) {
+          JSON.parse(bytes)
+          return true
+        },
+      }),
+    ).resolves.toBeNull()
+    expect(await stat(cache).catch(() => null)).toBeNull()
+    expect(await stat(children).catch(() => null)).toBeNull()
+    expect(await stat(v011ProposalExecutionDirectory(action)).catch(() => null)).toBeNull()
+    expect(await readFile(durableRequest, 'utf8')).toBe('{"phase":"complete"}\n')
+    const quarantined = await readdir(join(action, 'incomplete-executions'))
+    expect(
+      await readFile(
+        join(action, 'incomplete-executions', quarantined[0]!, 'materialization.json'),
+        'utf8',
+      ),
+    ).toBe('{"torn":')
+  })
+
+  it('publishes materialization cache from fsynced staging with no partial final path', async () => {
+    const checkpoints = ['staging-fsynced', 'final-linked', 'directory-fsynced'] as const
+    const bytes = '{"schemaVersion":1,"complete":true}\n'
+    for (const checkpoint of checkpoints) {
+      const path = join(root!, `cache-${checkpoint}`, 'materialization.json')
+      await expect(
+        publishV011MaterializationCache({
+          path,
+          bytes,
+          afterCheckpoint(current) {
+            if (current === checkpoint) throw new Error(`stop at ${checkpoint}`)
+          },
+        }),
+      ).rejects.toThrow(`stop at ${checkpoint}`)
+      const final = await readFile(path, 'utf8').catch(() => null)
+      expect(final === null || final === bytes).toBe(true)
+      if (checkpoint === 'staging-fsynced') expect(final).toBeNull()
+      else expect(final).toBe(bytes)
+    }
+
+    const action = join(root!, 'linked-staging-recovery')
+    const children = join(action, 'children')
+    const tree = join(children, 'p_1', 'tree')
+    const workerPath = join(children, 'p_1', 'worker-output.json')
+    const cache = join(action, 'materialization.json')
+    const staging = join(action, '.materialization.json.staging-crash')
+    await mkdir(join(tree, 'src'), { recursive: true })
+    await writeFile(join(tree, 'src', 'index.ts'), 'export const linked = true\n')
+    const finishedTreeDigest = digestV011(
+      (await canonicalizeV011Tree(await snapshotV011Tree(tree))).bytes,
+    )
+    const workerBytes = `${JSON.stringify({ finishedTreeDigest })}\n`
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: resource(),
+      gatewayReceipts: [gatewayReceipt()],
+      diagnostic: { schemaVersion: 1 },
+    })
+    await writeFile(staging, bytes)
+    await link(staging, cache)
+    expect((await lstat(cache)).nlink).toBe(2)
+    let loadCount = 0
+    await expect(
+      recoverV011ProposalCache({
+        action,
+        childrenRoot: children,
+        workerOutputPath: workerPath,
+        workerTreePath: tree,
+        materializationPath: cache,
+        route,
+        async load(value) {
+          loadCount += 1
+          JSON.parse(value)
+          return loadV011ProposalExecution({
+            action,
+            route,
+            workerOutputPath: workerPath,
+            workerTreePath: tree,
+          })
+        },
+      }),
+    ).resolves.not.toBeNull()
+    expect(await readFile(cache, 'utf8')).toBe(bytes)
+    expect(loadCount).toBe(2)
+    expect((await lstat(cache)).nlink).toBe(1)
+    expect(await stat(staging).catch(() => null)).toBeNull()
+    const quarantined = await readdir(join(action, 'incomplete-executions'))
+    const retained = join(action, 'incomplete-executions', quarantined[0]!)
+    expect(await readFile(join(retained, '.materialization.json.staging-crash'), 'utf8')).toBe(
+      bytes,
+    )
+    expect((await lstat(join(retained, '.materialization.json.staging-crash'))).nlink).toBe(1)
+    expect(await stat(join(retained, 'materialization.json')).catch(() => null)).toBeNull()
+    expect(await stat(v011ProposalExecutionDirectory(action))).not.toBeNull()
+    expect(await stat(children)).not.toBeNull()
   })
 
   it('quarantines a crash residue left between child-tree replacement renames', async () => {
@@ -306,7 +512,10 @@ describe('v0.1.1 proposal execution commit', () => {
     const action = join(root!, 'binding')
     const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
     const receipt = resource()
-    const workerBytes = '{"transcript":{"eventCount":2}}\n'
+    const workerBytes = `${JSON.stringify({
+      transcript: { eventCount: 2 },
+      finishedTreeDigest: TREE_DIGEST_A,
+    })}\n`
     const gatewayReceipts = [gatewayReceipt()]
     const diagnostic = {
       schemaVersion: 1,
@@ -330,6 +539,7 @@ describe('v0.1.1 proposal execution commit', () => {
     })
     expect(execution).not.toBeNull()
     const materialization = {
+      sourceDigest: TREE_DIGEST_A,
       proposerResourceReceiptDigest: digestV011(receipt),
       proposerUsage: { gatewayReceipts: 1, eventCount: 2 },
     } as V011MaterializationReceipt
@@ -348,7 +558,10 @@ describe('v0.1.1 proposal execution commit', () => {
   it('rejects a manifest-committed malformed gateway matrix before V011 adoption', async () => {
     const action = join(root!, 'malformed-gateway')
     const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
-    const workerBytes = '{"transcript":{"eventCount":1}}\n'
+    const workerBytes = `${JSON.stringify({
+      transcript: { eventCount: 1 },
+      finishedTreeDigest: TREE_DIGEST_A,
+    })}\n`
     await mkdir(join(workerPath, '..'), { recursive: true })
     await writeFile(workerPath, workerBytes)
     await publishV011ProposalExecution({

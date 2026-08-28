@@ -77,8 +77,9 @@ import {
   assertV011ProposalExecutionBinding,
   loadBoundV011ProposalExecution,
   loadV011ProposalExecution,
+  publishV011MaterializationCache,
   publishV011ProposalExecution,
-  quarantineIncompleteV011ProposalExecution,
+  recoverV011ProposalCache,
   type V011ProposalExecution,
 } from './v011-proposal-execution.js'
 
@@ -776,20 +777,6 @@ async function realV011Proposal(
     `proposal-${input.generation}-${input.attempt}`,
   )
   const cache = join(action, 'materialization.json')
-  const existing = await readFile(cache, 'utf8').catch(() => null)
-  if (existing !== null) {
-    const authority = await verifyV011MaterializationAuthority({
-      store: { root: join(config.stateDir, 'v011', 'object-store') },
-      value: JSON.parse(existing) as unknown,
-      actionRoot: action,
-    })
-    await loadBoundV011ProposalExecution({
-      action,
-      materialization: authority.materialization,
-      route: proposalRoute,
-    })
-    return authority.stableProposal
-  }
   const exported = await exportForProposal(config, input.generation, input.attempt)
   const requiredParentEvidence = await exactParentEvidenceBinding(config, input, exported.manifest)
   const exportDigest = digestV011(canonicalV011(exported.manifest))
@@ -821,13 +808,28 @@ async function realV011Proposal(
   const slot = join(childrenRoot, proposalId)
   const workerOutput = join(slot, 'worker-output.json')
   const workerTree = join(slot, 'tree')
-  await quarantineIncompleteV011ProposalExecution({
+  const cached = await recoverV011ProposalCache({
     action,
     childrenRoot,
     workerOutputPath: workerOutput,
     workerTreePath: workerTree,
+    materializationPath: cache,
     route: proposalRoute,
+    async load(existing) {
+      const authority = await verifyV011MaterializationAuthority({
+        store: { root: join(config.stateDir, 'v011', 'object-store') },
+        value: JSON.parse(existing) as unknown,
+        actionRoot: action,
+      })
+      await loadBoundV011ProposalExecution({
+        action,
+        materialization: authority.materialization,
+        route: proposalRoute,
+      })
+      return authority.stableProposal
+    },
   })
+  if (cached !== null) return cached
   let execution: V011ProposalExecution | null = await loadV011ProposalExecution({
     action,
     route: proposalRoute,
@@ -1150,7 +1152,10 @@ async function realV011Proposal(
   }
   const cacheValue = { stableProposal, materialization: materialized.receipt }
   assertV011ProposalExecutionBinding(materialized.receipt, execution, proposalRoute)
-  await writeExclusive(cache, JSON.stringify(cacheValue, null, 2) + '\n')
+  await publishV011MaterializationCache({
+    path: cache,
+    bytes: JSON.stringify(cacheValue, null, 2) + '\n',
+  })
   const authority = await verifyV011MaterializationAuthority({
     store,
     value: cacheValue,
