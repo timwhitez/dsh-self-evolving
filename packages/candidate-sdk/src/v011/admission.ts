@@ -13,7 +13,7 @@ import {
   symlink,
 } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
-import { Readable, Writable } from 'node:stream'
+import { Readable, Transform, Writable, type TransformCallback } from 'node:stream'
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -85,6 +85,206 @@ export interface V011AdmissionOutput {
   loader: { solve: V011LoaderProbeReceipt; propose: V011LoaderProbeReceipt }
   packedOverlay: V011PackedOverlayProbeReceipt
   candidateTestOutputDigest: `sha256:${string}`
+}
+
+export const V011_PACKED_OVERLAY_CONTROL_LIMIT_BYTES = 16 * 1024
+export const V011_PACKED_OVERLAY_ACP_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024
+
+interface V011PackedOverlayReadyControl {
+  schemaVersion: 1
+  phase: 'ready'
+  nonce: string
+  candidateId: string
+  configRef: 'runtime/cordis.yml'
+  runtimeSettled: true
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const expected = [...keys].sort()
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index])
+}
+
+function decodeUtf8(bytes: Uint8Array, context: string): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch (cause) {
+    throw new Error(`${context}: invalid UTF-8`, { cause })
+  }
+}
+
+/**
+ * Parse the authenticated control transcript emitted by the trusted worker.
+ * The nonce is generated and first written to the write-only stderr pipe
+ * before candidate code is imported, so candidate code can share the
+ * transport but cannot forge the matching post-import receipt. Any injected
+ * or duplicate control record makes the transcript non-canonical.
+ */
+export function parseV011PackedOverlayControl(
+  bytes: Uint8Array,
+  candidateId: string,
+): V011PackedOverlayReadyControl {
+  if (bytes.byteLength > V011_PACKED_OVERLAY_CONTROL_LIMIT_BYTES) {
+    throw new Error('packed overlay control transcript exceeds byte limit')
+  }
+  if (bytes.byteLength === 0 || bytes[bytes.byteLength - 1] !== 0x0a) {
+    throw new Error('packed overlay control transcript must be newline-terminated')
+  }
+  const lines = decodeUtf8(bytes.subarray(0, bytes.byteLength - 1), 'packed overlay control').split(
+    '\n',
+  )
+  if (lines.length !== 2) {
+    throw new Error('packed overlay control transcript must contain exactly two records')
+  }
+  let challenge: unknown
+  let ready: unknown
+  try {
+    challenge = JSON.parse(lines[0] ?? '') as unknown
+    ready = JSON.parse(lines[1] ?? '') as unknown
+  } catch (cause) {
+    throw new Error('packed overlay control transcript contains invalid JSON', { cause })
+  }
+  if (
+    !isRecord(challenge) ||
+    !hasExactKeys(challenge, ['schemaVersion', 'phase', 'nonce']) ||
+    challenge['schemaVersion'] !== 1 ||
+    challenge['phase'] !== 'challenge' ||
+    typeof challenge['nonce'] !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(challenge['nonce'])
+  ) {
+    throw new Error('packed overlay control challenge is invalid')
+  }
+  if (
+    !isRecord(ready) ||
+    !hasExactKeys(ready, [
+      'schemaVersion',
+      'phase',
+      'nonce',
+      'candidateId',
+      'configRef',
+      'runtimeSettled',
+    ]) ||
+    ready['schemaVersion'] !== 1 ||
+    ready['phase'] !== 'ready' ||
+    ready['candidateId'] !== candidateId ||
+    ready['configRef'] !== 'runtime/cordis.yml' ||
+    ready['runtimeSettled'] !== true
+  ) {
+    throw new Error('packed overlay control ready receipt is invalid')
+  }
+  if (ready['nonce'] !== challenge['nonce']) {
+    throw new Error('packed overlay control nonce mismatch')
+  }
+  return ready as unknown as V011PackedOverlayReadyControl
+}
+
+export function validateV011AcpOutputLine(line: string): void {
+  let value: unknown
+  try {
+    value = JSON.parse(line) as unknown
+  } catch (cause) {
+    throw new Error('packed overlay ACP stdout line is not valid JSON', { cause })
+  }
+  if (!isRecord(value) || value['jsonrpc'] !== '2.0') {
+    throw new Error('packed overlay ACP stdout line is not a JSON-RPC 2.0 object')
+  }
+  const id = value['id']
+  const idValid =
+    id === undefined || id === null || typeof id === 'string' || Number.isSafeInteger(id)
+  if (!idValid) {
+    throw new Error('packed overlay ACP stdout line has an invalid JSON-RPC id')
+  }
+  const hasMethod = Object.hasOwn(value, 'method')
+  const hasResult = Object.hasOwn(value, 'result')
+  const hasError = Object.hasOwn(value, 'error')
+  if (hasMethod) {
+    const params = value['params']
+    if (
+      typeof value['method'] !== 'string' ||
+      value['method'].length === 0 ||
+      hasResult ||
+      hasError ||
+      (params !== undefined && !isRecord(params) && !Array.isArray(params))
+    ) {
+      throw new Error('packed overlay ACP stdout line has an invalid JSON-RPC request')
+    }
+    return
+  }
+  if (id === undefined || hasResult === hasError) {
+    throw new Error('packed overlay ACP stdout line is not a JSON-RPC request or response')
+  }
+  if (hasError) {
+    const error = value['error']
+    if (
+      !isRecord(error) ||
+      !Number.isSafeInteger(error['code']) ||
+      typeof error['message'] !== 'string'
+    ) {
+      throw new Error('packed overlay ACP stdout line has an invalid JSON-RPC error')
+    }
+  }
+}
+
+/** Strict, bounded framing in front of the SDK's permissive NDJSON reader. */
+export class V011PackedOverlayAcpOutputGuard extends Transform {
+  private pending = Buffer.alloc(0)
+  private totalBytes = 0
+  private handshakeStarted = false
+
+  beginHandshake(): void {
+    if (this.totalBytes !== 0) {
+      throw new Error('packed overlay ACP emitted stdout before trusted runtime ready')
+    }
+    this.handshakeStarted = true
+  }
+
+  override _transform(chunk: unknown, encoding: BufferEncoding, callback: TransformCallback): void {
+    let bytes: Buffer
+    if (Buffer.isBuffer(chunk)) bytes = chunk
+    else if (typeof chunk === 'string') bytes = Buffer.from(chunk, encoding)
+    else if (chunk instanceof Uint8Array) bytes = Buffer.from(chunk)
+    else {
+      callback(new Error('packed overlay ACP stdout emitted a non-byte chunk'))
+      return
+    }
+    this.totalBytes += bytes.byteLength
+    if (this.totalBytes > V011_PACKED_OVERLAY_ACP_OUTPUT_LIMIT_BYTES) {
+      callback(new Error('packed overlay ACP stdout exceeds byte limit'))
+      return
+    }
+    if (!this.handshakeStarted && bytes.byteLength !== 0) {
+      callback(new Error('packed overlay ACP emitted stdout before trusted runtime ready'))
+      return
+    }
+    this.pending = Buffer.concat([this.pending, bytes])
+    let newline = this.pending.indexOf(0x0a)
+    while (newline !== -1) {
+      const record = this.pending.subarray(0, newline + 1)
+      const lineBytes = record.subarray(0, record.byteLength - 1)
+      try {
+        validateV011AcpOutputLine(decodeUtf8(lineBytes, 'packed overlay ACP stdout'))
+      } catch (error) {
+        callback(error as Error)
+        return
+      }
+      this.push(record)
+      this.pending = this.pending.subarray(newline + 1)
+      newline = this.pending.indexOf(0x0a)
+    }
+    callback()
+  }
+
+  override _flush(callback: TransformCallback): void {
+    if (this.pending.byteLength !== 0) {
+      callback(new Error('packed overlay ACP stdout ended with an unterminated JSON record'))
+      return
+    }
+    callback()
+  }
 }
 
 function killProcessGroup(pid: number): void {
@@ -499,45 +699,69 @@ async function runPackedOverlayProbe(input: {
   const stderr: Buffer[] = []
   let stderrBytes = 0
   let stderrLineBuffer = ''
-  let readySeen = false
-  let resolveRuntimeReady!: (value: {
-    schemaVersion?: unknown
-    candidateId?: unknown
-    configRef?: unknown
-    runtimeSettled?: unknown
-  }) => void
-  let rejectRuntimeReady!: (reason: unknown) => void
-  const runtimeReady = new Promise<{
-    schemaVersion?: unknown
-    candidateId?: unknown
-    configRef?: unknown
-    runtimeSettled?: unknown
-  }>((resolveReady, rejectReady) => {
-    resolveRuntimeReady = resolveReady
-    rejectRuntimeReady = rejectReady
+  const controlRecords: string[] = []
+  let controlReadySettled = false
+  let resolveControlReady!: (ready: V011PackedOverlayReadyControl) => void
+  let rejectControlReady!: (error: Error) => void
+  let rejectControlViolation!: (error: Error) => void
+  const controlReady = new Promise<V011PackedOverlayReadyControl>((resolveReady, rejectReady) => {
+    resolveControlReady = resolveReady
+    rejectControlReady = rejectReady
   })
+  const controlViolation = new Promise<never>((_resolve, reject) => {
+    rejectControlViolation = reject
+  })
+  void controlReady.catch(() => undefined)
+  void controlViolation.catch(() => undefined)
+  const failControl = (error: Error): void => {
+    if (child.pid !== undefined) killProcessGroup(child.pid)
+    if (!controlReadySettled) {
+      controlReadySettled = true
+      rejectControlReady(error)
+      return
+    }
+    rejectControlViolation(error)
+  }
   child.stderr.on('data', (chunk: Buffer) => {
     stderrBytes += chunk.byteLength
-    if (stderrBytes <= 2 * 1024 * 1024) stderr.push(chunk)
-    else if (child.pid !== undefined) killProcessGroup(child.pid)
+    if (stderrBytes > 2 * 1024 * 1024) {
+      failControl(new Error('packed overlay stderr exceeds byte limit'))
+      return
+    }
+    stderr.push(chunk)
     stderrLineBuffer += chunk.toString('utf8')
     const lines = stderrLineBuffer.split('\n')
     stderrLineBuffer = lines.pop() ?? ''
     for (const line of lines) {
-      const prefix = 'DSH_SELF_EVOLVING_PACKED_OVERLAY_READY='
+      const prefix = 'DSH_SELF_EVOLVING_PACKED_OVERLAY_CONTROL='
       if (!line.startsWith(prefix)) continue
-      if (readySeen) {
-        rejectRuntimeReady(new Error('packed overlay emitted duplicate ready receipts'))
+      if (controlReadySettled) {
+        failControl(new Error('packed overlay emitted a control record after ready'))
         continue
       }
-      readySeen = true
+      controlRecords.push(line.slice(prefix.length))
+      if (controlRecords.length !== 2) continue
       try {
-        resolveRuntimeReady(JSON.parse(line.slice(prefix.length)) as Record<string, unknown>)
+        const ready = parseV011PackedOverlayControl(
+          Buffer.from(`${controlRecords.join('\n')}\n`),
+          input.candidateId,
+        )
+        controlReadySettled = true
+        resolveControlReady(ready)
       } catch (error) {
-        rejectRuntimeReady(error)
+        failControl(error as Error)
       }
     }
   })
+  const stdoutGuard = new V011PackedOverlayAcpOutputGuard()
+  child.stdout.pipe(stdoutGuard)
+  const stdoutFailure = new Promise<never>((_resolve, reject) => {
+    stdoutGuard.once('error', (error) => {
+      if (child.pid !== undefined) killProcessGroup(child.pid)
+      reject(error)
+    })
+  })
+  void stdoutFailure.catch(() => undefined)
   const prematureExit = new Promise<never>((_resolve, reject) => {
     child.once('error', reject)
     child.once('exit', (code, signal) => {
@@ -554,18 +778,11 @@ async function runPackedOverlayProbe(input: {
   })
 
   try {
-    const ready = await Promise.race([runtimeReady, prematureExit, timeout])
-    if (
-      ready.schemaVersion !== 1 ||
-      ready.candidateId !== input.candidateId ||
-      ready.configRef !== 'runtime/cordis.yml' ||
-      ready.runtimeSettled !== true
-    ) {
-      throw new Error('packed overlay runtime-ready receipt is invalid')
-    }
+    await Promise.race([controlReady, prematureExit, timeout, stdoutFailure])
+    stdoutGuard.beginHandshake()
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+      Readable.toWeb(stdoutGuard) as ReadableStream<Uint8Array>,
     )
     const makeClient = (_agent: AcpAgent): Client => ({
       sessionUpdate(_params: SessionNotification): Promise<void> {
@@ -580,11 +797,15 @@ async function runPackedOverlayProbe(input: {
       client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} }),
       prematureExit,
       timeout,
+      stdoutFailure,
+      controlViolation,
     ])
     const session = await Promise.race([
       client.newSession({ cwd: '/workspace', mcpServers: [] }),
       prematureExit,
       timeout,
+      stdoutFailure,
+      controlViolation,
     ])
     if (session.sessionId.length === 0) {
       throw new Error('packed overlay ACP returned an empty session identity')
@@ -614,6 +835,8 @@ async function runPackedOverlayProbe(input: {
   } finally {
     if (timer !== undefined) clearTimeout(timer)
     child.stdin.destroy()
+    child.stdout.unpipe(stdoutGuard)
+    stdoutGuard.destroy()
     if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
       killProcessGroup(child.pid)
     }
