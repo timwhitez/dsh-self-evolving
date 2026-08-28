@@ -106,9 +106,7 @@ export function canonicalV011(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalV011).join(',')}]`
   const prototype = Object.getPrototypeOf(value)
   if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError(
-      'v0.1.1 canonicalization: non-plain-object leaf — content would be unbound',
-    )
+    throw new TypeError('v0.1.1 canonicalization: non-plain-object leaf — content would be unbound')
   }
   return `{${Object.entries(value as Record<string, unknown>)
     .filter(([, child]) => child !== undefined)

@@ -164,10 +164,7 @@ async function probeKernelLock(lockPath: string): Promise<boolean> {
  * stall, so the budget must be generous and transient probe errors must be
  * retried instead of failing the test (issues #191/#227).
  */
-async function pollKernelLock(
-  lockPath: string,
-  wantHeld: boolean,
-): Promise<void> {
+async function pollKernelLock(lockPath: string, wantHeld: boolean): Promise<void> {
   const attempts = 300
   const intervalMs = 20
   let lastError: unknown

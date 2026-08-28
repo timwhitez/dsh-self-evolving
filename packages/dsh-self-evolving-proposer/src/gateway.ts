@@ -190,10 +190,7 @@ function durableResponseMatches(
   return response.ok === false && typeof response.error === 'string'
 }
 
-async function reserveDurableRequest(
-  path: string,
-  record: DurableRequestRecord,
-): Promise<boolean> {
+async function reserveDurableRequest(path: string, record: DurableRequestRecord): Promise<boolean> {
   try {
     await writeFile(path, `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o600 })
     return true
@@ -208,10 +205,7 @@ async function reserveDurableRequest(
 }
 
 /** Atomic completion: write a sibling temp file, then rename over the record. */
-async function completeDurableRequest(
-  path: string,
-  record: DurableRequestRecord,
-): Promise<void> {
+async function completeDurableRequest(path: string, record: DurableRequestRecord): Promise<void> {
   const temp = `${path}.complete-${process.pid}-${Date.now()}.tmp`
   await writeFile(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 })
   await rename(temp, path)
@@ -240,7 +234,10 @@ export async function startProposalGateway(
   const completed = new Map<string, { requestHash: string; response: ProposalGatewayResponse }>()
   // Same-id dispatches in THIS process await one shared promise instead of
   // racing the handler (issue #56).
-  const inFlight = new Map<string, { requestHash: string; promise: Promise<ProposalGatewayResponse> }>()
+  const inFlight = new Map<
+    string,
+    { requestHash: string; promise: Promise<ProposalGatewayResponse> }
+  >()
   const receiptLog: ProposalGatewayReceipt[] = []
 
   const request = async (
@@ -297,7 +294,12 @@ export async function startProposalGateway(
             }
           }
           if (record.requestHash !== requestHash) {
-            return { schemaVersion: 1, requestId, ok: false, error: 'conflicting idempotency replay' }
+            return {
+              schemaVersion: 1,
+              requestId,
+              ok: false,
+              error: 'conflicting idempotency replay',
+            }
           }
           if (record.phase === 'complete' && durableResponseMatches(record, requestId)) {
             completed.set(requestId, { requestHash, response: record.response })

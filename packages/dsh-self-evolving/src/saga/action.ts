@@ -54,9 +54,7 @@ export function observationPricing(observation: EvaluationObservation): Evaluati
     typeof (pricing as EvaluationPricing).reason === 'string'
       ? (pricing as EvaluationPricing).reason
       : 'pricing state absent or invalid in recorded observation'
-  return reason === undefined
-    ? { state: 'unknown' }
-    : { state: 'unknown', reason }
+  return reason === undefined ? { state: 'unknown' } : { state: 'unknown', reason }
 }
 
 export interface ProviderInspection {

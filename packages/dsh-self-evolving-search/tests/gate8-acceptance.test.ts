@@ -524,14 +524,18 @@ describe('Gate 8 sealed/full/release evidence', () => {
     input.formalSearchReceiptHash = digest('other-search-complete')
     const verdict = verifyGate8Evidence(input)
     expect(verdict.sealedComplete).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/evidence envelope does not match its recorded commitment/)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /evidence envelope does not match its recorded commitment/,
+    )
   })
 
   it('rejects a signature flag flipped after recording, even with a re-recorded commitment elsewhere (issue #111)', () => {
     const input = complete()
     input.lockedCandidate = { ...input.lockedCandidate!, signatureVerified: false }
     const verdict = verifyGate8Evidence(input)
-    expect(verdict.reasons.join('\n')).toMatch(/signed immutable candidate lock is missing or invalid/)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /signed immutable candidate lock is missing or invalid/,
+    )
     expect(verdict.reasons.join('\n')).toMatch(/does not match its recorded commitment/)
   })
 
@@ -637,9 +641,7 @@ describe('Gate 8 sealed/full/release evidence', () => {
 
   it('rejects null rawEvidenceDigests, a null bootstrapSeed, null revealed ids, and non-array inventories (issue #217)', () => {
     const noDigests = complete()
-    ;(noDigests.sealedTrials[1] as unknown as Record<string, unknown>)[
-      'rawEvidenceDigests'
-    ] = null
+    ;(noDigests.sealedTrials[1] as unknown as Record<string, unknown>)['rawEvidenceDigests'] = null
     noDigests.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
     expect(() => verifyGate8Evidence(noDigests)).not.toThrow()
     expect(verifyGate8Evidence(noDigests).reasons.join('\n')).toMatch(
@@ -660,9 +662,7 @@ describe('Gate 8 sealed/full/release evidence', () => {
     expect(() => verifyGate8Evidence(nullRevealed)).not.toThrow()
 
     const noInventory = complete()
-    ;(noInventory.splitReveal as unknown as Record<string, unknown>)[
-      'inventoryTaskIds'
-    ] = undefined
+    ;(noInventory.splitReveal as unknown as Record<string, unknown>)['inventoryTaskIds'] = undefined
     noInventory.evidenceCommitment = 'sha256:' + 'd'.repeat(64)
     expect(() => verifyGate8Evidence(noInventory)).not.toThrow()
 

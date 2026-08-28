@@ -102,9 +102,7 @@ describe('low-consumption engineering effectiveness gate', () => {
     const receipt = evaluateEngineeringEffect({
       runId: 'effect-v1',
       route: effectRoute,
-      proposalGatewayReceipts: [
-        boundReceipt(),
-      ],
+      proposalGatewayReceipts: [boundReceipt()],
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
       baseline: admission('e', false),
@@ -125,9 +123,7 @@ describe('low-consumption engineering effectiveness gate', () => {
     const receipt = evaluateEngineeringEffect({
       runId: 'effect-v1-no-change',
       route: effectRoute,
-      proposalGatewayReceipts: [
-        boundReceipt('effect-v1-no-change'),
-      ],
+      proposalGatewayReceipts: [boundReceipt('effect-v1-no-change')],
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
       baseline: admission('e', false),
@@ -140,9 +136,7 @@ describe('low-consumption engineering effectiveness gate', () => {
     const receipt = evaluateEngineeringEffect({
       runId: 'effect-v2-preservation-drift',
       route: effectRoute,
-      proposalGatewayReceipts: [
-        boundReceipt('effect-v2-preservation-drift'),
-      ],
+      proposalGatewayReceipts: [boundReceipt('effect-v2-preservation-drift')],
       usage: { inputTokens: 10, cacheReadTokens: 0, outputTokens: 5, reasoningTokens: 2 },
       modeContract: { targetModes: ['solve'], preservedModes: ['propose'] },
       baseline: admission('e', false),
@@ -200,17 +194,13 @@ describe('engineering-effect evidence binding (issue #87)', () => {
         routeHash: engineeringEffectRouteHash(effectRoute),
       },
     ]
-    expect(() => evaluateEngineeringEffect(input)).toThrow(
-      /not bound to this run and locked route/,
-    )
+    expect(() => evaluateEngineeringEffect(input)).toThrow(/not bound to this run and locked route/)
   })
 
   it('rejects a foreign-run receipt set even with well-formed hashes (issue #214)', () => {
     const input = baseInput()
     input.proposalGatewayReceipts = [boundReceipt('some-other-run')]
-    expect(() => evaluateEngineeringEffect(input)).toThrow(
-      /not bound to this run and locked route/,
-    )
+    expect(() => evaluateEngineeringEffect(input)).toThrow(/not bound to this run and locked route/)
   })
 
   it('rejects a receipt set collected against a different locked route (issue #214)', () => {
@@ -225,18 +215,12 @@ describe('engineering-effect evidence binding (issue #87)', () => {
         routeHash: engineeringEffectRouteHash(otherRoute),
       },
     ]
-    expect(() => evaluateEngineeringEffect(input)).toThrow(
-      /not bound to this run and locked route/,
-    )
+    expect(() => evaluateEngineeringEffect(input)).toThrow(/not bound to this run and locked route/)
   })
 
   it('rejects rows without a request id or with an empty one (issue #214)', () => {
     const input = baseInput()
-    input.proposalGatewayReceipts = [
-      { ...boundReceipt('effect-v2'), requestId: '' },
-    ]
-    expect(() => evaluateEngineeringEffect(input)).toThrow(
-      /not bound to this run and locked route/,
-    )
+    input.proposalGatewayReceipts = [{ ...boundReceipt('effect-v2'), requestId: '' }]
+    expect(() => evaluateEngineeringEffect(input)).toThrow(/not bound to this run and locked route/)
   })
 })

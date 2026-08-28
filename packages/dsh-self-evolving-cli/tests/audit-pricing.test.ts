@@ -60,10 +60,7 @@ async function seed(root: string, observationPayload: Record<string, unknown>): 
       idempotencyKey: 'audit-pricing/baseline/task-1/0',
     }),
   )
-  await append(
-    journal,
-    event('eval:observed', 'evaluation.observed', observationPayload),
-  )
+  await append(journal, event('eval:observed', 'evaluation.observed', observationPayload))
 }
 
 function config(root: string): StableDemoConfig {

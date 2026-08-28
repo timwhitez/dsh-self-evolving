@@ -14,9 +14,9 @@ describe('canonicalV011 (issue #218)', () => {
     // key sets order identically under both sorts, so their digests must
     // never move. (The splitReveal key set is the one production shape that
     // DID move — see the divergence-documented test below.)
-    expect(
-      digestV011(canonicalV011({ b: 1, a: 2, c: { z: 'x', y: 3 } })),
-    ).toBe('sha256:2404ab67f81ea007ec105d6213cfb8d54970e61587cb65633adc2690b0c94515')
+    expect(digestV011(canonicalV011({ b: 1, a: 2, c: { z: 'x', y: 3 } }))).toBe(
+      'sha256:2404ab67f81ea007ec105d6213cfb8d54970e61587cb65633adc2690b0c94515',
+    )
     expect(digestV011(canonicalV011([3, 1, { q: null, p: 's' }]))).toBe(
       'sha256:a393560fca81b46b9258961081fbf5d7b9a57ccb820f111b39a5913aeec09025',
     )
@@ -32,9 +32,9 @@ describe('canonicalV011 (issue #218)', () => {
         }),
       ),
     ).toBe('sha256:b249dfc3180d4fec2c41fb5cce8887c799f1eb9a37b8bf29de67a0a6898f3445')
-    expect(
-      digestV011(canonicalV011({ solve: sha('c'), propose: sha('d') })),
-    ).toBe('sha256:af59c1680f1a2568c893b5534d139d35c6c5ee983410030125b37ddf69b6ae0c')
+    expect(digestV011(canonicalV011({ solve: sha('c'), propose: sha('d') }))).toBe(
+      'sha256:af59c1680f1a2568c893b5534d139d35c6c5ee983410030125b37ddf69b6ae0c',
+    )
     expect(digestV011('plain string value')).toBe(
       'sha256:caaad2395bebdc8898ccd2b82b2106d1efd6057cbad7b0c5b71b13291947a34f',
     )
@@ -121,17 +121,44 @@ describe('canonicalV011 (issue #218)', () => {
 describe('capability catalog order (issue #234)', () => {
   it('sorts capability rows bytewise and pins the moved mixed-case digest', async () => {
     const { freezeCapabilityCatalog } = await import('../src/v011/capability.js')
-    const sha256 = (character: string) =>
-      `sha256:${character.repeat(64)}` as `sha256:${string}`
+    const sha256 = (character: string) => `sha256:${character.repeat(64)}` as `sha256:${string}`
     const catalog = {
       schemaVersion: 1 as const,
       protocol: 'dsh-self-evolving-candidate-tree-v2',
       dshCommit: 'a'.repeat(40),
       capabilities: [
-        { id: 'b-cap', tier: 'T1' as const, kind: 'tool' as const, signature: 'x', enabled: true, fixtureDigest: sha256('1') },
-        { id: 'A-cap', tier: 'T2' as const, kind: 'service' as const, signature: 'y', enabled: false, fixtureDigest: null },
-        { id: 'a_cap', tier: 'T1' as const, kind: 'package-export' as const, signature: 'z', enabled: false, fixtureDigest: null },
-        { id: 'Z9', tier: 'T1' as const, kind: 'event' as const, signature: 'w', enabled: false, fixtureDigest: null },
+        {
+          id: 'b-cap',
+          tier: 'T1' as const,
+          kind: 'tool' as const,
+          signature: 'x',
+          enabled: true,
+          fixtureDigest: sha256('1'),
+        },
+        {
+          id: 'A-cap',
+          tier: 'T2' as const,
+          kind: 'service' as const,
+          signature: 'y',
+          enabled: false,
+          fixtureDigest: null,
+        },
+        {
+          id: 'a_cap',
+          tier: 'T1' as const,
+          kind: 'package-export' as const,
+          signature: 'z',
+          enabled: false,
+          fixtureDigest: null,
+        },
+        {
+          id: 'Z9',
+          tier: 'T1' as const,
+          kind: 'event' as const,
+          signature: 'w',
+          enabled: false,
+          fixtureDigest: null,
+        },
       ],
     }
     const frozen = await freezeCapabilityCatalog(catalog)

@@ -499,9 +499,7 @@ async function collectRun(input: {
       expectedAttemptIndex: attemptIndex,
       requireAcpEvidence: true,
     })
-    const usage = await readDshUsage(trialDir).catch(
-      (error: unknown) => error as Error | null,
-    )
+    const usage = await readDshUsage(trialDir).catch((error: unknown) => error as Error | null)
     const usageError = usage instanceof Error ? usage : null
     const usageTotal = usageError === null ? (usage as never) : null
     normalized.push({

@@ -181,9 +181,7 @@ export function evaluateEngineeringEffect(input: {
         row.routeHash !== routeHash,
     )
   ) {
-    throw new Error(
-      'effectiveness: gateway receipts are not bound to this run and locked route',
-    )
+    throw new Error('effectiveness: gateway receipts are not bound to this run and locked route')
   }
   const targets = new Set(input.modeContract.targetModes)
   const preserved = new Set(input.modeContract.preservedModes)
