@@ -7,8 +7,10 @@
 
 ## Fail-closed preflight
 
-`verifyFormalPreflight` now verifies a detached Ed25519 signature against an externally trusted
-public key, rather than accepting a self-declared signer. The canonical manifest binds:
+`verifyFormalPreflight` now requires a trusted caller-owned signer registry supplied outside the
+manifest and evidence. `signatureKeyId` must select a registered PEM whose derived SPKI hash matches
+that id before the detached Ed25519 signature is checked; evidence cannot carry its own trust anchor.
+The canonical manifest binds:
 
 - reviewed Git commit/tag/tree and provenance identities;
 - self-track solver/proposer routes, request defaults, and the exact
@@ -24,16 +26,18 @@ receipts; a real, exact-identity 60-task baseline with at least two attempts; th
 route smoke; separate/concealed split with zero sealed access; formal budget reservation; fresh run
 directory; all four operator procedures; and pre-reveal statistics publication.
 
-Three unit tests cover a complete accepted envelope, post-signature mutation, and the current
-multi-blocker state. These are verifier tests only and do not mint a formal manifest or acceptance
-receipt.
+Seven unit tests cover a complete registered envelope, post-signature mutation, evidence-commitment
+mutation, the current multi-blocker state, an unregistered self-signed envelope, and a registry
+key-id/PEM mismatch, plus rejection of a registered non-Ed25519 signer with a valid signature. These
+are verifier tests only and do not mint a formal manifest or acceptance receipt.
 
 ## Current blockers
 
 The authoritative blocker list is preserved in `evidence/formal/STATUS.json`. Gate 4 now has an
 accepted real-provider status receipt. Gate 5 still lacks formal split/baseline/calibration/budget
 acceptance; Gate 6 lacks a real K=10 pilot; and no tagged, reviewed, signed manifest, current
-leaderboard snapshot, formal budget reservation, or operator-procedure receipt exists.
+leaderboard snapshot, formal budget reservation, operator-procedure receipt, or deployed trusted
+signer registry exists.
 
 Starting a paid 80-candidate search in this state would violate gate ordering. No run directory was
 created and no sealed assignment or outcome was accessed.

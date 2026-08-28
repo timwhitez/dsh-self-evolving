@@ -260,3 +260,20 @@ run lineage. No v0.1 score, failure pool, proposal output, or capability decisio
 `AUTONOMOUS_PLUGIN_DEVELOPMENT_VERIFIED`. Green schemas, one generated child, or a K=3 terminal state alone are
 insufficient. The capability is development-only, requires `sealedAccessCount=0`, and makes no benchmark
 improvement claim.
+
+## ADR-022 — Formal signer registry is an out-of-band TCB input
+
+**Decision:** formal preflight evidence carries only the detached signature. A trusted caller supplies an external
+`signatureKeyId -> Ed25519 public-key PEM` registry to the verifier. Unknown ids fail closed; for a registered entry
+the verifier independently enforces Ed25519 and derives the SPKI SHA-256 id from the PEM before checking the
+signature. Manifest, evidence, candidate output and run-local files cannot add or replace registry entries.
+
+**Why:** accepting a PEM from the same evidence object made a self-generated key, signature and evidence commitment
+internally consistent but untrusted. The signature proved authorship by an arbitrary key rather than authorization by
+the TCB.
+
+**Compatibility:** there is no production caller, deployed registry, formal run directory, signed formal manifest or
+accepted formal receipt to migrate. This closes the trust boundary already specified and documented; the signed
+manifest wire schema and evidence commitment are unchanged, so no protocol version is reinterpreted. After the first
+deployed registry/run, changing registry authority or signer-selection semantics requires the ADR and protocol-version
+change mandated by spec 07.

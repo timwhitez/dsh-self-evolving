@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { canonicalJson } from '@dsh-self-evolving/core'
 import { describe, expect, it } from 'vitest'
 import {
@@ -70,10 +70,9 @@ function manifest(signatureKeyId: string): FormalRunManifest {
   }
 }
 
-function evidence(signatureBase64: string, publicKeyPem: string): FormalPreflightEvidence {
+function evidence(signatureBase64: string): FormalPreflightEvidence {
   return {
     detachedSignatureBase64: signatureBase64,
-    trustedSignerPublicKeyPem: publicKeyPem,
     git: {
       headCommit: commit,
       tagPointsAtHead: 'formal-self-successor-001-preflight',
@@ -109,10 +108,12 @@ function evidence(signatureBase64: string, publicKeyPem: string): FormalPrefligh
 function signedFixture(): {
   runManifest: FormalRunManifest
   preflight: FormalPreflightEvidence
+  publicKeyPem: string
+  trustedSignerKeys: ReadonlyMap<string, string>
 } {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
-  const preflight = evidence('unused', publicKeyPem)
+  const preflight = evidence('unused')
   const runManifest = manifest(formalSignerKeyId(publicKeyPem))
   // The signature covers the evidence commitment (issue #83).
   runManifest.evidenceCommitment = formalEvidenceCommitment(preflight)
@@ -120,13 +121,22 @@ function signedFixture(): {
     'base64',
   )
   preflight.detachedSignatureBase64 = signature
-  return { runManifest, preflight }
+  return {
+    runManifest,
+    preflight,
+    publicKeyPem,
+    trustedSignerKeys: new Map([[runManifest.signatureKeyId, publicKeyPem]]),
+  }
 }
 
 describe('Gate 7 formal preflight', () => {
   it('accepts a fully signed, identity-bound, prerequisite-complete self-track envelope', () => {
     const fixture = signedFixture()
-    const verdict = verifyFormalPreflight(fixture.runManifest, fixture.preflight)
+    const verdict = verifyFormalPreflight(
+      fixture.runManifest,
+      fixture.preflight,
+      fixture.trustedSignerKeys,
+    )
     expect(verdict.accepted, verdict.reasons.join('\n')).toBe(true)
     expect(verdict.status).toBe('PREFLIGHT_ACCEPTED')
     expect(verdict.manifestHash).toMatch(/^sha256:[0-9a-f]{64}$/)
@@ -135,7 +145,11 @@ describe('Gate 7 formal preflight', () => {
   it('rejects a manifest changed after signing', () => {
     const fixture = signedFixture()
     fixture.runManifest.targetK = 79
-    const verdict = verifyFormalPreflight(fixture.runManifest, fixture.preflight)
+    const verdict = verifyFormalPreflight(
+      fixture.runManifest,
+      fixture.preflight,
+      fixture.trustedSignerKeys,
+    )
     expect(verdict.accepted).toBe(false)
     expect(verdict.reasons.join('\n')).toMatch(/signature is invalid/)
     expect(verdict.reasons.join('\n')).toMatch(/target K must equal 80/)
@@ -147,7 +161,11 @@ describe('Gate 7 formal preflight', () => {
     // longer matches, so a re-signed-for-different-evidence manifest cannot
     // be replayed against this evidence.
     fixture.preflight.operatorProcedures.secretRotationTested = false
-    const verdict = verifyFormalPreflight(fixture.runManifest, fixture.preflight)
+    const verdict = verifyFormalPreflight(
+      fixture.runManifest,
+      fixture.preflight,
+      fixture.trustedSignerKeys,
+    )
     expect(verdict.accepted).toBe(false)
     // Both failures fire: the commitment mismatch AND the procedure check.
     expect(verdict.reasons.join('\n')).toMatch(/does not commit to this prerequisite evidence/)
@@ -165,12 +183,56 @@ describe('Gate 7 formal preflight', () => {
     fixture.preflight.budgetReservationReceiptHash = null
     fixture.preflight.operatorProcedures.backupRestoreTested = false
     fixture.preflight.statisticsProtocolPublished = false
-    const verdict = verifyFormalPreflight(fixture.runManifest, fixture.preflight)
+    const verdict = verifyFormalPreflight(
+      fixture.runManifest,
+      fixture.preflight,
+      fixture.trustedSignerKeys,
+    )
     expect(verdict.status).toBe('PREFLIGHT_BLOCKED')
     expect(verdict.reasons.join('\n')).toMatch(/gate4 acceptance receipt missing/)
     expect(verdict.reasons.join('\n')).toMatch(/real 60-task baseline is missing/)
     expect(verdict.reasons.join('\n')).toMatch(/provider route smoke receipt missing/)
     expect(verdict.reasons.join('\n')).toMatch(/budget reservation receipt missing/)
     expect(verdict.reasons.join('\n')).toMatch(/backupRestoreTested/)
+  })
+
+  it('rejects an internally consistent self-generated signer outside the trusted registry', () => {
+    const attacker = signedFixture()
+    const verdict = verifyFormalPreflight(attacker.runManifest, attacker.preflight, new Map())
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/signer key id is not registered/)
+  })
+
+  it('rejects a registry entry whose PEM does not derive to its registered key id', () => {
+    const fixture = signedFixture()
+    const other = signedFixture()
+    const mismatchedRegistry = new Map([[fixture.runManifest.signatureKeyId, other.publicKeyPem]])
+    const verdict = verifyFormalPreflight(
+      fixture.runManifest,
+      fixture.preflight,
+      mismatchedRegistry,
+    )
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/trusted signer registry key id mismatch/)
+  })
+
+  it('rejects a registered non-Ed25519 key even when its detached signature is valid', () => {
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    const keyId = `sha256:${createHash('sha256')
+      .update(publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex')}`
+    const preflight = evidence('unused')
+    const runManifest = manifest(keyId)
+    runManifest.evidenceCommitment = formalEvidenceCommitment(preflight)
+    preflight.detachedSignatureBase64 = sign(
+      null,
+      Buffer.from(canonicalJson(runManifest)),
+      privateKey,
+    ).toString('base64')
+
+    const verdict = verifyFormalPreflight(runManifest, preflight, new Map([[keyId, publicKeyPem]]))
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reasons.join('\n')).toMatch(/must use Ed25519/)
   })
 })

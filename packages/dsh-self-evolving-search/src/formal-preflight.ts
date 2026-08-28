@@ -100,7 +100,6 @@ export interface FormalRunManifest {
 
 export interface FormalPreflightEvidence {
   detachedSignatureBase64: string
-  trustedSignerPublicKeyPem: string
   git: {
     headCommit: string
     tagPointsAtHead: string
@@ -143,6 +142,9 @@ export interface FormalPreflightVerdict {
   manifestHash: string
 }
 
+/** Trusted caller-owned signer registry; never sourced from run evidence. */
+export type FormalSignerKeyRegistry = ReadonlyMap<string, string>
+
 function sha256(value: string | Uint8Array): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
@@ -151,9 +153,16 @@ function validHash(value: string | null): value is string {
   return value !== null && sha256Pattern.test(value)
 }
 
+function publicKeyObjectId(publicKey: ReturnType<typeof createPublicKey>): string {
+  return sha256(publicKey.export({ type: 'spki', format: 'der' }))
+}
+
 function publicKeyId(publicKeyPem: string): string {
-  const key = createPublicKey(publicKeyPem)
-  return sha256(key.export({ type: 'spki', format: 'der' }))
+  const publicKey = createPublicKey(publicKeyPem)
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    throw new Error('formal signer key must use Ed25519')
+  }
+  return publicKeyObjectId(publicKey)
 }
 
 function routeIdentity(route: FormalRunManifest['solverRoute']): string {
@@ -187,6 +196,7 @@ export function formalEvidenceCommitment(evidence: FormalPreflightEvidence): `sh
 export function verifyFormalPreflight(
   manifest: FormalRunManifest,
   evidence: FormalPreflightEvidence,
+  trustedSignerKeys: FormalSignerKeyRegistry,
 ): FormalPreflightVerdict {
   const reasons: string[] = []
   const manifestBytes = canonicalJson(manifest)
@@ -202,19 +212,27 @@ export function verifyFormalPreflight(
     reasons.push('manifest createdAt is invalid')
 
   try {
-    if (publicKeyId(evidence.trustedSignerPublicKeyPem) !== manifest.signatureKeyId) {
-      reasons.push('manifest signer key id does not match trusted key')
+    const trustedSignerPublicKeyPem = trustedSignerKeys.get(manifest.signatureKeyId)
+    if (trustedSignerPublicKeyPem === undefined) {
+      reasons.push('manifest signer key id is not registered by the trusted caller')
     } else {
-      const signature = Buffer.from(evidence.detachedSignatureBase64, 'base64')
-      if (
-        signature.length === 0 ||
-        !verify(null, Buffer.from(manifestBytes), evidence.trustedSignerPublicKeyPem, signature)
-      ) {
-        reasons.push('manifest detached signature is invalid')
+      const trustedSignerPublicKey = createPublicKey(trustedSignerPublicKeyPem)
+      if (trustedSignerPublicKey.asymmetricKeyType !== 'ed25519') {
+        reasons.push('trusted signer registry key must use Ed25519')
+      } else if (publicKeyObjectId(trustedSignerPublicKey) !== manifest.signatureKeyId) {
+        reasons.push('trusted signer registry key id mismatch')
+      } else {
+        const signature = Buffer.from(evidence.detachedSignatureBase64, 'base64')
+        if (
+          signature.length === 0 ||
+          !verify(null, Buffer.from(manifestBytes), trustedSignerPublicKey, signature)
+        ) {
+          reasons.push('manifest detached signature is invalid')
+        }
       }
     }
   } catch {
-    reasons.push('manifest signer/signature cannot be parsed')
+    reasons.push('trusted signer registry key/signature cannot be parsed')
   }
 
   // The signature must cover the evidence itself (issue #83): a validly
