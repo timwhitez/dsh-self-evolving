@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { admitV011Candidate, digestV011 } from '../src/index.js'
+import { admitV011Candidate, digestV011, verifyV011PackedOverlayBytes } from '../src/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..', '..', '..')
@@ -108,11 +109,55 @@ describe('v0.1.1 generated-plugin admission', () => {
             join(dshRoot, 'packages'),
             join(dshRoot, 'vendor'),
           ],
-          seedPackages: ['@dsh-self-evolving/candidate-sdk'],
-          entryPackage: '@dsh-self-evolving/candidate-sdk',
-          entryBin: 'lib/v011/loader-probe-worker.js',
+          seedPackages: [
+            '@deepseek-ai/dsh-acp-demo',
+            '@dsh-self-evolving/llm-responses',
+            '@deepseek-ai/dsh-sandbox-local',
+            '@deepseek-ai/dsh-sandbox-policy',
+            '@deepseek-ai/dsh-subprocess-local',
+            '@deepseek-ai/dsh-bash-sandbox',
+            '@deepseek-ai/dsh-user-approval',
+          ],
+          entryPackage: '@deepseek-ai/dsh-acp-demo',
+          entryBin: 'lib/bin.js',
         },
         runnerOverlay: [
+          '- id: deepseek-responses',
+          "  name: '@dsh-self-evolving/llm-responses'",
+          '  config:',
+          '    apiKeyEnv: SHOULD_NOT_EXIST_IN_PACKED_OVERLAY_PROBE',
+          '    reasoningEffort: high',
+          '    maxTokens: 1024',
+          '    defaultContextWindow: 1048576',
+          '- id: sandbox',
+          "  name: '@deepseek-ai/dsh-sandbox-local'",
+          '- id: sandbox-policy',
+          "  name: '@deepseek-ai/dsh-sandbox-policy'",
+          '  config:',
+          '    mode: danger-full-access',
+          '    workspaceRoot: !!js process.cwd()',
+          '- id: subprocess',
+          "  name: '@deepseek-ai/dsh-subprocess-local'",
+          '- id: bash',
+          "  name: '@deepseek-ai/dsh-bash-sandbox'",
+          '  config:',
+          '    timeoutMs: 60000',
+          '- id: approval',
+          "  name: '@deepseek-ai/dsh-user-approval'",
+          '  config:',
+          '    policy: never',
+          '- id: acp-agent',
+          "  name: '@deepseek-ai/dsh-acp-demo'",
+          '  config:',
+          '    provider: deepseek-official',
+          '    model: deepseek-v4-flash',
+          '    persistenceRoot: /logs/agent/dsh-sessions',
+          '    persistenceCompression: none',
+          '    workspaceContext: false',
+          '    skills:',
+          '      enabled: false',
+          '    toolJobs: false',
+          '    goals: false',
           '- id: self-evolving-candidate',
           "  name: '__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__'",
           '  config:',
@@ -158,9 +203,30 @@ describe('v0.1.1 generated-plugin admission', () => {
       expect(result.loader.propose.promptSections).toContain('candidate:bounded-retry')
       expect(result.loader.solve.leakedHandles).toEqual([])
       expect(result.loader.propose.leakedHandles).toEqual([])
+      const packedOverlayBytes = await readFile(join(outputRoot, 'runner', 'cordis.patch.yml'))
+      expect(result.packedOverlay).toMatchObject({
+        candidateId: `sha256:${result.buildReceipt.sourceHash}`,
+        authoritativeOverlayRef: 'runner/cordis.patch.yml',
+        bootedConfigRef: 'runtime/cordis.yml',
+        byteIdentical: true,
+        runtimeSettled: true,
+        sessionCreated: true,
+      })
+      expect(result.packedOverlay.overlayDigest).toBe(
+        `sha256:${createHash('sha256').update(packedOverlayBytes).digest('hex')}`,
+      )
+      expect(result.receipt.stageReceipts.packedOverlayBoot).toBe(digestV011(result.packedOverlay))
       expect(result.receipt.stageReceipts.fixedReplay).toMatch(/^sha256:[0-9a-f]{64}$/)
       expect((await stat(join(outputRoot, 'runtime', 'node'))).isFile()).toBe(true)
       expect(await stat(join(child, 'lib')).catch(() => null)).toBeNull()
+
+      // A post-pack divergence between the audit-facing runner file and the
+      // actually booted runtime config must fail closed, even if both remain
+      // individually valid YAML.
+      await writeFile(join(outputRoot, 'runtime', 'cordis.yml'), `${bootedOverlay}\n# drift\n`)
+      await expect(verifyV011PackedOverlayBytes(outputRoot)).rejects.toThrow(
+        /runner\/runtime overlays differ/,
+      )
     },
   )
 

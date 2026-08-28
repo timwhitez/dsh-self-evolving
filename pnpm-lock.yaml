@@ -75,6 +75,9 @@ importers:
 
   packages/candidate-sdk:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.25.1
+        version: 0.25.1(zod@4.4.3)
       '@dsh-self-evolving/candidate-baseline':
         specifier: workspace:*
         version: link:../candidate-baseline
