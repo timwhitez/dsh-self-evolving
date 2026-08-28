@@ -139,6 +139,11 @@ Admission pipeline 100% 执行：
 - reproducible double build；
 - capsule path/hash/signature validation。
 
+Formal preflight 的 signer registry 属于 TCB，必须由 trusted caller 在 run evidence 之外提供。
+`signatureKeyId` 只能选择已注册 Ed25519 key；verifier 必须从 registry PEM 重新推导 key id 后再验签。manifest、
+evidence、candidate artifact 或环境内自带的 public key 都不能建立 trust anchor；未知、错配或不可解析 key
+一律 fail closed。
+
 Regex 只是初筛。还需 AST/import graph、semantic similarity 与运行时 syscall/network monitor；任何一项
 都不能单独证明无 reward hacking。
 

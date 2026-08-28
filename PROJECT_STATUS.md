@@ -184,12 +184,15 @@ DSH session 保留 10 个 usage events；按用户指定的 DeepSeek-V4-Flash �
 
 ## Optional formal preflight capability
 
-新增 detached-Ed25519、外部 trusted key 验证的 formal manifest/pre-start verifier，绑定 Git tag/commit、
+新增 detached-Ed25519 formal manifest/pre-start verifier；verifier API 要求 evidence 外由 trusted caller
+提供 signer registry，未知 key、自签 key、非 Ed25519 key 和 registry key-id/PEM 错配均 fail closed。它绑定 Git tag/commit、
 self-track route、TB 2.1 identity、TCB/protocol/split/search/budget/leaderboard identities，并独立要求
 Gate 4/5/6 receipts、real exact-identity baseline、provider smoke、budget reservation 与 operator procedure
-receipts。当前所有缺口 fail closed 为 `BLOCKED_NOT_STARTED`；未创建 formal run directory，未启动
+receipts。当前没有部署 signer registry，其他所有缺口也 fail closed 为 `BLOCKED_NOT_STARTED`；未创建 formal run directory，未启动
 80-candidate search，sealed access 为 0。该 capability 属于发布后 optional benchmark profile。详见
 [`docs/audits/2026-08-14-gate7-preflight.md`](docs/audits/2026-08-14-gate7-preflight.md)。
+Issue #213 的 trust-anchor repair 通过 7/7 targeted verifier tests 与全量 826 unit tests（+1 platform
+skip）；这些仅证明 verifier fail-closed 行为，不是 formal acceptance evidence。
 
 ## Optional sealed/full evidence verifier capability
 

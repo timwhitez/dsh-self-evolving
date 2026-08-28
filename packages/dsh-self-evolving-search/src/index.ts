@@ -59,6 +59,7 @@ export {
   type FormalPreflightEvidence,
   type FormalPreflightVerdict,
   type FormalRunManifest,
+  type FormalSignerKeyRegistry,
 } from './formal-preflight.js'
 export {
   gate8EvidenceCommitment,
