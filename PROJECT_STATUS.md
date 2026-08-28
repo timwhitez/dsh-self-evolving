@@ -69,8 +69,9 @@
   v0.1.1 containment, candidate tests, policy/schema checks and both builds consume the same staging tree.
 - Candidate `tsconfig.json` is validated as inert identity material and never executed. A trusted config drives pinned
   TypeScript under `bwrap --unshare-all` with a cleared environment, read-only source/toolchain mounts and a dedicated
-  writable output mount. Sixteen path/config escape classes reject before compiler launch.
-- Local gates pass format, lint, typecheck, 849 unit tests (+1 platform skip), and 36 no-key E2E tests
+  writable output mount. Sixteen path/config escape classes reject before compiler launch; descriptor opens use
+  nonblocking mode so FIFOs and other special files reject before they can stall admission.
+- Local gates pass format, lint, typecheck, 851 unit tests (+1 platform skip), and 36 no-key E2E tests
   (+4 credential-gated skips), including exact packed-overlay ACP boot, real Harbor ACP, extract-elf smoke and
   crash/replay paths. Independent review and hosted CI remain required before merge.
 - This is an admission attribution/isolation repair only. It creates no benchmark, improvement, sealed, promotion or

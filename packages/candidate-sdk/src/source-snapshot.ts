@@ -20,7 +20,9 @@ import {
 } from './identity/canonical-tar.js'
 
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
-const FILE_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW
+// O_NONBLOCK is required before fstat: opening a candidate FIFO read-only
+// otherwise waits forever for a writer and bypasses the special-file reject.
+const FILE_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 const utf8 = new TextDecoder('utf-8', { fatal: true })
 
 export interface FrozenCandidateSource {
