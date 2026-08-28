@@ -362,6 +362,9 @@ parents. Completion uses a fully fsynced sibling, atomic rename and directory fs
 fully staged and synced before a no-clobber final hard link, so a crash exposes either no marker or complete bytes,
 never a torn authority file. Stable audit reads the committed bundle back and revalidates exact inventory,
 proposal/journal/idempotency bindings, gateway receipt shape and full resource-receipt semantics.
+Gateway receipt validation binds `routeHash` to the frozen provider/endpoint/model/reasoning/max-token tuple and
+requires the exact request-id and transport-attempt schemas, including coherent retry/ambiguity flags and bounded
+usage fields; well-formed hashes or arrays alone are not evidence.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

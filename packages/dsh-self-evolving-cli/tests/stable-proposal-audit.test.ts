@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PROPOSAL_RESOURCE_POLICY_V1, PROPOSAL_WRITABLE_MOUNTS_V1 } from '@dsh-self-evolving/core'
@@ -25,6 +26,38 @@ const proposal = {
   sourceDiff: '@@ change',
   evidenceRefs: [`object:sha256:${'2'.repeat(64)}`],
   artifactDigest: `sha256:${'3'.repeat(64)}`,
+}
+
+const route = {
+  provider: 'deepseek',
+  endpoint: 'https://api.deepseek.com/v1',
+  model: 'deepseek-v4-flash',
+  reasoningEffort: 'high',
+  maxTokens: 32_768,
+}
+
+function routeHash(): string {
+  const canonical = JSON.stringify(route, Object.keys(route).sort())
+  return `sha256:${createHash('sha256').update(canonical).digest('hex')}`
+}
+
+function gatewayReceipt(): Record<string, unknown> {
+  return {
+    requestId: `llm-${'7'.repeat(64)}`,
+    requestHash: `sha256:${'4'.repeat(64)}`,
+    responseHash: `sha256:${'5'.repeat(64)}`,
+    routeHash: routeHash(),
+    attempts: [
+      {
+        attemptIndex: 0,
+        status: 200,
+        retryable: false,
+        ambiguous: false,
+        discardedUsage: null,
+        responseId: null,
+      },
+    ],
+  }
 }
 
 function resource(): ResourceDomainReceipt {
@@ -74,19 +107,16 @@ function resource(): ResourceDomainReceipt {
   }
 }
 
-async function publication(receipt: ResourceDomainReceipt, eventProposal = proposal) {
+async function publication(
+  receipt: ResourceDomainReceipt,
+  eventProposal = proposal,
+  gatewayReceipts: unknown[] = [gatewayReceipt()],
+) {
   const dir = join(root!, 'artifacts', 'proposal-1-1')
   await mkdir(dir, { recursive: true })
   await publishBundle(dir, {
     'proposal.json': `${JSON.stringify(eventProposal, null, 2)}\n`,
-    'gateway-receipts.json': `${JSON.stringify([
-      {
-        requestId: 'request-1',
-        requestHash: `sha256:${'4'.repeat(64)}`,
-        responseHash: `sha256:${'5'.repeat(64)}`,
-        routeHash: `sha256:${'6'.repeat(64)}`,
-      },
-    ])}\n`,
+    'gateway-receipts.json': `${JSON.stringify(gatewayReceipts)}\n`,
     'idempotency-key.json': `${JSON.stringify({
       idempotencyKey: `audit-run/proposal/1/1/${proposal.parentCandidateId}`,
     })}\n`,
@@ -99,9 +129,9 @@ const event = () => ({ eventId: 'proposal:1:1:completed', payload: proposal })
 describe('stable proposal publication audit', () => {
   it('accepts an exact committed proposal/resource/gateway/idempotency bundle', async () => {
     await publication(resource())
-    await expect(verifyStableProposalPublications(root!, 'audit-run', [event()])).resolves.toEqual(
-      [],
-    )
+    await expect(
+      verifyStableProposalPublications(root!, 'audit-run', route, [event()]),
+    ).resolves.toEqual([])
   })
 
   it('rejects a self-consistently committed failed proposal resource receipt', async () => {
@@ -110,18 +140,29 @@ describe('stable proposal publication audit', () => {
     failed.exitCode = null
     failed.signal = 'SIGKILL'
     await publication(failed)
-    const reasons = await verifyStableProposalPublications(root!, 'audit-run', [event()])
+    const reasons = await verifyStableProposalPublications(root!, 'audit-run', route, [event()])
     expect(reasons.join('\n')).toMatch(/resource receipt.*exit code zero/)
   })
 
   it('rejects a committed proposal whose bytes differ from the journal event', async () => {
     await publication(resource(), { ...proposal, hypothesis: 'different bytes' })
-    const reasons = await verifyStableProposalPublications(root!, 'audit-run', [event()])
+    const reasons = await verifyStableProposalPublications(root!, 'audit-run', route, [event()])
     expect(reasons.join('\n')).toMatch(/proposal bytes differ from journal/)
   })
 
   it('rejects a missing committed bundle for a proposal completion event', async () => {
-    const reasons = await verifyStableProposalPublications(root!, 'audit-run', [event()])
+    const reasons = await verifyStableProposalPublications(root!, 'audit-run', route, [event()])
     expect(reasons.join('\n')).toMatch(/committed bundle is missing/)
+  })
+
+  it.each([
+    ['empty request id', { requestId: '' }],
+    ['malformed attempt row', { attempts: [null] }],
+    ['empty error', { error: '' }],
+    ['foreign route hash', { routeHash: `sha256:${'9'.repeat(64)}` }],
+  ] as const)('rejects a gateway receipt with %s', async (_label, mutation) => {
+    await publication(resource(), proposal, [{ ...gatewayReceipt(), ...mutation }])
+    const reasons = await verifyStableProposalPublications(root!, 'audit-run', route, [event()])
+    expect(reasons.join('\n')).toMatch(/gateway receipt matrix is invalid/)
   })
 })

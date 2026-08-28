@@ -117,8 +117,12 @@
   now fsync file + directory before paid dispatch; completion uses fsynced temp + rename + directory sync; manifests
   use fsynced staging + no-clobber link. Stable audit replays exact bundle inventory, proposal/journal/idempotency,
   gateway shape and complete resource semantics. Fault injection covers every reservation/completion/manifest boundary.
+- Exact-head review of `fb09740` found stable audit still accepted an empty request id, malformed attempt rows, an empty
+  error and any syntactically valid route hash. The audit now requires the exact `llm-<sha256>` request identity, a
+  non-empty exact attempt schema with coherent retry/ambiguity flags and usage, non-empty errors, and the hash of the
+  frozen provider/endpoint/model/reasoning/max-token route.
 - Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 118 files /
-  885 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+  889 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

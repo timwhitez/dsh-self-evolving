@@ -244,6 +244,9 @@ fsync parent directory，正式 candidate root 不得携带 live claim marker。
 pending record 必须在调用 provider 前完成 file + directory fsync，completion 必须用 fsynced temp + rename +
 directory fsync。durable request store 的首次父目录也必须持久化。正式 audit 必须读回 bundle 的精确 inventory、
 proposal/journal/idempotency binding 与 resource receipt 完整语义，不能只数 proposal event 或相信 digest。
+gateway receipt 还必须把 route hash 重新绑定到冻结 provider/endpoint/model/reasoning/max-token tuple，并逐字段
+验证非空 request identity、transport attempt index/status/retry/ambiguity/usage/response id 与非空 error；合法
+hash 格式、任意数组或空字符串都不是 authority。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。

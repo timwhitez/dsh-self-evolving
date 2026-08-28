@@ -95,6 +95,8 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - provider idempotency reservation 必须在任何付费 dispatch 前 fsync file 与 parent directory；完成记录使用
   fsynced temp + atomic rename + directory fsync。bundle manifest 同样先完整 fsync staging，再 no-clobber 发布；
   最终 audit 读回并重放 stable proposal 的 resource/gateway/idempotency/proposal 全 bundle。
+- gateway audit 必须重算 frozen route hash，并拒绝空 request/error、扩展或畸形 attempt、以及 retry/ambiguity/
+  usage 语义不一致；只验证字符串/hash/array 外形不构成可信收据。
 
 ### 5.3 Task sandbox
 
