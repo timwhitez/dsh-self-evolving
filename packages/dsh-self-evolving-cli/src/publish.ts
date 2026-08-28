@@ -7,9 +7,9 @@
  * with a LAST-written manifest commit marker:
  *
  *   1. every entry is written + fsynced under a unique staging name,
- *   2. renamed to its final name,
- *   3. after all entries are durable, `publish-manifest.json` is created
- *      exclusively, binding each file's sha256.
+ *   2. no-clobber hard-linked to its final name,
+ *   3. after all entries are directory-durable, a complete fsynced manifest
+ *      is no-clobber linked LAST and the directory is fsynced again.
  *
  * Readers gate on the manifest: a bundle without one is an INCOMPLETE prior
  * attempt and must never be adopted as finished; a complete bundle is
@@ -24,6 +24,13 @@ export const PUBLISH_MANIFEST = 'publish-manifest.json'
 
 export interface PublishedBundle {
   files: Record<string, string>
+}
+
+export type PublishCheckpoint = 'manifest-staged' | 'manifest-linked' | 'manifest-directory-synced'
+
+export interface PublishBundleOptions {
+  /** Fault-injection/verification hook; production callers normally omit it. */
+  onCheckpoint?: (checkpoint: PublishCheckpoint) => void | Promise<void>
 }
 
 function sha256Hex(bytes: string): string {
@@ -53,7 +60,11 @@ async function fsyncDirectory(path: string): Promise<void> {
  * Publish a set of evidence files atomically. Throws if ANY final entry or
  * the manifest already exists — publication happens exactly once.
  */
-export async function publishBundle(dir: string, entries: Record<string, string>): Promise<void> {
+export async function publishBundle(
+  dir: string,
+  entries: Record<string, string>,
+  options: PublishBundleOptions = {},
+): Promise<void> {
   const names = Object.keys(entries).sort()
   if (names.length === 0) throw new Error('publish: empty bundle')
   if (
@@ -72,6 +83,7 @@ export async function publishBundle(dir: string, entries: Record<string, string>
   }
   const files: Record<string, string> = {}
   const staged: Array<{ staging: string; final: string }> = []
+  let manifestStaging: string | undefined
   try {
     for (const name of names) {
       const bytes = entries[name]!
@@ -93,13 +105,23 @@ export async function publishBundle(dir: string, entries: Record<string, string>
       }
     }
     await fsyncDirectory(dir)
-    await writeDurable(
-      join(dir, PUBLISH_MANIFEST),
-      JSON.stringify({ schemaVersion: 1, files }, null, 2) + '\n',
-    )
+    const manifestFinal = join(dir, PUBLISH_MANIFEST)
+    manifestStaging = join(dir, `.${PUBLISH_MANIFEST}.staging-${process.pid}-${randomUUID()}`)
+    await writeDurable(manifestStaging, JSON.stringify({ schemaVersion: 1, files }, null, 2) + '\n')
+    await options.onCheckpoint?.('manifest-staged')
+    try {
+      await link(manifestStaging, manifestFinal)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      throw new Error(`publish: final path already exists: ${manifestFinal}`, { cause: error })
+    }
+    await options.onCheckpoint?.('manifest-linked')
+    await rm(manifestStaging, { force: true })
     await fsyncDirectory(dir)
+    await options.onCheckpoint?.('manifest-directory-synced')
     for (const { staging } of staged) await rm(staging, { force: true }).catch(() => {})
   } catch (error) {
+    if (manifestStaging !== undefined) await rm(manifestStaging, { force: true }).catch(() => {})
     for (const { staging, final } of staged) {
       await rm(staging, { force: true }).catch(() => {})
       void final

@@ -357,6 +357,11 @@ use durable ownership claims, remove the claim before publication, and fsync the
 The stable proposer applies the same authority rule to its proposal/resource/gateway/idempotency bundle. Its durable
 gateway request store lives outside the publication directory; a manifest-less directory is atomically quarantined as
 audit residue before retry, so no-clobber evidence paths cannot strand recovery and paid requests still replay.
+Before a paid dispatch, the pending request file and its directory are both fsynced, including first-use directory
+parents. Completion uses a fully fsynced sibling, atomic rename and directory fsync. The bundle manifest is likewise
+fully staged and synced before a no-clobber final hard link, so a crash exposes either no marker or complete bytes,
+never a torn authority file. Stable audit reads the committed bundle back and revalidates exact inventory,
+proposal/journal/idempotency bindings, gateway receipt shape and full resource-receipt semantics.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

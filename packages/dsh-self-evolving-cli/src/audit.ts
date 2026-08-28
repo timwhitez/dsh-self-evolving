@@ -1,4 +1,5 @@
 import {
+  canonicalJson,
   computeTotals,
   observationPricing,
   readAll,
@@ -14,7 +15,8 @@ import {
   parseCrashReceipt,
   readCrashInjectionRequest,
 } from './crash.js'
-import { readResourceBoundStableBuild } from './real-capabilities.js'
+import { assertProposalResourceReceipt, readResourceBoundStableBuild } from './real-capabilities.js'
+import { loadPublishedBundle } from './publish.js'
 
 export interface StableAuditReport {
   accepted: boolean
@@ -22,6 +24,144 @@ export interface StableAuditReport {
   reasons: string[]
   stateHash: string
   eventCount: number
+}
+
+interface ProposalCompletionEvent {
+  eventId: string
+  payload: unknown
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort())
+}
+
+function validGatewayReceipt(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const required = ['requestHash', 'requestId', 'responseHash', 'routeHash']
+  const optional = ['attempts', 'error']
+  if (
+    Object.keys(value).some((key) => !required.includes(key) && !optional.includes(key)) ||
+    required.some((key) => typeof value[key] !== 'string') ||
+    !['requestHash', 'responseHash', 'routeHash'].every((key) =>
+      /^sha256:[0-9a-f]{64}$/.test(value[key] as string),
+    ) ||
+    (value['attempts'] !== undefined && !Array.isArray(value['attempts'])) ||
+    (value['error'] !== undefined && typeof value['error'] !== 'string')
+  ) {
+    return false
+  }
+  return true
+}
+
+function validStableProposal(value: unknown): value is Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    exactKeys(value, [
+      'artifactDigest',
+      'evidenceRefs',
+      'hypothesis',
+      'parentCandidateId',
+      'proposalId',
+      'sourceDiff',
+    ]) &&
+    ['artifactDigest', 'hypothesis', 'parentCandidateId', 'proposalId', 'sourceDiff'].every(
+      (key) => typeof value[key] === 'string' && (value[key] as string).length > 0,
+    ) &&
+    Array.isArray(value['evidenceRefs']) &&
+    value['evidenceRefs'].length > 0 &&
+    value['evidenceRefs'].every((ref) => typeof ref === 'string')
+  )
+}
+
+/** Re-read every stable proposer bundle; journal counts/digests alone are not authority. */
+export async function verifyStableProposalPublications(
+  stateDir: string,
+  runId: string,
+  proposals: ProposalCompletionEvent[],
+): Promise<string[]> {
+  const reasons: string[] = []
+  for (const event of proposals) {
+    const identity = /^proposal:(\d+):(\d+):completed$/.exec(event.eventId)
+    if (identity === null || !validStableProposal(event.payload)) {
+      reasons.push(`stable proposal event identity is invalid: ${event.eventId}`)
+      continue
+    }
+    const [, generation, attempt] = identity
+    const directory = join(stateDir, 'artifacts', `proposal-${generation}-${attempt}`)
+    let bundle: Record<string, string> | null
+    try {
+      bundle = await loadPublishedBundle(directory)
+    } catch (error) {
+      reasons.push(
+        `stable proposal ${event.eventId} committed bundle is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      continue
+    }
+    if (bundle === null) {
+      reasons.push(`stable proposal ${event.eventId} committed bundle is missing`)
+      continue
+    }
+    const expectedFiles = [
+      'gateway-receipts.json',
+      'idempotency-key.json',
+      'proposal.json',
+      'sandbox-resource.json',
+    ]
+    if (JSON.stringify(Object.keys(bundle).sort()) !== JSON.stringify(expectedFiles)) {
+      reasons.push(`stable proposal ${event.eventId} bundle inventory mismatch`)
+      continue
+    }
+    let publishedProposal: unknown
+    let idempotency: unknown
+    let gatewayReceipts: unknown
+    let resource: unknown
+    try {
+      publishedProposal = JSON.parse(bundle['proposal.json']!)
+      idempotency = JSON.parse(bundle['idempotency-key.json']!)
+      gatewayReceipts = JSON.parse(bundle['gateway-receipts.json']!)
+      resource = JSON.parse(bundle['sandbox-resource.json']!)
+    } catch {
+      reasons.push(`stable proposal ${event.eventId} bundle JSON is invalid`)
+      continue
+    }
+    if (!validStableProposal(publishedProposal)) {
+      reasons.push(`stable proposal ${event.eventId} published proposal schema is invalid`)
+    }
+    try {
+      if (canonicalJson(publishedProposal) !== canonicalJson(event.payload)) {
+        reasons.push(`stable proposal ${event.eventId} proposal bytes differ from journal`)
+      }
+    } catch {
+      reasons.push(`stable proposal ${event.eventId} proposal/journal value is not canonicalizable`)
+    }
+    const expectedKey = `${runId}/proposal/${generation}/${attempt}/${event.payload['parentCandidateId']}`
+    if (
+      !isRecord(idempotency) ||
+      !exactKeys(idempotency, ['idempotencyKey']) ||
+      idempotency['idempotencyKey'] !== expectedKey
+    ) {
+      reasons.push(`stable proposal ${event.eventId} idempotency binding mismatch`)
+    }
+    if (
+      !Array.isArray(gatewayReceipts) ||
+      gatewayReceipts.length === 0 ||
+      gatewayReceipts.some((receipt) => !validGatewayReceipt(receipt))
+    ) {
+      reasons.push(`stable proposal ${event.eventId} gateway receipt matrix is invalid`)
+    }
+    try {
+      assertProposalResourceReceipt(resource)
+    } catch (error) {
+      reasons.push(
+        `stable proposal ${event.eventId} resource receipt is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  return reasons
 }
 
 export async function auditStableRun(config: ProjectConfig): Promise<StableAuditReport> {
@@ -169,6 +309,11 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
     })
   ) {
     reasons.push('proposer raw-evidence reference matrix is incomplete')
+  }
+  if (config.profile === 'stable-demo') {
+    reasons.push(
+      ...(await verifyStableProposalPublications(config.stateDir, config.runId, proposals)),
+    )
   }
   if (events.filter((event) => event.type === 'build.completed').length !== 3) {
     reasons.push('build receipt matrix is incomplete')

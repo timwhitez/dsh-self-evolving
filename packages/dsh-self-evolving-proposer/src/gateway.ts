@@ -1,6 +1,6 @@
 /** Trusted fixed-route Unix gateway for a networkless proposal sandbox. */
-import { createHash } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { chmod, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import type { AdapterFetchAttempt } from './fetch-attempts.js'
 import { dirname, resolve } from 'node:path'
@@ -92,7 +92,16 @@ export interface ProposalGatewayOptions {
    * re-dispatched.
    */
   stateDir?: string
+  /** Fault-injection/verification hook; production callers normally omit it. */
+  onDurabilityCheckpoint?: (checkpoint: ProposalGatewayDurabilityCheckpoint) => void | Promise<void>
 }
+
+export type ProposalGatewayDurabilityCheckpoint =
+  | 'reservation-file-synced'
+  | 'reservation-directory-synced'
+  | 'completion-file-synced'
+  | 'completion-renamed'
+  | 'completion-directory-synced'
 
 export interface ProposalGatewayHandle {
   socketPath: string
@@ -190,25 +199,101 @@ function durableResponseMatches(
   return response.ok === false && typeof response.error === 'string'
 }
 
-async function reserveDurableRequest(path: string, record: DurableRequestRecord): Promise<boolean> {
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
   try {
-    await writeFile(path, `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o600 })
-    return true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-    // A failed reservation write (ENOSPC/EROFS/...) must not leave a partial
-    // marker that permanently poisons this id: surface the failure instead of
-    // silently treating it as a lost race.
-    await rm(path, { force: true }).catch(() => {})
-    throw error
+    await handle.sync()
+  } finally {
+    await handle.close()
   }
 }
 
+async function fsyncDirectoryChain(path: string): Promise<void> {
+  let cursor = resolve(path)
+  for (;;) {
+    await fsyncDirectory(cursor)
+    const parent = dirname(cursor)
+    if (parent === cursor) return
+    cursor = parent
+  }
+}
+
+/** Create every missing component and persist each parent entry before use. */
+async function mkdirDurable(path: string): Promise<void> {
+  const missing: string[] = []
+  let cursor = resolve(path)
+  for (;;) {
+    const info = await stat(cursor).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (info !== null) {
+      if (!info.isDirectory())
+        throw new Error(`proposal gateway: state path is not a directory: ${cursor}`)
+      break
+    }
+    missing.push(cursor)
+    const parent = dirname(cursor)
+    if (parent === cursor) throw new Error('proposal gateway: no existing state-directory ancestor')
+    cursor = parent
+  }
+  for (const directory of missing.reverse()) {
+    await mkdir(directory, { mode: 0o700 }).catch(async (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST' || !(await stat(directory)).isDirectory()) throw error
+    })
+    await fsyncDirectory(directory)
+    await fsyncDirectory(dirname(directory))
+  }
+  // The first pre-existing ancestor may itself have been created by this
+  // process without a parent fsync. Persist the complete chain before a paid
+  // request is ever allowed to dispatch.
+  await fsyncDirectoryChain(path)
+}
+
+async function writeDurableExclusive(path: string, bytes: string): Promise<void> {
+  const handle = await open(path, 'wx', 0o600)
+  try {
+    await handle.writeFile(bytes)
+    await handle.sync()
+  } catch (error) {
+    await handle.close().catch(() => {})
+    await rm(path, { force: true }).catch(() => {})
+    await fsyncDirectory(dirname(path)).catch(() => {})
+    throw error
+  }
+  await handle.close()
+}
+
+async function reserveDurableRequest(
+  path: string,
+  record: DurableRequestRecord,
+  onCheckpoint?: ProposalGatewayOptions['onDurabilityCheckpoint'],
+): Promise<boolean> {
+  try {
+    await writeDurableExclusive(path, `${JSON.stringify(record)}\n`)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw error
+  }
+  await onCheckpoint?.('reservation-file-synced')
+  await fsyncDirectory(dirname(path))
+  await onCheckpoint?.('reservation-directory-synced')
+  return true
+}
+
 /** Atomic completion: write a sibling temp file, then rename over the record. */
-async function completeDurableRequest(path: string, record: DurableRequestRecord): Promise<void> {
-  const temp = `${path}.complete-${process.pid}-${Date.now()}.tmp`
-  await writeFile(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+async function completeDurableRequest(
+  path: string,
+  record: DurableRequestRecord,
+  onCheckpoint?: ProposalGatewayOptions['onDurabilityCheckpoint'],
+): Promise<void> {
+  const temp = `${path}.complete-${process.pid}-${randomUUID()}.tmp`
+  await writeDurableExclusive(temp, `${JSON.stringify(record)}\n`)
+  await onCheckpoint?.('completion-file-synced')
   await rename(temp, path)
+  await onCheckpoint?.('completion-renamed')
+  await fsyncDirectory(dirname(path))
+  await onCheckpoint?.('completion-directory-synced')
 }
 
 export async function startProposalGateway(
@@ -230,7 +315,7 @@ export async function startProposalGateway(
   await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 })
   const maxRequestBytes = options.maxRequestBytes ?? 1024 * 1024
   const stateDir = options.stateDir === undefined ? undefined : resolve(options.stateDir)
-  if (stateDir !== undefined) await mkdir(stateDir, { recursive: true, mode: 0o700 })
+  if (stateDir !== undefined) await mkdirDurable(stateDir)
   const completed = new Map<string, { requestHash: string; response: ProposalGatewayResponse }>()
   // Same-id dispatches in THIS process await one shared promise instead of
   // racing the handler (issue #56).
@@ -344,13 +429,17 @@ export async function startProposalGateway(
             error: 'durable request pending from an interrupted dispatch',
           }
         }
-        const reserved = await reserveDurableRequest(path, {
-          schemaVersion: 1,
-          phase: 'pending',
-          requestId,
-          requestHash,
-          routeHash,
-        })
+        const reserved = await reserveDurableRequest(
+          path,
+          {
+            schemaVersion: 1,
+            phase: 'pending',
+            requestId,
+            requestHash,
+            routeHash,
+          },
+          options.onDurabilityCheckpoint,
+        )
         if (!reserved) {
           // Lost the reservation race (cross-process): re-read and apply the
           // same rules to whatever won.
@@ -430,14 +519,18 @@ export async function startProposalGateway(
       })
       if (stateDir !== undefined) {
         try {
-          await completeDurableRequest(durableRequestPath(stateDir, requestId), {
-            schemaVersion: 1,
-            phase: 'complete',
-            requestId,
-            requestHash,
-            routeHash,
-            response,
-          })
+          await completeDurableRequest(
+            durableRequestPath(stateDir, requestId),
+            {
+              schemaVersion: 1,
+              phase: 'complete',
+              requestId,
+              requestHash,
+              routeHash,
+              response,
+            },
+            options.onDurabilityCheckpoint,
+          )
         } catch {
           // The paid call ran but its result cannot be made durable: never
           // cache or return it, and never re-dispatch this id. The receipt

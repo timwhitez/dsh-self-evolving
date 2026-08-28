@@ -21,6 +21,7 @@ export {
   type ProposalGatewayResponse,
   type ProposalGatewayReceipt,
   type ProposalGatewayOptions,
+  type ProposalGatewayDurabilityCheckpoint,
   type ProposalGatewayHandle,
   ProposalGatewayHandlerFailure,
 } from './gateway.js'

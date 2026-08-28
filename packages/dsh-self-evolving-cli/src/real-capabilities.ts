@@ -143,7 +143,7 @@ function assertBuildResourceEnvelope(
   }
 }
 
-function assertProposalResourceReceipt(value: unknown): ResourceDomainReceipt {
+export function assertProposalResourceReceipt(value: unknown): ResourceDomainReceipt {
   return assertCompletedResourceDomainReceipt(value, {
     policy: PROPOSAL_RESOURCE_POLICY_V1,
     writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
@@ -274,6 +274,8 @@ export async function recoverIncompleteStableProposalPublication(input: {
       throw new Error('real proposer: legacy durable gateway request store is not a directory')
     }
     await mkdir(dirname(input.gatewayStateDir), { recursive: true, mode: 0o700 })
+    await fsyncDirectory(dirname(input.gatewayStateDir))
+    await fsyncDirectory(input.stateDir)
     await rename(legacyGatewayState, input.gatewayStateDir)
     await fsyncDirectory(input.artifactDir)
     await fsyncDirectory(dirname(input.gatewayStateDir))
@@ -281,6 +283,8 @@ export async function recoverIncompleteStableProposalPublication(input: {
 
   const quarantineRoot = join(input.stateDir, 'incomplete-proposal-publications')
   await mkdir(quarantineRoot, { recursive: true, mode: 0o700 })
+  await fsyncDirectory(quarantineRoot)
+  await fsyncDirectory(input.stateDir)
   const quarantinePath = join(quarantineRoot, `${basename(input.artifactDir)}-${randomUUID()}`)
   await rename(input.artifactDir, quarantinePath)
   await fsyncDirectory(dirname(input.artifactDir))

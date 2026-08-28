@@ -112,8 +112,13 @@
   entry left a no-clobber final path that made retry permanently fail. Stable proposal publication now keeps durable
   gateway request records outside the commit directory, quarantines every manifest-less publication as one directory,
   and retries from clean final paths while replaying the paid request. Regression tests cover all four entry boundaries.
-- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 117 files /
-  873 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+- Exact-head review of `06c1218` then found that gateway records and first-use parents were not fsync-durable, the final
+  manifest could tear because it was written directly, and stable audit did not read resource bundles. Reservations
+  now fsync file + directory before paid dispatch; completion uses fsynced temp + rename + directory sync; manifests
+  use fsynced staging + no-clobber link. Stable audit replays exact bundle inventory, proposal/journal/idempotency,
+  gateway shape and complete resource semantics. Fault injection covers every reservation/completion/manifest boundary.
+- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 118 files /
+  885 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

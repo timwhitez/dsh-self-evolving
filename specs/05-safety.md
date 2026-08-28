@@ -92,6 +92,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - sandbox 导出的 child/worker output 本身不是完成标记；resource/gateway/diagnostic/worker bytes 必须先进入
   fsync + manifest-last 的 execution bundle。无 commit marker 的 residue 要隔离后从 immutable parent 重建，
   provider 请求仅能经 durable idempotency record 重放；cache/audit 还必须读回 materialization CAS 原文。
+- provider idempotency reservation 必须在任何付费 dispatch 前 fsync file 与 parent directory；完成记录使用
+  fsynced temp + atomic rename + directory fsync。bundle manifest 同样先完整 fsync staging，再 no-clobber 发布；
+  最终 audit 读回并重放 stable proposal 的 resource/gateway/idempotency/proposal 全 bundle。
 
 ### 5.3 Task sandbox
 

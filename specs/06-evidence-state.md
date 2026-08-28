@@ -239,6 +239,11 @@ receipts 和 diagnostic。child export 后但 manifest 前的任何崩溃都只�
 resume authority。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
 stable proposal artifact digest 交叉验证。candidate staging claim 在最终 rename 前清除且 fsync；rename 后
 fsync parent directory，正式 candidate root 不得携带 live claim marker。
+稳定 proposer 的 proposal/resource/gateway/idempotency bundle 服从同一规则：manifest 必须先在 staging
+完整写入并 fsync，再以 no-clobber link 发布并 fsync parent；不得直接写最终 marker。provider request 的
+pending record 必须在调用 provider 前完成 file + directory fsync，completion 必须用 fsynced temp + rename +
+directory fsync。durable request store 的首次父目录也必须持久化。正式 audit 必须读回 bundle 的精确 inventory、
+proposal/journal/idempotency binding 与 resource receipt 完整语义，不能只数 proposal event 或相信 digest。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。
