@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -365,6 +366,70 @@ describe('v0.1.1 proposal execution commit', () => {
     ).toBe('{"torn":')
   })
 
+  it.each(['before-load', 'during-load'] as const)(
+    'never adopts a materialization cache hardlinked %s',
+    async (timing) => {
+      const action = join(root!, `external-hardlink-cache-${timing}`)
+      const children = join(action, 'children')
+      const tree = join(children, 'p_1', 'tree')
+      const workerPath = join(children, 'p_1', 'worker-output.json')
+      await mkdir(join(tree, 'src'), { recursive: true })
+      await writeFile(join(tree, 'src', 'index.ts'), 'export const hardlink = false\n')
+      const finishedTreeDigest = digestV011(
+        (await canonicalizeV011Tree(await snapshotV011Tree(tree))).bytes,
+      )
+      const workerBytes = `${JSON.stringify({ finishedTreeDigest })}\n`
+      await writeFile(workerPath, workerBytes)
+      await publishV011ProposalExecution({
+        action,
+        workerOutputBytes: workerBytes,
+        resource: resource(),
+        gatewayReceipts: [gatewayReceipt()],
+        diagnostic: { schemaVersion: 1 },
+      })
+      const cache = join(action, 'materialization.json')
+      const cacheBytes = '{"complete":true}\n'
+      await publishV011MaterializationCache({ path: cache, bytes: cacheBytes })
+      const externalAlias = join(root!, `external-cache-alias-${timing}.json`)
+      if (timing === 'before-load') await link(cache, externalAlias)
+      const durableRequest = join(action, 'gateway', 'requests', 'request-retained.json')
+      await mkdir(join(durableRequest, '..'), { recursive: true })
+      await writeFile(durableRequest, '{"phase":"complete"}\n')
+      let loadCount = 0
+
+      await expect(
+        recoverV011ProposalCache({
+          action,
+          childrenRoot: children,
+          workerOutputPath: workerPath,
+          workerTreePath: tree,
+          materializationPath: cache,
+          route,
+          async load(value) {
+            loadCount += 1
+            if (timing === 'during-load') await link(cache, externalAlias)
+            return JSON.parse(value) as unknown
+          },
+        }),
+      ).resolves.toBeNull()
+      expect(loadCount).toBe(timing === 'before-load' ? 0 : 1)
+      expect(await stat(cache).catch(() => null)).toBeNull()
+      expect(await stat(children).catch(() => null)).toBeNull()
+      expect(await stat(v011ProposalExecutionDirectory(action)).catch(() => null)).toBeNull()
+      expect(await readFile(externalAlias, 'utf8')).toBe(cacheBytes)
+      expect(await readFile(durableRequest, 'utf8')).toBe('{"phase":"complete"}\n')
+      const quarantined = await readdir(join(action, 'incomplete-executions'))
+      const retainedCache = join(
+        action,
+        'incomplete-executions',
+        quarantined[0]!,
+        'materialization.json',
+      )
+      expect(await readFile(retainedCache, 'utf8')).toBe(cacheBytes)
+      expect((await lstat(retainedCache)).nlink).toBe(1)
+    },
+  )
+
   it('publishes materialization cache from fsynced staging with no partial final path', async () => {
     const checkpoints = ['staging-fsynced', 'final-linked', 'directory-fsynced'] as const
     const bytes = '{"schemaVersion":1,"complete":true}\n'
@@ -384,6 +449,22 @@ describe('v0.1.1 proposal execution commit', () => {
       if (checkpoint === 'staging-fsynced') expect(final).toBeNull()
       else expect(final).toBe(bytes)
     }
+
+    const inaccessibleAction = join(root!, 'cache-cleanup-inaccessible')
+    const movedAction = join(root!, 'cache-cleanup-inaccessible-moved')
+    const inaccessibleCache = join(inaccessibleAction, 'materialization.json')
+    await expect(
+      publishV011MaterializationCache({
+        path: inaccessibleCache,
+        bytes,
+        async afterCheckpoint(checkpoint) {
+          if (checkpoint !== 'directory-fsynced') return
+          await rename(inaccessibleAction, movedAction)
+          await writeFile(inaccessibleAction, 'not-a-directory')
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' })
+    expect(await readFile(join(movedAction, 'materialization.json'), 'utf8')).toBe(bytes)
 
     const action = join(root!, 'linked-staging-recovery')
     const children = join(action, 'children')
@@ -428,20 +509,22 @@ describe('v0.1.1 proposal execution commit', () => {
           })
         },
       }),
-    ).resolves.not.toBeNull()
-    expect(await readFile(cache, 'utf8')).toBe(bytes)
-    expect(loadCount).toBe(2)
-    expect((await lstat(cache)).nlink).toBe(1)
+    ).resolves.toBeNull()
+    expect(loadCount).toBe(0)
+    expect(await stat(cache).catch(() => null)).toBeNull()
     expect(await stat(staging).catch(() => null)).toBeNull()
     const quarantined = await readdir(join(action, 'incomplete-executions'))
     const retained = join(action, 'incomplete-executions', quarantined[0]!)
+    expect(await readFile(join(retained, 'materialization.json'), 'utf8')).toBe(bytes)
     expect(await readFile(join(retained, '.materialization.json.staging-crash'), 'utf8')).toBe(
       bytes,
     )
+    expect((await lstat(join(retained, 'materialization.json'))).nlink).toBe(1)
     expect((await lstat(join(retained, '.materialization.json.staging-crash'))).nlink).toBe(1)
-    expect(await stat(join(retained, 'materialization.json')).catch(() => null)).toBeNull()
-    expect(await stat(v011ProposalExecutionDirectory(action))).not.toBeNull()
-    expect(await stat(children)).not.toBeNull()
+    expect(await stat(join(retained, 'proposal-execution-v1'))).not.toBeNull()
+    expect(await stat(join(retained, 'children'))).not.toBeNull()
+    expect(await stat(v011ProposalExecutionDirectory(action)).catch(() => null)).toBeNull()
+    expect(await stat(children).catch(() => null)).toBeNull()
   })
 
   it('quarantines a crash residue left between child-tree replacement renames', async () => {

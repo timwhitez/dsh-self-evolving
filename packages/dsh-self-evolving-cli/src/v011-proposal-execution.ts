@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import { link, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import {
@@ -65,6 +66,50 @@ async function lstatOrNull(path: string) {
     if (error.code === 'ENOENT') return null
     throw error
   })
+}
+
+function sameStableSingleLinkFile(
+  left: Awaited<ReturnType<typeof lstat>>,
+  right: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.nlink === 1 &&
+    right.nlink === 1 &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
+}
+
+async function readStableSingleLinkTextFile(path: string): Promise<{
+  bytes: string
+  info: Awaited<ReturnType<typeof lstat>>
+}> {
+  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+  try {
+    const before = await handle.stat()
+    const pathBefore = await lstat(path)
+    if (!sameStableSingleLinkFile(before, pathBefore)) {
+      throw new Error('v0.1.1 materialization cache is not one stable single-link file')
+    }
+    const contents = await handle.readFile()
+    const after = await handle.stat()
+    const pathAfter = await lstat(path)
+    if (
+      !sameStableSingleLinkFile(before, after) ||
+      !sameStableSingleLinkFile(after, pathAfter) ||
+      contents.byteLength !== after.size
+    ) {
+      throw new Error('v0.1.1 materialization cache changed while it was read')
+    }
+    return { bytes: contents.toString('utf8'), info: after }
+  } finally {
+    await handle.close()
+  }
 }
 
 export function v011ProposalExecutionDirectory(action: string): string {
@@ -258,7 +303,14 @@ export async function publishV011MaterializationCache(input: {
     publicationError = error
   }
   let cleanupError: unknown
-  if ((await lstatOrNull(staging).catch(() => null)) !== null) {
+  let stagingInfo: Awaited<ReturnType<typeof lstatOrNull>>
+  try {
+    stagingInfo = await lstatOrNull(staging)
+  } catch (error) {
+    cleanupError = error
+    stagingInfo = null
+  }
+  if (stagingInfo !== null) {
     try {
       await rm(staging, { force: true })
       await fsyncDirectory(directory)
@@ -348,7 +400,9 @@ export async function quarantineIncompleteV011ProposalExecution(input: {
     childrenInfo?.isDirectory() === true && !childrenInfo.isSymbolicLink()
   const materializationIsRealFile =
     materializationInfo === null ||
-    (materializationInfo.isFile() && !materializationInfo.isSymbolicLink())
+    (materializationInfo.isFile() &&
+      !materializationInfo.isSymbolicLink() &&
+      materializationInfo.nlink === 1)
   let executionAdoptable = false
   if (
     input.force !== true &&
@@ -414,29 +468,36 @@ export async function quarantineIncompleteV011ProposalExecution(input: {
   if (quarantineExecution) await rename(execution, join(quarantine, EXECUTION_DIRECTORY))
   if (quarantineChildren) await rename(input.childrenRoot, join(quarantine, 'children'))
   if (quarantineMaterialization) {
-    await rename(input.materializationPath!, join(quarantine, 'materialization.json'))
+    await retainQuarantinedPath(
+      input.materializationPath!,
+      join(quarantine, 'materialization.json'),
+    )
   }
   for (const residue of exportResidues) {
-    const source = join(input.action, residue)
-    const destination = join(quarantine, residue)
-    const info = await lstat(source)
-    if (info.isFile() && info.nlink > 1) {
-      const bytes = await readFile(source)
-      const handle = await open(destination, 'wx', 0o600)
-      try {
-        await handle.writeFile(bytes)
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      await rm(source)
-    } else {
-      await rename(source, destination)
-    }
+    await retainQuarantinedPath(join(input.action, residue), join(quarantine, residue))
   }
   await fsyncDirectory(quarantine)
   await fsyncDirectory(input.action)
   return true
+}
+
+async function retainQuarantinedPath(source: string, destination: string): Promise<void> {
+  const info = await lstat(source)
+  if (info.isFile() && info.nlink > 1) {
+    // Moving one name would retain the external mutable alias. Copy fsynced
+    // bytes into a fresh inode, then remove only the active/staging name.
+    const bytes = await readFile(source)
+    const handle = await open(destination, 'wx', 0o600)
+    try {
+      await handle.writeFile(bytes)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rm(source)
+    return
+  }
+  await rename(source, destination)
 }
 
 /**
@@ -467,10 +528,9 @@ export async function recoverV011ProposalCache<T>(input: {
     return null
   }
   try {
-    if (!cacheInfo.isFile() || cacheInfo.isSymbolicLink()) {
-      throw new Error('v0.1.1 materialization cache is not a real file')
+    if (!cacheInfo.isFile() || cacheInfo.isSymbolicLink() || cacheInfo.nlink !== 1) {
+      throw new Error('v0.1.1 materialization cache is not a canonical single-link file')
     }
-    await input.load(await readFile(input.materializationPath, 'utf8'))
     await quarantineIncompleteV011ProposalExecution({
       action: input.action,
       childrenRoot: input.childrenRoot,
@@ -479,7 +539,13 @@ export async function recoverV011ProposalCache<T>(input: {
       materializationPath: input.materializationPath,
       route: input.route,
     })
-    return await input.load(await readFile(input.materializationPath, 'utf8'))
+    const stableCache = await readStableSingleLinkTextFile(input.materializationPath)
+    const loaded = await input.load(stableCache.bytes)
+    const adoptedInfo = await lstatOrNull(input.materializationPath)
+    if (adoptedInfo === null || !sameStableSingleLinkFile(stableCache.info, adoptedInfo)) {
+      throw new Error('v0.1.1 materialization cache changed during adoption')
+    }
+    return loaded
   } catch {
     await quarantineIncompleteV011ProposalExecution({
       action: input.action,

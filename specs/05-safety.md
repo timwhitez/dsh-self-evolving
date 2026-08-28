@@ -106,6 +106,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
   去权且保留审计的恢复 namespace，不能重新计为 active authority。inventory 与后续 semantic replay 必须复用
   同一个只含 direct canonical action 的扫描结果；active namespace 内 symlink、hardlink、socket/FIFO/device 或
   其他 special entry 一律 fail closed，不能被 walker 静默忽略。
+- materialization cache adoption 只接受全程保持 regular single-link 的 inode；外部 hard-link alias 必须触发
+  cache/execution/children 一起隔离。隔离多链接文件时必须把当时 bytes 写入并 fsync 到新 inode 后移除 active
+  name，不能让外部 alias 继续修改 retained evidence；publication staging 的探测或清理错误不得被吞掉。
 
 ### 5.3 Task sandbox
 

@@ -141,8 +141,13 @@
   symlink/hardlink/special entries. Materialization publication is fsynced staging + no-clobber link + directory fsync;
   cache validation now precedes adoption and quarantines cache/execution/children together on any parse, CAS, worker or
   tree mismatch while preserving durable gateway requests for replay.
+- Exact-head review of `38eb413` found the publisher suppressed an inaccessible-staging cleanup error and recovery could
+  adopt a cache inode that retained an external hard-link alias. Cleanup probe failures now fail closed. Active cache
+  authority must be a regular single-link inode before and during adoption; any multi-link cache is de-authorized with
+  its execution/tree, and quarantined bytes are copied into fresh fsynced inodes so external aliases cannot mutate the
+  retained evidence. Durable gateway requests remain outside quarantine for deterministic replay.
 - Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
-  908 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
+  910 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or
