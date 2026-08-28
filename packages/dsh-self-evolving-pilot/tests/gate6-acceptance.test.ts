@@ -4,7 +4,7 @@ import {
   verifyGate6Acceptance,
   type Gate6AcceptanceInput,
 } from '../src/index.js'
-import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk' 
+import { canonicalV011, digestV011 } from '@dsh-self-evolving/candidate-sdk'
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`
 
@@ -110,71 +110,70 @@ describe('Gate 6 fail-closed acceptance', () => {
     expect(verdict.reasons.join('\n')).toMatch(/lacks full immutable identity/)
   })
 
-describe('Gate6 evidence binding (issue #121)', () => {
-  it('rejects a post-hoc evidence edit that diverges from the commitment', () => {
-    const input = complete()
-    input.realCrashResumeReceipt = false
-    const verdict = verifyGate6Acceptance(input)
-    expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons).toContain('evidence envelope does not match its recorded commitment')
-    expect(verdict.reasons.join('\n')).toMatch(/crash\/resume/)
-  })
-
-  it('rejects an observation whose record content does not hash to its claim', () => {
-    const input = complete()
-    const observation = input.observations[0] as unknown as {
-      normalizedRecord: { reward: number }
-    }
-    observation.normalizedRecord.reward = 0
-    const verdict = verifyGate6Acceptance(input)
-    expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/normalized record digest mismatch/)
-  })
-
-  it('rejects a record relabeled onto another observation, even with a recomputed hash and commitment', () => {
-    const input = complete()
-    const observation = input.observations[0] as unknown as {
-      normalizedRecord: { candidateId: string }
-    }
-    observation.normalizedRecord.candidateId = candidateId(9)
-    // Re-forging both the per-record hash and the envelope commitment must
-    // not rescue a misattributed record.
-    input.observations[0]!.normalizedRecordHash = digestV011(
-      canonicalV011(observation.normalizedRecord),
-    )
-    input.evidenceCommitment = gate6EvidenceCommitment(input)
-    const verdict = verifyGate6Acceptance(input)
-    expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/record identity mismatch/)
-  })
-
-  it('rejects an arbitrary blob reused as every record, even fully re-hashed', () => {
-    const input = complete()
-    const blob = { lie: 'i am a real trial' }
-    input.observations = input.observations.map((observation) => {
-      const row = observation as unknown as Record<string, unknown>
-      row['normalizedRecord'] = blob
-      row['normalizedRecordHash'] = digestV011(canonicalV011(blob))
-      return observation
+  describe('Gate6 evidence binding (issue #121)', () => {
+    it('rejects a post-hoc evidence edit that diverges from the commitment', () => {
+      const input = complete()
+      input.realCrashResumeReceipt = false
+      const verdict = verifyGate6Acceptance(input)
+      expect(verdict.accepted).toBe(false)
+      expect(verdict.reasons).toContain('evidence envelope does not match its recorded commitment')
+      expect(verdict.reasons.join('\n')).toMatch(/crash\/resume/)
     })
-    input.evidenceCommitment = gate6EvidenceCommitment(input)
-    const verdict = verifyGate6Acceptance(input)
-    expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/record identity mismatch/)
-  })
 
-  it('rejects observations presented without record content', () => {
-    const input = complete()
-    input.observations = input.observations.map((observation) => {
-      const rest = { ...(observation as unknown as Record<string, unknown>) }
-      delete rest['normalizedRecord']
-      return rest as never
+    it('rejects an observation whose record content does not hash to its claim', () => {
+      const input = complete()
+      const observation = input.observations[0] as unknown as {
+        normalizedRecord: { reward: number }
+      }
+      observation.normalizedRecord.reward = 0
+      const verdict = verifyGate6Acceptance(input)
+      expect(verdict.accepted).toBe(false)
+      expect(verdict.reasons.join('\n')).toMatch(/normalized record digest mismatch/)
     })
-    const verdict = verifyGate6Acceptance(input)
-    expect(verdict.reasons.join('\n')).toMatch(/normalized record missing/)
-  })
-})
 
+    it('rejects a record relabeled onto another observation, even with a recomputed hash and commitment', () => {
+      const input = complete()
+      const observation = input.observations[0] as unknown as {
+        normalizedRecord: { candidateId: string }
+      }
+      observation.normalizedRecord.candidateId = candidateId(9)
+      // Re-forging both the per-record hash and the envelope commitment must
+      // not rescue a misattributed record.
+      input.observations[0]!.normalizedRecordHash = digestV011(
+        canonicalV011(observation.normalizedRecord),
+      )
+      input.evidenceCommitment = gate6EvidenceCommitment(input)
+      const verdict = verifyGate6Acceptance(input)
+      expect(verdict.accepted).toBe(false)
+      expect(verdict.reasons.join('\n')).toMatch(/record identity mismatch/)
+    })
+
+    it('rejects an arbitrary blob reused as every record, even fully re-hashed', () => {
+      const input = complete()
+      const blob = { lie: 'i am a real trial' }
+      input.observations = input.observations.map((observation) => {
+        const row = observation as unknown as Record<string, unknown>
+        row['normalizedRecord'] = blob
+        row['normalizedRecordHash'] = digestV011(canonicalV011(blob))
+        return observation
+      })
+      input.evidenceCommitment = gate6EvidenceCommitment(input)
+      const verdict = verifyGate6Acceptance(input)
+      expect(verdict.accepted).toBe(false)
+      expect(verdict.reasons.join('\n')).toMatch(/record identity mismatch/)
+    })
+
+    it('rejects observations presented without record content', () => {
+      const input = complete()
+      input.observations = input.observations.map((observation) => {
+        const rest = { ...(observation as unknown as Record<string, unknown>) }
+        delete rest['normalizedRecord']
+        return rest as never
+      })
+      const verdict = verifyGate6Acceptance(input)
+      expect(verdict.reasons.join('\n')).toMatch(/normalized record missing/)
+    })
+  })
 })
 
 describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
@@ -191,7 +190,9 @@ describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
     input.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
     const verdict = verifyGate6Acceptance(input)
     expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/digest cannot be computed|commitment cannot be computed/)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /digest cannot be computed|commitment cannot be computed/,
+    )
   })
 
   it('rejects a bigint-bearing record without throwing', () => {
@@ -205,14 +206,18 @@ describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
     input.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
     const verdict = verifyGate6Acceptance(input)
     expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(/digest cannot be computed|commitment cannot be computed/)
+    expect(verdict.reasons.join('\n')).toMatch(
+      /digest cannot be computed|commitment cannot be computed/,
+    )
   })
 
   it('rejects null/malformed matrices and fixtures with reasons, not TypeErrors', () => {
     const nullCandidates = complete()
     ;(nullCandidates as unknown as Record<string, unknown>)['candidates'] = null
     expect(() => verifyGate6Acceptance(nullCandidates)).not.toThrow()
-    expect(verifyGate6Acceptance(nullCandidates).reasons.join('\n')).toMatch(/candidate matrix is missing or malformed/)
+    expect(verifyGate6Acceptance(nullCandidates).reasons.join('\n')).toMatch(
+      /candidate matrix is missing or malformed/,
+    )
 
     const nullObservations = complete()
     ;(nullObservations as unknown as Record<string, unknown>)['observations'] = null
@@ -249,9 +254,7 @@ describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
     input.evidenceCommitment = 'sha256:' + 'a'.repeat(64)
     const verdict = verifyGate6Acceptance(input)
     expect(verdict.accepted).toBe(false)
-    expect(verdict.reasons.join('\n')).toMatch(
-      /normalized record digest cannot be computed/,
-    )
+    expect(verdict.reasons.join('\n')).toMatch(/normalized record digest cannot be computed/)
   })
 
   it('rejects a record whose identity lives on a prototype (own-enumerable semantics)', () => {
@@ -286,8 +289,6 @@ describe('Gate6 malformed-envelope fail-closed (issue #217)', () => {
     plain.observations[1]!.normalizedRecord = sneaky
     plain.observations[1]!.normalizedRecordHash = digestV011(canonicalV011(sneaky))
     plain.evidenceCommitment = gate6EvidenceCommitment(plain)
-    expect(verifyGate6Acceptance(plain).reasons.join('\n')).toMatch(
-      /record identity mismatch/,
-    )
+    expect(verifyGate6Acceptance(plain).reasons.join('\n')).toMatch(/record identity mismatch/)
   })
 })

@@ -57,10 +57,7 @@ function ledger(): BudgetLedger {
 
 async function seed(j: Journal): Promise<void> {
   await append(j, { ...mk('run.preflight', {}), eventId: 'pricing:preflight' })
-  await append(
-    j,
-    mk('candidate.admitted', { candidateId: 'baseline', canonicalParent: null }),
-  )
+  await append(j, mk('candidate.admitted', { candidateId: 'baseline', canonicalParent: null }))
 }
 
 function mk(type: string, payload: Record<string, unknown>): JournalEvent {
@@ -109,9 +106,7 @@ function observation(overrides: Partial<EvaluationObservation>): EvaluationObser
   }
 }
 
-function provider(
-  rows: EvaluationObservation[],
-): EvaluationProvider & { collected: () => number } {
+function provider(rows: EvaluationObservation[]): EvaluationProvider & { collected: () => number } {
   let collected = 0
   const providers = new Map<string, { externalJobId: string; terminal: boolean }>()
   return {
@@ -181,9 +176,9 @@ describe('unpriced usage settlement (issue #108)', () => {
     expect(
       observationPricing(observation({ costUsd: Number.NaN, pricing: { state: 'priced' } })),
     ).toMatchObject({ state: 'unknown' })
-    expect(
-      observationPricing(observation({ costUsd: Number.POSITIVE_INFINITY })),
-    ).toMatchObject({ state: 'unknown' })
+    expect(observationPricing(observation({ costUsd: Number.POSITIVE_INFINITY }))).toMatchObject({
+      state: 'unknown',
+    })
   })
 
   it('settles a priced evaluation at its measured cost exactly as before', async () => {

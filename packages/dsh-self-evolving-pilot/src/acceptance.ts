@@ -1,9 +1,5 @@
 /** Fail-closed Gate 6 real-pilot evidence verifier. */
-import {
-  canonicalV011,
-  digestV011,
-  isValidCandidateId,
-} from '@dsh-self-evolving/candidate-sdk'
+import { canonicalV011, digestV011, isValidCandidateId } from '@dsh-self-evolving/candidate-sdk'
 
 export interface Gate6CandidateEvidence {
   candidateId: string

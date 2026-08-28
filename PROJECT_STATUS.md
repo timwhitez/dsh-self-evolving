@@ -3,6 +3,15 @@
 **当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-28（Asia/Tokyo）**
 
+## 2026-08-28 current-main gate repair
+
+- Issue #238 records that commit `22a5a5a3f9c488db5b0b4f365c193907af036f41` failed the required hosted
+  Prettier step, so the remaining CI steps did not execute.
+- The repair branch contains formatting-only changes to the 15 files rejected by pinned Prettier. Local gate and
+  repository-integrity checks pass; unit is 105 files / 809 passed + 1 skipped and no-key E2E is 36 passed + 3
+  credential-gated skipped. Hosted-PR status remains pending until GitHub Actions completes. This repair makes no
+  benchmark, promotion, or release-performance claim.
+
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
 > successor proves an admitted child changes the preregistered solve replay while preserving propose replay.

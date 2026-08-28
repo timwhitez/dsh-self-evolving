@@ -210,8 +210,7 @@ function recordIdentityMatches(
 ): boolean {
   if (typeof record !== 'object' || record === null || Array.isArray(record)) return false
   const own = Object.entries(record)
-  const field = (name: string): unknown =>
-    own.find(([key]) => key === name)?.[1]
+  const field = (name: string): unknown => own.find(([key]) => key === name)?.[1]
   return (
     field('candidateId') === trial.candidateId &&
     field('taskId') === trial.taskId &&
@@ -462,8 +461,7 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       // independently of the recommit so a fabricated small ceremony cannot
       // slip through on a throw.
       const commitment = reveal.commitment as
-        | { sizes?: { devObserved?: unknown; devGuard?: unknown; sealed?: unknown } }
-        | undefined
+        { sizes?: { devObserved?: unknown; devGuard?: unknown; sealed?: unknown } } | undefined
       if (
         commitment?.sizes?.devObserved !== SPLIT_SIZES.devObserved ||
         commitment?.sizes?.devGuard !== SPLIT_SIZES.devGuard ||
@@ -629,11 +627,11 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
       if (!Array.isArray(full.inventoryTaskIds)) {
         reasons.push('official inventory list is missing or malformed')
       } else {
-      const sealedInventory = [...new Set(reveal.inventoryTaskIds)].sort()
-      const fullInventorySorted = [...new Set(full.inventoryTaskIds)].sort()
-      if (JSON.stringify(sealedInventory) !== JSON.stringify(fullInventorySorted)) {
-        reasons.push('sealed ceremony and full-set inventories are different task universes')
-      }
+        const sealedInventory = [...new Set(reveal.inventoryTaskIds)].sort()
+        const fullInventorySorted = [...new Set(full.inventoryTaskIds)].sort()
+        if (JSON.stringify(sealedInventory) !== JSON.stringify(fullInventorySorted)) {
+          reasons.push('sealed ceremony and full-set inventories are different task universes')
+        }
       }
     }
     if (!Array.isArray(full.inventoryTaskIds)) {
