@@ -13,17 +13,26 @@
  * source/bundle/capsule hashes and writes them into a build manifest.
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { execFile } from 'node:child_process'
-import { link, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { spawn } from 'node:child_process'
 import {
-  buildCanonicalArchive,
-  declareFiles,
-  type CanonicalArchive,
-} from './identity/canonical-tar.js'
+  link,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import { type CanonicalArchive } from './identity/canonical-tar.js'
 import { scanPaths, type ScanResult } from './scan/policy-scan.js'
-import { validateManifestFile, type ValidationResult } from './validate/index.js'
+import { freezeDeclaredSource, type FrozenCandidateSource } from './source-snapshot.js'
+import { validateManifest, type ValidationResult } from './validate/index.js'
 
 export interface BuildInput {
   /** Absolute path to the candidate source root (contains src/, package.json, candidate.json). */
@@ -32,6 +41,8 @@ export interface BuildInput {
   sourceFiles: string[]
   /** Absolute path to the TypeScript binary to use (pinned by provenance). */
   tscBin: string
+  /** Trusted repository/toolchain root. Derived from tscBin for legacy callers. */
+  toolchainRoot?: string
   /** Successor candidates use the identity-free behavior-intent schema. */
   manifestKind?: 'candidate' | 'v011-candidate-intent'
   /** Trusted test-only imports; never applied to production source. */
@@ -105,13 +116,262 @@ async function snapshotTree(root: string): Promise<BuildArtifactFile[]> {
   return files
 }
 
-function execTsc(tscBin: string, projectDir: string): Promise<void> {
-  return new Promise((resolveExec, rejectExec) => {
-    execFile(tscBin, ['-b', '--force'], { cwd: projectDir }, (err, stdout, stderr) => {
-      if (err) rejectExec(new Error(`tsc failed: ${stderr}\n${stdout}\n${err.message}`))
-      else resolveExec()
+const TRUSTED_DECLARED_TSCONFIG = {
+  extends: '../../tsconfig.json',
+  compilerOptions: {
+    outDir: 'lib',
+    rootDir: 'src',
+    composite: true,
+    tsBuildInfoFile: 'lib/.tsbuildinfo',
+  },
+  include: ['src'],
+}
+
+function decodeUtf8(bytes: Uint8Array, context: string): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch (cause) {
+    throw new Error(`${context}: invalid UTF-8`, { cause })
+  }
+}
+
+function frozenFile(source: FrozenCandidateSource, path: string): BuildArtifactFile {
+  const file = source.files.find((entry) => entry.path === path)
+  if (file === undefined) throw new Error(`source snapshot: mandatory file missing: ${path}`)
+  return file
+}
+
+function validateDeclaredTsconfig(source: FrozenCandidateSource): void {
+  const file = frozenFile(source, 'tsconfig.json')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(decodeUtf8(file.bytes, 'trusted TypeScript configuration')) as unknown
+  } catch (cause) {
+    throw new Error('trusted TypeScript configuration: invalid JSON', { cause })
+  }
+  if (!isDeepStrictEqual(parsed, TRUSTED_DECLARED_TSCONFIG)) {
+    throw new Error(
+      'trusted TypeScript configuration: candidate tsconfig must match the inert declared contract exactly',
+    )
+  }
+}
+
+function spawnBounded(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
+}> {
+  return new Promise((done, reject) => {
+    const child = spawn(command, args, {
+      detached: true,
+      env: { PATH: '/usr/bin:/bin' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    const maxOutputBytes = 2 * 1024 * 1024
+    let outputBytes = 0
+    let outputExceeded = false
+    let timedOut = false
+    let settled = false
+    const kill = (): void => {
+      if (child.pid === undefined) return
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      }
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      kill()
+    }, timeoutMs)
+    const collect = (target: Buffer[]) => (chunk: Buffer) => {
+      outputBytes += chunk.byteLength
+      if (outputBytes > maxOutputBytes) {
+        outputExceeded = true
+        kill()
+      } else {
+        target.push(chunk)
+      }
+    }
+    child.stdout.on('data', collect(stdout))
+    child.stderr.on('data', collect(stderr))
+    child.once('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.once('exit', (exitCode, signal) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (timedOut) {
+        reject(new Error(`trusted TypeScript compiler timed out after ${timeoutMs}ms`))
+        return
+      }
+      if (outputExceeded) {
+        reject(new Error('trusted TypeScript compiler exceeded output byte limit'))
+        return
+      }
+      done({
+        exitCode,
+        signal,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      })
     })
   })
+}
+
+function trustedCompilerConfig(): Record<string, unknown> {
+  return {
+    compilerOptions: {
+      target: 'ES2023',
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      lib: ['ES2023'],
+      declaration: true,
+      declarationMap: true,
+      sourceMap: true,
+      strict: true,
+      noImplicitOverride: true,
+      noUncheckedIndexedAccess: true,
+      noFallthroughCasesInSwitch: true,
+      exactOptionalPropertyTypes: true,
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      skipLibCheck: true,
+      resolveJsonModule: true,
+      isolatedModules: true,
+      verbatimModuleSyntax: false,
+      incremental: false,
+      composite: false,
+      types: [],
+      rootDir: '/workspace/source/src',
+      outDir: '/output/lib',
+    },
+    include: ['/workspace/source/src/**/*.ts'],
+  }
+}
+
+async function execTrustedTsc(input: {
+  sourceRoot: string
+  outputRoot: string
+  configPath: string
+  toolchainRoot: string
+  tscBin: string
+}): Promise<void> {
+  const toolchainRoot = resolve(input.toolchainRoot)
+  const typescriptRoot = await realpath(join(toolchainRoot, 'node_modules', 'typescript'))
+  if (resolve(input.tscBin) !== join(toolchainRoot, 'node_modules', '.bin', 'tsc')) {
+    throw new Error('trusted TypeScript configuration: tscBin does not match pinned toolchain')
+  }
+  const dshRoot = await realpath(join(toolchainRoot, 'deepseek-harness'))
+  const hostNode = await realpath(process.execPath)
+  const sandboxNode = hostNode === '/usr/bin/node' ? '/usr/bin/node' : '/sandbox-bin/node'
+  const args = [
+    '--die-with-parent',
+    '--new-session',
+    '--unshare-all',
+    '--hostname',
+    'dsh-candidate-builder',
+    '--cap-drop',
+    'ALL',
+    '--proc',
+    '/proc',
+    '--dev',
+    '/dev',
+    '--ro-bind',
+    '/usr',
+    '/usr',
+    ...(hostNode === '/usr/bin/node'
+      ? []
+      : ['--dir', '/sandbox-bin', '--ro-bind', hostNode, sandboxNode]),
+    '--ro-bind',
+    '/bin',
+    '/bin',
+    '--ro-bind',
+    '/lib',
+    '/lib',
+    '--ro-bind',
+    '/lib64',
+    '/lib64',
+    '--dir',
+    '/workspace',
+    '--dir',
+    '/workspace/node_modules',
+    '--dir',
+    '/workspace/node_modules/@deepseek-ai',
+    '--ro-bind',
+    input.sourceRoot,
+    '/workspace/source',
+    '--ro-bind',
+    dshRoot,
+    '/dsh',
+    '--symlink',
+    '/dsh/vendor/cordis',
+    '/workspace/node_modules/@deepseek-ai/cordis',
+    '--symlink',
+    '/dsh/vendor/schemastery',
+    '/workspace/node_modules/@deepseek-ai/schemastery',
+    '--symlink',
+    '/dsh/vendor/cosmokit',
+    '/workspace/node_modules/@deepseek-ai/cosmokit',
+    '--symlink',
+    '/dsh/packages/core/system-prompt',
+    '/workspace/node_modules/@deepseek-ai/dsh-system-prompt',
+    '--symlink',
+    '/dsh/packages/core/tools',
+    '/workspace/node_modules/@deepseek-ai/dsh-tools',
+    '--dir',
+    '/toolchain',
+    '--ro-bind',
+    typescriptRoot,
+    '/toolchain/typescript',
+    '--dir',
+    '/build',
+    '--ro-bind',
+    input.configPath,
+    '/build/tsconfig.json',
+    '--bind',
+    input.outputRoot,
+    '/output',
+    '--tmpfs',
+    '/tmp',
+    '--clearenv',
+    '--setenv',
+    'PATH',
+    '/usr/bin:/bin',
+    '--setenv',
+    'HOME',
+    '/tmp',
+    '--setenv',
+    'SOURCE_DATE_EPOCH',
+    '0',
+    '--setenv',
+    'TZ',
+    'UTC',
+    '--chdir',
+    '/workspace/source',
+    '--',
+    sandboxNode,
+    '/toolchain/typescript/bin/tsc',
+    '--project',
+    '/build/tsconfig.json',
+  ]
+  const result = await spawnBounded('/usr/bin/bwrap', args, 120_000)
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `trusted TypeScript compiler failed (${result.exitCode ?? result.signal}): ${result.stderr}\n${result.stdout}`,
+    )
+  }
 }
 
 async function processStartTicks(pid: number): Promise<string | null> {
@@ -220,24 +480,31 @@ export async function acquireBuildLock(sourceRoot: string): Promise<() => Promis
  * and mock-replay are run by separate harnesses and merged into the final
  * build manifest by the caller.
  */
-export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
-  const { sourceRoot, sourceFiles, tscBin } = input
+export async function buildCandidateFromFrozenSource(
+  input: Omit<BuildInput, 'sourceRoot' | 'sourceFiles'> & {
+    frozenSource: FrozenCandidateSource
+  },
+): Promise<BuildReceipt> {
+  const { frozenSource, tscBin } = input
+  const archive = frozenSource.archive
+  const immutableSourceFiles = frozenSource.files.map((file) => ({
+    path: file.path,
+    bytes: new Uint8Array(file.bytes),
+  }))
 
-  // Step 1+2: containment + canonical archive (also validates paths/symlinks/limits).
-  const declared = declareFiles(sourceRoot, sourceFiles)
-  const archive = await buildCanonicalArchive(declared)
-  const immutableSourceFiles = await Promise.all(
-    declared.map(async (file) => ({
-      path: file.path,
-      bytes: new Uint8Array(await readFile(file.absPath)),
-    })),
-  )
+  // Candidate tsconfig is identity material only. It must match the inert
+  // declared contract, and is never passed to tsc (issue #37).
+  validateDeclaredTsconfig(frozenSource)
 
-  // Step 2b: schema validation of candidate.json.
-  const schemaValidation = await validateManifestFile(
-    input.manifestKind ?? 'candidate',
-    join(sourceRoot, 'candidate.json'),
-  )
+  // Step 2b: schema validation from the exact captured candidate.json bytes.
+  const manifestFile = frozenFile(frozenSource, 'candidate.json')
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(decodeUtf8(manifestFile.bytes, 'candidate manifest')) as unknown
+  } catch (cause) {
+    throw new Error('schema validation failed: candidate manifest is invalid JSON', { cause })
+  }
+  const schemaValidation = await validateManifest(input.manifestKind ?? 'candidate', manifest)
   if (!schemaValidation.valid) {
     throw new Error(`schema validation failed:\n${schemaValidation.errors.join('\n')}`)
   }
@@ -248,9 +515,9 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
   // by the schema + structural checks, not the source scanner — their relative
   // paths (e.g. tsconfig "extends", link: deps) are legitimate config, not
   // runtime traversal.
-  const codeFiles = declared
-    .filter((d) => d.path.endsWith('.ts') || d.path.endsWith('.js'))
-    .map((d) => ({ path: d.path, absPath: d.absPath }))
+  const codeFiles = frozenSource.files
+    .filter((file) => file.path.endsWith('.ts') || file.path.endsWith('.js'))
+    .map((file) => ({ path: file.path, absPath: join(frozenSource.root, file.path) }))
   const productionFiles = codeFiles.filter((file) => !file.path.startsWith('tests/'))
   const testFiles = codeFiles.filter((file) => file.path.startsWith('tests/'))
   const productionScan = await scanPaths(productionFiles)
@@ -268,26 +535,49 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
     )
   }
 
-  // Step 5: reproducible build — two clean builds must produce identical lib/.
-  const releaseBuildLock = await acquireBuildLock(sourceRoot)
+  // Step 5: compile the read-only snapshot twice in fresh OS sandboxes. The
+  // only writable mount is /output, and a builder-owned config fixes every
+  // effective compiler path (issues #37 and #65).
+  const toolchainRoot = input.toolchainRoot ?? resolve(dirname(tscBin), '..', '..')
+  const compileRoot = await mkdtemp(join(tmpdir(), 'dsh-candidate-compile-'))
+  const configPath = join(compileRoot, 'trusted-tsconfig.json')
+  const output1 = join(compileRoot, 'output-1')
+  const output2 = join(compileRoot, 'output-2')
+  await Promise.all([
+    writeFile(configPath, JSON.stringify(trustedCompilerConfig(), null, 2) + '\n', {
+      flag: 'wx',
+      mode: 0o400,
+    }),
+    mkdir(output1, { mode: 0o700 }),
+    mkdir(output2, { mode: 0o700 }),
+  ])
   let bundleHash: string
   let doubleBuildIdentical: boolean
   let build1: string
   let build2: string
   let immutableBundleFiles: BuildArtifactFile[]
   try {
-    const libDir = join(sourceRoot, 'lib')
-    await rm(libDir, { recursive: true, force: true })
-    await execTsc(tscBin, sourceRoot)
-    build1 = await hashTree(libDir)
-    await rm(libDir, { recursive: true, force: true })
-    await execTsc(tscBin, sourceRoot)
-    build2 = await hashTree(libDir)
-    immutableBundleFiles = await snapshotTree(libDir)
+    await execTrustedTsc({
+      sourceRoot: frozenSource.root,
+      outputRoot: output1,
+      configPath,
+      toolchainRoot,
+      tscBin,
+    })
+    build1 = await hashTree(join(output1, 'lib'))
+    await execTrustedTsc({
+      sourceRoot: frozenSource.root,
+      outputRoot: output2,
+      configPath,
+      toolchainRoot,
+      tscBin,
+    })
+    build2 = await hashTree(join(output2, 'lib'))
+    immutableBundleFiles = await snapshotTree(join(output2, 'lib'))
     bundleHash = build2
     doubleBuildIdentical = build1 === build2
   } finally {
-    await releaseBuildLock()
+    await rm(compileRoot, { recursive: true, force: true })
   }
   if (!doubleBuildIdentical) {
     throw new Error(`reproducible build failed: build1=${build1} build2=${build2}`)
@@ -314,5 +604,37 @@ export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
     doubleBuildIdentical,
     sourceFiles: immutableSourceFiles,
     bundleFiles: immutableBundleFiles,
+  }
+}
+
+export async function buildCandidate(input: BuildInput): Promise<BuildReceipt> {
+  const releaseBuildLock = await acquireBuildLock(input.sourceRoot)
+  let frozenSource: FrozenCandidateSource | undefined
+  try {
+    frozenSource = await freezeDeclaredSource(input.sourceRoot, input.sourceFiles)
+    const testingAfterSnapshot = (
+      input as BuildInput & { testingAfterSnapshot?: () => Promise<void> }
+    ).testingAfterSnapshot
+    if (testingAfterSnapshot !== undefined) {
+      if (process.env['NODE_ENV'] !== 'test') {
+        throw new Error('testingAfterSnapshot is restricted to NODE_ENV=test')
+      }
+      await testingAfterSnapshot()
+    }
+    return await buildCandidateFromFrozenSource({
+      frozenSource,
+      tscBin: input.tscBin,
+      ...(input.toolchainRoot === undefined ? {} : { toolchainRoot: input.toolchainRoot }),
+      ...(input.manifestKind === undefined ? {} : { manifestKind: input.manifestKind }),
+      ...(input.testImportAllowlist === undefined
+        ? {}
+        : { testImportAllowlist: input.testImportAllowlist }),
+    })
+  } finally {
+    try {
+      await frozenSource?.cleanup()
+    } finally {
+      await releaseBuildLock()
+    }
   }
 }

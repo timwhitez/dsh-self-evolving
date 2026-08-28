@@ -14,7 +14,7 @@
  * unowned timer/handle the unload invariant would catch (exercised in the
  * loader-e2e package; here we cover the build-time static guards).
  */
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -112,23 +112,7 @@ async function makeFixture(name: string, indexSrc: string): Promise<string> {
   )
   await writeFile(join(dir, 'candidate.json'), JSON.stringify(CLEAN_MANIFEST) + '\n')
   await writeFile(join(dir, 'cordis.patch.yml'), '- insert: []\n')
-  await writeFile(
-    join(dir, 'tsconfig.json'),
-    JSON.stringify({
-      compilerOptions: {
-        target: 'ES2023',
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
-        strict: true,
-        outDir: 'lib',
-        rootDir: 'src',
-        composite: true,
-        declaration: true,
-        skipLibCheck: true,
-      },
-      include: ['src'],
-    }) + '\n',
-  )
+  await copyFile(join(baselineRoot, 'tsconfig.json'), join(dir, 'tsconfig.json'))
   return dir
 }
 

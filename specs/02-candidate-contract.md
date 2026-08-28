@@ -272,6 +272,13 @@ Trusted builder 按顺序执行；任一步失败即停止后续 paid evaluation
 9. **Mock agent replay**：固定 replay LLM 下验证两个 mode、tool schema、event ordering 和 bounded exit。
 10. **Capsule build**：生成 immutable tar/SBOM/attestation，双构建 hash 必须一致。
 
+Pipeline 入口必须只冻结一次候选输入：以打开的目录 descriptor 为锚，逐级 `no-follow` 打开声明文件，
+把实际读取的 bytes 内容寻址后物化到新的只读 staging tree。Identity、schema、policy scan、candidate-owned
+tests 和两次编译只能消费该 staging tree；源目录在捕获期间发生替换时，构建必须拒绝或产生可由 receipt
+中的 source bytes 独立重放的同一 bundle。候选 `tsconfig.json` 仅作为被严格验证的 identity material，
+不得交给编译器执行。有效 TypeScript config 由 trusted builder 生成；编译器在断网、清空环境的 OS
+sandbox 中运行，source/toolchain 只读，只有专用 output mount 可写。
+
 只有 1–10 全部通过的 candidate 才进入 Archive，状态为 `ADMITTED_UNEVALUATED`。Admission 表示
 “安全可运行”，不表示 performance acceptance。
 

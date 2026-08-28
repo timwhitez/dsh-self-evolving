@@ -294,3 +294,22 @@ exists. Keeping a positive public path before those producers exist would turn t
 reveal, sealed/full trial, release artifact or accepted Gate 8 receipt. Removing the unauthenticated positive path
 therefore invalidates no evidence. The future authentic design must use a new schema/protocol identity rather than
 reinterpret the synthetic envelope.
+
+## ADR-024 — Freeze candidate bytes once and compile only a trusted project
+
+**Decision:** candidate admission captures every declared file through directory-anchored descriptors with
+`O_NOFOLLOW`, creates one content-addressed read-only staging tree, and makes identity, schema validation, policy scan,
+candidate tests and both compiler passes consume that tree. Candidate `tsconfig.json` must match the inert declared
+contract exactly but is never executed. The builder generates the effective config and runs pinned TypeScript inside
+Bubblewrap with no network, a cleared environment, read-only source/toolchain mounts and one dedicated writable output
+mount.
+
+**Why:** path-based rereads allowed identity, scan and emitted code to observe different live source revisions. Running
+`tsc -b` on the candidate project also gave candidate-controlled path options host filesystem privileges before any
+post-build check. A single descriptor-captured snapshot removes the attribution race; the outer OS boundary and
+builder-owned config remove compiler read/write authority from candidate configuration.
+
+**Compatibility:** historical source, capsule and admission artifacts remain immutable evidence. Future bundle hashes
+can differ because the trusted compiler no longer emits candidate-selected incremental metadata; no historical receipt
+is relabeled or migrated. Resume continues to verify stored receipts rather than silently rebuilding them under the new
+builder.
