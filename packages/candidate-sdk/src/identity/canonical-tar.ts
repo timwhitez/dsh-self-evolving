@@ -40,6 +40,12 @@ export interface DeclaredFile {
   absPath: string
 }
 
+/** One already-frozen source file. No filesystem path is consulted. */
+export interface FrozenCanonicalFile {
+  path: string
+  bytes: Uint8Array
+}
+
 export interface CanonicalArchive {
   /** The canonical USTAR bytes. */
   bytes: Uint8Array
@@ -86,7 +92,7 @@ function identityFromArchive(bytes: Uint8Array): { hash: string; candidateId: st
  * throwing on any violation. Returns the lexically-sorted (UTF-8 byte order)
  * file list.
  */
-function validateAndSort(files: DeclaredFile[]): DeclaredFile[] {
+function validateAndSort<T extends { path: string }>(files: T[]): T[] {
   const seen = new Set<string>()
   for (const f of files) {
     const p = f.path
@@ -227,6 +233,46 @@ export async function buildCanonicalArchive(
     writeEntry(out, f.path, content)
   }
   // Two zero blocks terminate the archive (fixed).
+  for (let i = 0; i < 1024; i++) out.push(0)
+  const bytes = new Uint8Array(out)
+  const identity = identityFromArchive(bytes)
+  return {
+    bytes,
+    hash: identity.hash,
+    candidateId: identity.candidateId,
+    fileCount: sorted.length,
+    totalBytes,
+  }
+}
+
+/**
+ * Build canonical identity from bytes captured by the trusted snapshotter.
+ * Admission uses this form so identity cannot trigger a second path lookup
+ * after the source snapshot has been frozen (issue #65).
+ */
+export function buildCanonicalArchiveFromFiles(
+  files: FrozenCanonicalFile[],
+  limits: CanonicalLimits = DEFAULT_LIMITS,
+): CanonicalArchive {
+  if (files.length === 0) throw new Error('canonical: no files declared')
+  if (files.length > limits.maxFileCount) {
+    throw new Error(`canonical: ${files.length} files exceeds max ${limits.maxFileCount}`)
+  }
+  const sorted = validateAndSort(files)
+  const out: number[] = []
+  let totalBytes = 0
+  for (const file of sorted) {
+    if (file.bytes.byteLength > limits.maxFileBytes) {
+      throw new Error(
+        `canonical: file ${file.path} size ${file.bytes.byteLength} exceeds ${limits.maxFileBytes}`,
+      )
+    }
+    totalBytes += file.bytes.byteLength
+    if (totalBytes > limits.maxTotalBytes) {
+      throw new Error(`canonical: total ${totalBytes} exceeds ${limits.maxTotalBytes}`)
+    }
+    writeEntry(out, file.path, file.bytes)
+  }
   for (let i = 0; i < 1024; i++) out.push(0)
   const bytes = new Uint8Array(out)
   const identity = identityFromArchive(bytes)

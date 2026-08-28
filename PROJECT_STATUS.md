@@ -60,6 +60,22 @@
 - This is an admission fidelity repair only. It creates no benchmark, improvement, sealed, promotion, or release
   evidence.
 
+## 2026-08-28 candidate builder snapshot/isolation repair
+
+- Issues #65 and #37 identified one coupled admission-boundary defect: identity/schema/scan/tests/compiler consumed
+  repeated reads of a mutable candidate tree, while host `tsc -b` executed candidate-controlled path options.
+- Admission now captures candidate bytes once through directory-anchored `O_NOFOLLOW` descriptors, materializes one
+  read-only content-addressed staging tree, and derives canonical identity and receipt source bytes from that capture.
+  v0.1.1 containment, candidate tests, policy/schema checks and both builds consume the same staging tree.
+- Candidate `tsconfig.json` is validated as inert identity material and never executed. A trusted config drives pinned
+  TypeScript under `bwrap --unshare-all` with a cleared environment, read-only source/toolchain mounts and a dedicated
+  writable output mount. Sixteen path/config escape classes reject before compiler launch.
+- Local gates pass format, lint, typecheck, 845 unit tests (+1 platform skip), and 36 no-key E2E tests
+  (+4 credential-gated skips), including exact packed-overlay ACP boot, real Harbor ACP, extract-elf smoke and
+  crash/replay paths. Independent review and hosted CI remain required before merge.
+- This is an admission attribution/isolation repair only. It creates no benchmark, improvement, sealed, promotion or
+  release evidence.
+
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
 > successor proves an admitted child changes the preregistered solve replay while preserving propose replay.

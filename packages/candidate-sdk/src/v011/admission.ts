@@ -1,17 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import {
-  cp,
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  readlink,
-  realpath,
-  rm,
-  symlink,
-} from 'node:fs/promises'
+import { lstat, readFile, readdir, readlink, realpath } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { Readable, Transform, Writable, type TransformCallback } from 'node:stream'
 import {
@@ -24,8 +13,13 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from '@agentclientprotocol/sdk'
-import { buildCandidate, type BuildArtifactFile, type BuildReceipt } from '../builder-sandbox.js'
+import {
+  buildCandidateFromFrozenSource,
+  type BuildArtifactFile,
+  type BuildReceipt,
+} from '../builder-sandbox.js'
 import { packCapsule, type CapsuleOutput, type RuntimeClosureInput } from '../capsule.js'
+import { freezeSourceTree } from '../source-snapshot.js'
 import { assertV011, digestV011, V011_PROTOCOL } from './contract.js'
 import { canonicalizeV011Tree, snapshotV011Tree } from './tree.js'
 
@@ -899,25 +893,18 @@ export async function admitV011Candidate(input: {
   provenanceJson: string
   sbomJson: string
 }): Promise<V011AdmissionOutput> {
-  const source = await snapshotV011Tree(input.sourceRoot)
-  const archive = await canonicalizeV011Tree(source)
-  const candidateDigest = `sha256:${archive.hash}` as const
-  const testOutputDigest = await runCandidateTests(input.sourceRoot, input.toolchainRoot)
-  const buildParent = join(resolve(input.toolchainRoot), '.v011-builds')
-  await mkdir(buildParent, { recursive: true, mode: 0o700 })
-  const buildRoot = await mkdtemp(join(buildParent, 'candidate-'))
+  const frozenSource = await freezeSourceTree(input.sourceRoot)
   try {
-    await cp(input.sourceRoot, buildRoot, { recursive: true })
-    const sourceFiles = (await snapshotV011Tree(buildRoot)).files.map((file) => file.path)
-    await symlink(
-      join(resolve(input.toolchainRoot), 'packages', 'candidate-v011-baseline', 'node_modules'),
-      join(buildRoot, 'node_modules'),
-      'dir',
-    )
-    const buildReceipt = await buildCandidate({
-      sourceRoot: buildRoot,
-      sourceFiles,
+    // Containment, tests, identity, policy, schema and compilation all consume
+    // the same descriptor-captured staging tree (issue #65).
+    const source = await snapshotV011Tree(frozenSource.root)
+    const archive = await canonicalizeV011Tree(source)
+    const candidateDigest = `sha256:${archive.hash}` as const
+    const testOutputDigest = await runCandidateTests(frozenSource.root, input.toolchainRoot)
+    const buildReceipt = await buildCandidateFromFrozenSource({
+      frozenSource,
       tscBin: input.tscBin,
+      toolchainRoot: input.toolchainRoot,
       manifestKind: 'v011-candidate-intent',
       testImportAllowlist: new Set(['vitest']),
     })
@@ -1017,6 +1004,6 @@ export async function admitV011Candidate(input: {
       candidateTestOutputDigest: testOutputDigest,
     }
   } finally {
-    await rm(buildRoot, { recursive: true, force: true })
+    await frozenSource.cleanup()
   }
 }
