@@ -196,12 +196,17 @@ skip）；这些仅证明 verifier fail-closed 行为，不是 formal acceptance
 
 ## Optional sealed/full evidence verifier capability
 
-新增 sealed/full/release fail-closed verifier：重建完整 29×k paired matrix，固定至少 100,000 次
-task-cluster bootstrap 与 5pp/CI 门槛；candidate lock 绑定 baseline/model/protocol/plan/analysis/split；
-只有 `SEALED_PROMOTED` 才允许固定 capsule 的 89×≥5 full set，并要求 fresh-profile、Loader、SBOM、
-provenance、rollback 与 public leak-scan receipts。当前权威状态仍是 `BLOCKED_NOT_STARTED`：无正式
-candidate lock、reveal count=0、sealed/full trials=0、无 promotion/release。详见
+现有 29×k paired matrix、bootstrap、89×≥5 full-set 与 release 逻辑只保留为 synthetic consistency
+assessor，不再作为包根的 acceptance API。Issue #111 证明所有 receipt hash、签名/replay 布尔值和整体
+commitment 都可由同一 caller 重算；因此 public `verifyGate8Evidence` 在真实 versioned receipt schemas、
+trusted artifact store、signature authority、journal/action replay 与 immutable launch manifest verifier 落地前
+固定返回 `PROTOCOL_INVALID`，不能产生 promotion/full-set/release 结论。当前权威状态仍是
+`BLOCKED_NOT_STARTED`：无正式 candidate lock、reveal count=0、sealed/full trials=0、无
+promotion/release。详见
 [`docs/audits/2026-08-14-gate8-verifier.md`](docs/audits/2026-08-14-gate8-verifier.md)。
+Issue #111 final repair 通过 29/29 targeted tests、全量 828 unit tests（+1 platform skip）和 36 个
+no-key E2E tests（+4 credential-gated skips）；这些证明 fail-closed 边界与既有运行时回归，不是 Gate 8
+acceptance evidence。
 
 ## 2026-08-27 audit-hardening batch（证据绑定 / 预算 / 幂等收敛）
 
@@ -216,7 +221,8 @@ APPROVE 后 squash merge；评审发现的新问题均立为 issue）：
   （prototype/non-enumerable 身份在 Gate8 从第一天即被拒绝）；search 包新增 candidate-sdk canonical 依赖。
 - **#111 slice 2 / PR221**：Gate8 envelope 以 `gate8EvidenceCommitment` 记录式承诺覆盖（divergence 同时
   冻结 promotion 分类为 PROTOCOL_INVALID）；record outcome 绑定（reward 必须等于被统计的行值、full-set
-  capsuleDigest 绑定锁定 capsule）；attemptIndex/scheduleIndex 整数化。剩余 receipt 字节化/签名验证仍在 #111。
+  capsuleDigest 绑定锁定 capsule）；attemptIndex/scheduleIndex 整数化。当时尚未解决的 receipt 字节化/签名
+  authority 问题现由上方 #111 final repair 以禁用 public acceptance path 的方式 fail closed。
 - **#108 / PR222**：未定价 usage 不再以测得零释放预留——`EvaluationObservation.pricing` 结构化
   priced/unknown 状态（缺失/畸形/非有限成本一律降级 unknown），unknown 按全额预留结算，stable audit 对
   任何未解决 unpriced usage fail closed；real provider 保留 summary 的 priced 标志。

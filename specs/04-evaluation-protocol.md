@@ -270,6 +270,12 @@ Formal run 不再进化、路由 candidate、从中间结果改变 harness 或�
 截至设计核验时，官方 repo 表示 community submission 暂停、只接受维护方运行；因此
 `FULL_SET_VERIFIED` 不等于 `LEADERBOARD_VERIFIED`。
 
+Gate 8 acceptance 不能从 caller 提供的 hash-shaped strings、布尔值或可重算的 envelope commitment 推导。
+Verifier 必须从可信 content-addressed store 读取 versioned receipt bytes，校验外部 signer/attestation，并从
+journal、action store、normalized/raw trial artifacts 与 immutable launch manifests 重建 terminal、replay、
+no-adaptation 和 identity facts。上述 producer/schema/authority 未实现时，public verifier 必须返回
+`PROTOCOL_INVALID`；synthetic matrix/statistics consistency 只能作测试，不能成为 acceptance。
+
 ## 12. Cost and time accounting
 
 预算 ledger 从可信 gateway/Harbor receipt 汇总，不信 candidate 自报。至少分：

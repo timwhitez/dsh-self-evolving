@@ -53,11 +53,10 @@ export interface FullSetTrialEvidence {
 
 export interface Gate8EvidenceInput {
   /**
-   * Canonical digest over the full evidence envelope (every field below,
-   * recorded by gate8EvidenceCommitment at envelope-record time). The
-   * verifier recomputes it, so any post-hoc edit — including flipping
-   * signatureVerified/commitmentVerified/replay booleans after recording —
-   * diverges and fails (issue #111).
+   * Diagnostic digest over the full caller-supplied envelope. The synthetic
+   * consistency assessor recomputes it to detect accidental/post-hoc edits,
+   * but it is not an authenticity proof: a caller can recompute it together
+   * with forged booleans and receipt-shaped strings (issue #111).
    */
   evidenceCommitment: `sha256:${string}`
   formalSearchReceiptHash: string | null
@@ -265,7 +264,36 @@ function trialRecordReason(
   return null
 }
 
-export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVerdict {
+/**
+ * Public Gate 8 acceptance boundary.
+ *
+ * No formal run, versioned authentic receipt schemas, trusted artifact-store
+ * reader, signature authority, or journal/action/launch-manifest replay path
+ * exists yet. Returning a positive verdict from the synthetic envelope would
+ * therefore be a false attestation. Keep the public boundary fail closed
+ * until those inputs have a real producer and an independently testable
+ * verifier (issue #111).
+ */
+export function verifyGate8Evidence(_input: Gate8EvidenceInput): Gate8EvidenceVerdict {
+  return {
+    protocolValid: false,
+    promotionState: 'PROTOCOL_INVALID',
+    sealedComplete: false,
+    fullSetEligible: false,
+    fullSetVerified: false,
+    releaseVerified: false,
+    reasons: [
+      'authentic Gate 8 artifact verification is unavailable: trusted artifact store, receipt schemas, signature authority, journal/action replay, and immutable launch manifests are not implemented',
+    ],
+  }
+}
+
+/**
+ * Synthetic protocol-consistency assessor retained for algorithm and malformed
+ * input tests. This function does not authenticate artifact provenance and is
+ * intentionally not exported from the package root or usable for acceptance.
+ */
+export function assessGate8EvidenceConsistency(input: Gate8EvidenceInput): Gate8EvidenceVerdict {
   const reasons: string[] = []
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     return {
@@ -701,11 +729,12 @@ export function verifyGate8Evidence(input: Gate8EvidenceInput): Gate8EvidenceVer
 
 /**
  * Canonical digest over the whole Gate8 evidence envelope (issue #111):
- * recorded at envelope-record time, recomputed by the verifier, so post-hoc
- * edits of any field — including the caller booleans (signatureVerified,
+ * recomputed only by the synthetic consistency assessor, so post-hoc edits of
+ * any field — including the caller booleans (signatureVerified,
  * commitmentVerified, terminal/reconciled/replay/noAdaptation) and every
- * receipt hash — diverge. `bootstrapSeed` is committed via its hexadecimal
- * string form because canonicalV011 does not serialize bigint.
+ * receipt hash — diverge. This is consistency-only, not an authenticity
+ * commitment. `bootstrapSeed` is committed via its base-10 string form because
+ * canonicalV011 does not serialize bigint.
  */
 export function gate8EvidenceCommitment(
   input: Omit<Gate8EvidenceInput, 'evidenceCommitment'>,

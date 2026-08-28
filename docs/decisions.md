@@ -277,3 +277,20 @@ accepted formal receipt to migrate. This closes the trust boundary already speci
 manifest wire schema and evidence commitment are unchanged, so no protocol version is reinterpreted. After the first
 deployed registry/run, changing registry authority or signer-selection semantics requires the ADR and protocol-version
 change mandated by spec 07.
+
+## ADR-023 — Disable synthetic Gate 8 acceptance until authentic artifacts exist
+
+**Decision:** the public `verifyGate8Evidence` boundary always returns `PROTOCOL_INVALID`. The existing paired-matrix,
+bootstrap, full-set and release logic is retained only as an internal synthetic consistency assessor and is not
+exported from the package root. Enabling acceptance requires a new versioned design with real receipt producers,
+trusted content-addressed artifact reads, external signature authority, journal/action replay and immutable launch
+manifest reconstruction.
+
+**Why:** an envelope commitment proves only that one caller kept its own strings and booleans consistent. It does not
+prove that a search receipt, signed lock, reveal, trial artifact, journal, official verification or release operation
+exists. Keeping a positive public path before those producers exist would turn test fixtures into false attestations.
+
+**Compatibility:** Gate 8 is optional and `BLOCKED_NOT_STARTED`; there is no production caller, formal candidate lock,
+reveal, sealed/full trial, release artifact or accepted Gate 8 receipt. Removing the unauthenticated positive path
+therefore invalidates no evidence. The future authentic design must use a new schema/protocol identity rather than
+reinterpret the synthetic envelope.

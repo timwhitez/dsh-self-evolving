@@ -307,6 +307,11 @@ compatibility proof 才允许。旧 run 永远不改成 green。
 - `archive catalog` 不含 prompt/model secrets、sealed/guard identity、guard/sealed 衍生统计
   或 credential metadata；proposer 可见统计只从 `DEV_OBSERVED` trial 派生。
 
+Gate 8 的最终 verifier 只能消费 trusted store 中实际存在的 versioned artifact bytes。Bare digest、caller
+boolean 或同一 caller 可重算的 envelope commitment 不证明 provenance。Candidate lock/reveal、sealed/full
+journal/action replay、official/local verification 和 release receipts 必须由 verifier 读取、重算、交叉绑定并
+验证外部 authority；在这些 schema 与 producer 尚不存在时，acceptance API 必须 fail closed。
+
 ## 16. Required tests
 
 - canonical object/tar/JCS hash cross-platform golden；
