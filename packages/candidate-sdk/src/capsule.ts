@@ -49,6 +49,12 @@ export interface CapsuleInput {
   outDir: string
   /** Build receipt from the deterministic builder. */
   receipt: BuildReceipt
+  /**
+   * Canonical identity consumed by the controller/evaluator when it differs
+   * from the Candidate SDK build identity. The build identity remains bound
+   * in `candidate.buildCandidateId`.
+   */
+  canonicalCandidateId?: string
   /** Runner overlay content (the stable runner's final row restatement). */
   runnerOverlay: string
   /** Additional immutable runner-local modules referenced by the overlay. */
@@ -537,6 +543,7 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
   const {
     outDir,
     receipt,
+    canonicalCandidateId,
     runnerOverlay,
     provenanceJson,
     sbomJson,
@@ -593,15 +600,20 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
     // capsule.json is written after SHA256SUMS because it records the sums-file
     // hash. The two are bound by capsuleHash = H(manifest || sums), avoiding a
     // circular self-hash while still protecting both control files.
+    const candidateId = canonicalCandidateId ?? receipt.candidateId
+    if (candidateId.length === 0) throw new Error('capsule: canonical candidate identity is empty')
     const capsuleManifest = {
       schemaVersion: 1,
-      candidateId: receipt.candidateId,
+      candidateId,
       runtime: {
         kind: 'pinned-closure',
         ref: 'runtime/package-closure.json',
         hash: runtime.closureHash,
       },
-      candidate: { bundleHash: receipt.bundleHash },
+      candidate: {
+        bundleHash: receipt.bundleHash,
+        ...(canonicalCandidateId === undefined ? {} : { buildCandidateId: receipt.candidateId }),
+      },
       runner: {
         overlay: 'runner/cordis.patch.yml',
         hash: await hashDirectory(runnerDir),

@@ -15,6 +15,7 @@ import {
   v011SchemaDigest,
 } from '@dsh-self-evolving/candidate-sdk'
 import { auditStableRun } from './audit.js'
+import { readV011StableBuild } from './v011-identity.js'
 import type { V011DemoConfig } from './config.js'
 
 export interface V011AuditReport {
@@ -245,6 +246,9 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const reasons = [...predecessor.reasons]
+  const baselineRoot = join(config.stateDir, 'candidates', 'v011-baseline')
+  const baselineIdentity = await readV011StableBuild(baselineRoot).catch(() => null)
+  if (baselineIdentity === null) reasons.push('v0.1.1 baseline identity chain is incomplete')
   reasons.push(...(await verifyInvalidReplacementFixture(config, await deriveFixtureCross(config))))
   const baselineMigration = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'migration-receipt.json'),
@@ -269,11 +273,7 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   const generated = []
   for (let generation = 1; generation <= 3; generation += 1) {
     const candidateRoot = join(config.stateDir, 'candidates', `generation-${generation}`)
-    const built = (await json(join(candidateRoot, 'stable-build.json'))) as {
-      proposalDigest?: string
-      targetClusterSlug?: string
-      runtimePackageName?: string
-    } | null
+    const built = await readV011StableBuild(candidateRoot).catch(() => null)
     const admission = (await json(join(candidateRoot, 'admission-receipt.json'))) as {
       admitted?: unknown
       stageReceipts?: unknown

@@ -33,7 +33,8 @@
       "required": ["bundleHash"],
       "additionalProperties": false,
       "properties": {
-        "bundleHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "bundleHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "buildCandidateId": { "type": "string", "pattern": "^c_[a-z2-7]{26}$" }
       }
     },
     "runner": {

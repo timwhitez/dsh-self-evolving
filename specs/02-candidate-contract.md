@@ -293,6 +293,11 @@ Harbor adapter 在 task environment 上传 capsule；解包前验证 hash/paths�
 runtime 和 candidate code 只读，对 task workspace 可按 benchmark policy 写。每个 trial 创建全新
 session/persistence root；跨 trial cache 只能是只读、candidate-independent 的依赖缓存。
 
+同一协议内只能有一个用于 controller、runner overlay、capsule manifest 与 evaluator attribution 的
+canonical candidate identity。v0.1.1 使用 admission 的 `sha256:<source digest>`；Candidate SDK 构建产生的
+`c_<base32>` identity 必须作为 `candidate.buildCandidateId` 写入 capsule，并在 admission receipt 中显式
+交叉绑定。resume/audit 遇到缺失或互相矛盾的 identity 必须 fail closed，不得把旧 alias 静默迁移为新 ID。
+
 ## 13. Runtime limits
 
 TCB 外部强制而非只写进 prompt：

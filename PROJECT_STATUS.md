@@ -24,6 +24,20 @@
 - Passing this compatibility test proves only the exercised Responses item shapes on the locked endpoint/model; it
   is not benchmark, candidate-improvement, sealed, promotion, or release evidence.
 
+## 2026-08-28 v0.1.1 candidate identity repair
+
+- Issue #198 identified a deterministic attribution mismatch: the v0.1.1 controller and overlay used an admission
+  `sha256:` digest while `capsule.json` exposed the Candidate SDK `c_<base32>` build identity to Gate 5.
+- v0.1.1 now uses the admission digest as the single controller/overlay/capsule/evaluator identity. The SDK build ID
+  remains explicit as `candidate.buildCandidateId` and is cross-bound in the admission receipt.
+- Engine failure-pool selection, trial accounting, outcome pairing and audit derive the baseline role from the actual
+  admitted baseline identity instead of the historical `baseline` alias. Resume and audit reject pre-repair stable
+  state whose record, receipt and capsule identity chain does not match; there is no silent state migration.
+- The repair passes format, lint, typecheck, 813 unit tests (+1 platform skip), and 36 no-key E2E tests (+4
+  credential-gated skips), including real Harbor ACP, extract-elf smoke, offline packed Loader and crash/replay paths.
+- This is an attribution/correctness repair only. It creates no new benchmark, improvement, promotion, sealed or
+  release evidence.
+
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are
 > `dsh-self-evolving`. The default route is DeepSeek official Responses, not Codex/CPA. A real low-consumption
 > successor proves an admitted child changes the preregistered solve replay while preserving propose replay.
