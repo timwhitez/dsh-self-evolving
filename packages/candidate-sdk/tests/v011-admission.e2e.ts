@@ -245,6 +245,7 @@ describe('v0.1.1 generated-plugin admission', () => {
           filesystemRoot: 'read-only',
           writablePaths: 'bounded-tmpfs-only',
           nestedUserNamespaces: 'disabled',
+          targetPidNamespace: 'private-descendant',
           targetCapabilities: 'none',
           noNewPrivileges: true,
         })

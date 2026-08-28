@@ -154,9 +154,12 @@ describe('cgroup-v2 resource domain', () => {
         targetArgs: [
           '--eval',
           [
-            "const { readFileSync, writeFileSync } = require('node:fs')",
+            "const { readdirSync, readFileSync, writeFileSync } = require('node:fs')",
             "const status = readFileSync('/proc/self/status', 'utf8')",
             "if (!/^CapInh:\\s+0+$/m.test(status) || !/^CapPrm:\\s+0+$/m.test(status) || !/^CapEff:\\s+0+$/m.test(status) || !/^CapBnd:\\s+0+$/m.test(status) || !/^CapAmb:\\s+0+$/m.test(status) || !/^NoNewPrivs:\\s+1$/m.test(status)) throw new Error('target retained supervisor privileges')",
+            "const visiblePids = readdirSync('/proc').filter((entry) => /^\\d+$/.test(entry)).sort()",
+            'if (process.pid !== 1 || process.ppid !== 0 || JSON.stringify(visiblePids) !== \'["1"]\') throw new Error(`target shares supervisor pid namespace: ${process.pid}/${process.ppid}/${visiblePids}`)',
+            "process.stdout.write('PID_NAMESPACE_ISOLATED\\n')",
             "process.stdout.write('START\\n')",
             'try {',
             '  for (let i = 0; ; i += 1) { writeFileSync(`/work/children/${i}`, Buffer.alloc(64 * 1024, 1)); if (i % 16 === 0) process.stdout.write(`WROTE:${i}\\n`) }',
@@ -189,6 +192,8 @@ describe('cgroup-v2 resource domain', () => {
         result.resource.terminationCause,
         `${Buffer.concat(stderr).toString('utf8')}\n${Buffer.concat(stdout).toString('utf8')}`,
       ).toBe('WRITABLE_STORAGE_LIMIT')
+      expect(Buffer.concat(stdout).toString('utf8')).toContain('PID_NAMESPACE_ISOLATED')
+      expect(result.resource.enforcement.sandbox?.targetPidNamespace).toBe('private-descendant')
       expect(result.resource.usage.writableStoragePeakBytes).toBeLessThanOrEqual(2 * MiB)
       expect(result.resource.usage.writableStoragePeakFiles).toBeLessThanOrEqual(128)
       expect(

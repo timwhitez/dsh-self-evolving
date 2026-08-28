@@ -24,6 +24,7 @@ function validReceipt(): ResourceDomainReceipt {
         filesystemRoot: 'read-only',
         writablePaths: 'bounded-tmpfs-only',
         nestedUserNamespaces: 'disabled',
+        targetPidNamespace: 'private-descendant',
         targetCapabilities: 'none',
         noNewPrivileges: true,
       },

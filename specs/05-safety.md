@@ -76,6 +76,8 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
   supervisor 从只读 seed 复制；target 启动前移除全部 capabilities，退出后先杀净 PID namespace 再导出；
 - sandbox root 与 `/dev` 只读；可信 supervisor 完成 mount 后必须禁用其 private user namespace 下继续
   创建 nested user namespace，target 不得通过新 user/mount namespace 重新获得 mount capability；
+- untrusted target 必须在 supervisor 下级的独立 PID namespace 中启动，只能看到自身及其后代；即使宿主
+  user namespace 只能映射一个 UID，也不能观察、发信号给 supervisor 或访问其 control FD；
 - 缺少可委派 controller、配额设置失败、收据控制通道异常或资源超限一律 fail closed；不得退回只有
   wall timeout 的执行路径；
 - 成功不得通过 `cgroup.kill` 合成：target 必须零退出，trusted supervisor 必须先完成最终 storage sample
@@ -87,6 +89,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - output exporter follow-no-symlink，并在 sandbox 外重新 canonicalize。
 - proposal resource receipt 必须独立持久化，其 digest 必须进入 materialization receipt；cache/audit 缺失
   任一侧或语义不一致时不得采用既有 proposal。
+- sandbox 导出的 child/worker output 本身不是完成标记；resource/gateway/diagnostic/worker bytes 必须先进入
+  fsync + manifest-last 的 execution bundle。无 commit marker 的 residue 要隔离后从 immutable parent 重建，
+  provider 请求仅能经 durable idempotency record 重放；cache/audit 还必须读回 materialization CAS 原文。
 
 ### 5.3 Task sandbox
 

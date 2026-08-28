@@ -5,7 +5,7 @@
  * (incomplete prior attempt) or a fully verified set of files; any bytes
  * failing their bound digests are rejected on every load.
  */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -57,7 +57,8 @@ describe('atomic publication', () => {
     const dir = join(root!, 'once')
     await mkdir(dir, { recursive: true })
     await publishBundle(dir, { 'a.json': 'A\n' })
-    await expect(publishBundle(dir, { 'a.json': 'A\n' })).rejects.toThrow(/already exists/)
+    await expect(publishBundle(dir, { 'a.json': 'CORRUPT\n' })).rejects.toThrow(/already exists/)
+    expect(await readFile(join(dir, 'a.json'), 'utf8')).toBe('A\n')
   })
 
   it('treats an empty bundle as a protocol violation', async () => {

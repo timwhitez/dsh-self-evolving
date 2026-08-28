@@ -343,9 +343,20 @@ async function main(): Promise<void> {
   // setpriv strips the final target's capabilities and enables no_new_privs.
   // The outer root and /dev are already read-only; only the exact bounded
   // tmpfs mounts above remain writable.
+  // A capability-free process with the supervisor's uid can still signal it
+  // and inspect its /proc file descriptors. Put the target below a second PID
+  // namespace before dropping capabilities: the target can see only itself
+  // and its descendants, while this supervisor retains the sole control fd.
+  // This does not require a nested user namespace (whose quota is frozen
+  // above); the supervisor's private-user-namespace CAP_SYS_ADMIN is enough.
   const target = spawn(
-    '/usr/bin/setpriv',
+    '/usr/bin/unshare',
     [
+      '--pid',
+      '--fork',
+      '--mount-proc=/proc',
+      '--kill-child=SIGKILL',
+      '/usr/bin/setpriv',
       '--bounding-set=-all',
       '--inh-caps=-all',
       '--ambient-caps=-all',

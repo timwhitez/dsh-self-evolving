@@ -16,7 +16,7 @@
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export interface BuildClaimIntent {
   pid: number
@@ -153,7 +153,27 @@ async function ownerIsAlive(owner: BuildClaimIntent): Promise<boolean> {
   return actual === owner.processStartTicks
 }
 
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
 /** Remove our own claim marker once the staged tree is finalized or discarded. */
 export async function clearBuildIntent(stagingRoot: string): Promise<void> {
   await rm(join(stagingRoot, INTENT_NAME), { force: true })
+  await fsyncDirectory(stagingRoot)
+}
+
+/** Commit a fully written claimed tree and make its parent entry durable. */
+export async function publishClaimedStagingDir(
+  stagingRoot: string,
+  finalRoot: string,
+): Promise<void> {
+  await clearBuildIntent(stagingRoot)
+  await rename(stagingRoot, finalRoot)
+  await fsyncDirectory(dirname(finalRoot))
 }

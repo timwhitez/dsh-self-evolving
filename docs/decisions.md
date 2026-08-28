@@ -335,7 +335,10 @@ For an unprivileged host caller, Bubblewrap maps the trusted supervisor to uid/g
 and grants only `CAP_SYS_ADMIN` for bounded mounts, `CAP_SYS_RESOURCE` for the namespace quota and `CAP_SETPCAP` to
 clear the target's bounding set; caller-supplied capability options are rejected. The outer root and `/dev` are
 read-only, and after mounting the supervisor freezes its private user namespace's nested namespace quota at zero so
-the target cannot reacquire mount capability. Seed trees enter through a read-only mount, and output is
+the target cannot reacquire mount capability. The target additionally runs below a second private PID namespace, so
+it cannot observe or signal the trusted Node supervisor or reach the supervisor's control descriptor even on hosts
+whose private user namespace maps only one uid. This PID boundary is a required field in successful resource
+receipts. Seed trees enter through a read-only mount, and output is
 inspected/exported only after namespace descendants are killed. Resource policies have versioned ids; every receipt
 carries the full policy and its digest, and build identity also binds the build policy digests.
 Successful stages additionally require a complete supervisor control record, exact frozen policy/mount enforcement,
@@ -345,6 +348,12 @@ zero so the namespace supervisor can publish that record; `cgroup.kill` is reser
 be relabeled as success. Admission, stable-build resume and audit all replay the same semantic receipt validator.
 Proposal execution persists a separate receipt whose digest is a required top-level materialization field; cached
 materializations and the run audit reject a missing, rehashed-failure or policy-drifted receipt.
+Worker output is not a completion marker. Worker bytes, the resource receipt, gateway receipts and diagnostics commit
+as one fsynced manifest-last execution bundle. A crash before that marker quarantines the exported child and partial
+bundle, recreates the declared slot from the immutable parent and reuses durable gateway requests without a second
+provider dispatch. Cache/build/audit require an exact wrapper, recompute the stable proposal artifact digest, and read
+the canonical materialization and analysis bytes back from the object store. Baseline and generated-candidate staging
+use durable ownership claims, remove the claim before publication, and fsync the parent after rename.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

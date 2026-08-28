@@ -14,6 +14,7 @@ import {
   parseCrashReceipt,
   readCrashInjectionRequest,
 } from './crash.js'
+import { readResourceBoundStableBuild } from './real-capabilities.js'
 
 export interface StableAuditReport {
   accepted: boolean
@@ -56,6 +57,16 @@ export async function auditStableRun(config: ProjectConfig): Promise<StableAudit
     reasons.push(
       `unique admitted children incomplete: ${childNodes.length}/${config.limits.admittedChildren}`,
     )
+  }
+  if (config.profile === 'stable-demo') {
+    for (let generation = 1; generation <= config.limits.admittedChildren; generation += 1) {
+      const built = await readResourceBoundStableBuild(
+        join(config.stateDir, 'candidates', `generation-${generation}`),
+      ).catch(() => null)
+      if (built === null || !childNodes.some((node) => node.candidateId === built.candidateId)) {
+        reasons.push(`generation ${generation} resource-bound build publication is invalid`)
+      }
+    }
   }
   if (Math.max(0, ...childNodes.map((node) => depthOf(node.candidateId))) < 2) {
     reasons.push('lineage depth is below 2')

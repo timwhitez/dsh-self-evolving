@@ -227,11 +227,18 @@ summary、ATIF、DSH session log、verifier logs、resource/process/network audi
 cgroup/rlimit/writable-mount enforcement、memory/PID/CPU/I/O/storage peak 与 event counters、exit/signal 以及
 唯一 termination cause。receipt 缺失或控制通道损坏不能解释为正常完成；成功 publication 必须把 receipt
 与 proposal/build/admission artifact 一起内容绑定，失败路径也必须保留可审计诊断。
+`sandbox` enforcement 还必须明确记录 target 位于 supervisor 下级私有 PID namespace；capability drop
+不能替代该隔离，因为单 UID user namespace 内的同 UID target 仍可能影响可信 supervisor/control channel。
 成功收据还必须由 verifier 重放完整结构与语义：冻结 policy/mount 精确相等，storage peaks 非空且不越界，
 limit events 为零，termination 为 `COMPLETED`、exit 为 0 且 signal 为空。仅重算 digest 或 candidate id
 不足以恢复/审计成功。长期运行服务的 one-shot probe 必须走可信正常停止协议，让 supervisor 先发布
 control receipt；主动杀整个 cgroup 只能记录失败。proposal 的 resource receipt digest 是 materialization
 receipt 的 required 顶层字段，cache 和正式 audit 必须同时验证 receipt bytes、语义与 digest binding。
+proposal execution 使用 manifest-last commit：manifest 精确绑定 worker output、resource receipt、gateway
+receipts 和 diagnostic。child export 后但 manifest 前的任何崩溃都只能留下 quarantined residue，不能成为
+resume authority。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
+stable proposal artifact digest 交叉验证。candidate staging claim 在最终 rename 前清除且 fsync；rename 后
+fsync parent directory，正式 candidate root 不得携带 live claim marker。
 
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。

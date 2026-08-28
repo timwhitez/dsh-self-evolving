@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { claimStagingDir, clearBuildIntent } from '../src/build-claim.js'
+import { claimStagingDir, clearBuildIntent, publishClaimedStagingDir } from '../src/build-claim.js'
 
 let root: string | undefined
 
@@ -91,5 +91,24 @@ describe('staging claims', () => {
       JSON.stringify({ pid: process.pid, processStartTicks: ticks }) + '\n',
     )
     await expect(claimStagingDir(staging)).rejects.toThrow(/another builder owns/)
+  })
+
+  it('publishes without the live claim and lets a released same-process residue recover', async () => {
+    const staging = join(root!, 'attempt-5.staging')
+    const published = join(root!, 'candidate')
+    await claimStagingDir(staging, { attempt: 5 })
+    await writeFile(join(staging, 'receipt.json'), '{}\n')
+    await publishClaimedStagingDir(staging, published)
+    expect(await readFile(join(published, 'receipt.json'), 'utf8')).toBe('{}\n')
+    await expect(readFile(join(published, 'build-intent.json'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+
+    const retry = join(root!, 'attempt-6.staging')
+    await claimStagingDir(retry, { attempt: 6 })
+    await clearBuildIntent(retry)
+    await writeFile(join(retry, 'partial'), 'retained')
+    await claimStagingDir(retry, { attempt: 6 }, async () => root!)
+    expect(await readdir(retry)).toEqual(['build-intent.json'])
   })
 })

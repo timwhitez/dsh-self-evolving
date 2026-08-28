@@ -76,6 +76,7 @@ export interface ResourceDomainReceipt {
       filesystemRoot: 'read-only'
       writablePaths: 'bounded-tmpfs-only'
       nestedUserNamespaces: 'disabled'
+      targetPidNamespace: 'private-descendant'
       targetCapabilities: 'none'
       noNewPrivileges: true
     }
@@ -334,6 +335,7 @@ export function assertCompletedResourceDomainReceipt(
         filesystemRoot: 'read-only',
         writablePaths: 'bounded-tmpfs-only',
         nestedUserNamespaces: 'disabled',
+        targetPidNamespace: 'private-descendant',
         targetCapabilities: 'none',
         noNewPrivileges: true,
       })

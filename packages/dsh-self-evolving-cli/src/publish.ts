@@ -16,7 +16,7 @@
  * verified byte-for-byte against the manifest digests on every load.
  */
 import { createHash } from 'node:crypto'
-import { open, readFile, rename, rm } from 'node:fs/promises'
+import { link, open, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -40,6 +40,15 @@ async function writeDurable(path: string, bytes: string): Promise<void> {
   }
 }
 
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
 /**
  * Publish a set of evidence files atomically. Throws if ANY final entry or
  * the manifest already exists — publication happens exactly once.
@@ -47,6 +56,20 @@ async function writeDurable(path: string, bytes: string): Promise<void> {
 export async function publishBundle(dir: string, entries: Record<string, string>): Promise<void> {
   const names = Object.keys(entries).sort()
   if (names.length === 0) throw new Error('publish: empty bundle')
+  if (
+    names.some(
+      (name) =>
+        name === PUBLISH_MANIFEST ||
+        name.length === 0 ||
+        name === '.' ||
+        name === '..' ||
+        name.includes('/') ||
+        name.includes('\\') ||
+        name.includes('\0'),
+    )
+  ) {
+    throw new Error('publish: unsafe or reserved bundle entry name')
+  }
   const files: Record<string, string> = {}
   const staged: Array<{ staging: string; final: string }> = []
   try {
@@ -58,19 +81,23 @@ export async function publishBundle(dir: string, entries: Record<string, string>
       staged.push({ staging, final: join(dir, name) })
     }
     for (const { staging, final } of staged) {
-      // link() refuses to clobber an existing final file; fall back to rename
-      // semantics only when the target is provably absent.
+      // A hard link is the no-clobber commit for each data entry. rename(2)
+      // would silently replace an existing file on POSIX and could corrupt an
+      // already committed bundle before the exclusive manifest write fails.
       try {
-        await rename(staging, final)
+        await link(staging, final)
+        await rm(staging, { force: true })
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         throw new Error(`publish: final path already exists: ${final}`, { cause: error })
       }
     }
+    await fsyncDirectory(dir)
     await writeDurable(
       join(dir, PUBLISH_MANIFEST),
       JSON.stringify({ schemaVersion: 1, files }, null, 2) + '\n',
     )
+    await fsyncDirectory(dir)
     for (const { staging } of staged) await rm(staging, { force: true }).catch(() => {})
   } catch (error) {
     for (const { staging, final } of staged) {
@@ -96,6 +123,7 @@ export async function loadPublishedBundle(dir: string): Promise<Record<string, s
   if (rawManifest === null) return null
   const manifest = JSON.parse(rawManifest) as { schemaVersion?: unknown; files?: unknown }
   if (
+    JSON.stringify(Object.keys(manifest).sort()) !== JSON.stringify(['files', 'schemaVersion']) ||
     manifest.schemaVersion !== 1 ||
     manifest.files === null ||
     typeof manifest.files !== 'object' ||
@@ -105,7 +133,17 @@ export async function loadPublishedBundle(dir: string): Promise<Record<string, s
   }
   const out: Record<string, string> = {}
   for (const [name, expectedDigest] of Object.entries(manifest.files as Record<string, unknown>)) {
-    if (typeof expectedDigest !== 'string' || !/^[0-9a-f]{64}$/.test(expectedDigest)) {
+    if (
+      name === PUBLISH_MANIFEST ||
+      name.length === 0 ||
+      name === '.' ||
+      name === '..' ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name.includes('\0') ||
+      typeof expectedDigest !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(expectedDigest)
+    ) {
       throw new Error(`publish: manifest digest malformed for ${name} in ${dir}`)
     }
     const bytes = await readFile(join(dir, name), 'utf8')

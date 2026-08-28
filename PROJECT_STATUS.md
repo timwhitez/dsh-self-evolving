@@ -87,9 +87,9 @@
   CPU time, file size, open files and core dumps; teardown uses whole-domain `cgroup.kill`.
 - Every writable path, including `/tmp` and `/dev/shm`, is a size/inode-bounded tmpfs. A trusted supervisor seeds and
   exports trees with only mount, namespace-quota and capability-drop privileges in its private user namespace;
-  untrusted targets run with an empty capability set and never inherit its control FD. Root and `/dev` are read-only,
-  and nested user namespaces are disabled after trusted mount setup. Missing delegation/control or any quota failure
-  is fail closed.
+  untrusted targets run with an empty capability set below a second private PID namespace and never inherit or see
+  its control FD. Root and `/dev` are read-only, and nested user namespaces are disabled after trusted mount setup.
+  Missing delegation/control or any quota failure is fail closed.
 - Resource receipts record full limits/digest, enforcement, peaks/events and termination cause. Build/admission and
   proposer evidence retain these receipts. Memory-bomb, fork-bomb, CPU throttle/time and disk-fill E2E tests exercise
   the kernel boundaries. Non-root CI commands enter an executor child through a minimal privileged launcher, then
@@ -100,8 +100,16 @@
   supervisor records peaks/control before teardown. A shared semantic validator requires exact policy/mounts,
   complete bounded metrics, zero limit events and `COMPLETED`/exit 0/no signal at admission, resume and audit.
   Proposer receipts are separately persisted and their digest is required by materialization/cache/audit.
-- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 113 files /
-  859 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+- A later independent review of `a88a6f1` found that capability removal alone did not isolate a same-UID target from
+  the trusted Node supervisor. The repaired supervisor launches the target in a private descendant PID namespace;
+  the disk-fill E2E proves the target sees only PID 1/parent 0, and semantic receipt replay now requires this boundary.
+- The same review found crash windows around proposal output/receipt publication, cache/CAS replay and candidate
+  staging. Proposal execution now commits worker/resource/gateway/diagnostic bytes as one manifest-last bundle;
+  incomplete exports are quarantined and rebuilt while durable gateway ids prevent duplicate dispatch. Cache/build/
+  audit require an exact wrapper plus materialization/analysis CAS bytes. Baseline and generated staging use durable
+  claims, clear them before rename, and fsync the publication parent.
+- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 116 files /
+  868 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
   includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
   crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or

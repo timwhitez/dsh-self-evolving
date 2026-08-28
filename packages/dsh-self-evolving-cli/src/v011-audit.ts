@@ -22,6 +22,11 @@ import {
 import { auditStableRun } from './audit.js'
 import { readV011StableBuild } from './v011-identity.js'
 import type { V011DemoConfig } from './config.js'
+import { verifyV011MaterializationAuthority } from './v011-materialization-authority.js'
+import {
+  assertV011ProposalExecutionBinding,
+  loadV011ProposalExecution,
+} from './v011-proposal-execution.js'
 
 export interface V011AuditReport {
   accepted: boolean
@@ -362,19 +367,23 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   )
   if (actionFiles.length < 3)
     reasons.push(`materialization receipt matrix is ${actionFiles.length}/at-least-3`)
-  const materializations = await Promise.all(
-    actionFiles.map(async (path) => ({
-      path,
-      value: (await json(path)) as {
-        stableProposal?: { artifactDigest?: string }
-        materialization?: {
-          proposalDigest?: string
-          operations?: Array<{ path?: string }>
-          proposerResourceReceiptDigest?: unknown
-        }
-      } | null,
-    })),
-  )
+  const materializations: Array<{
+    path: string
+    authority: Awaited<ReturnType<typeof verifyV011MaterializationAuthority>>
+  }> = []
+  for (const path of actionFiles) {
+    const actionRoot = path.slice(0, -'/materialization.json'.length)
+    try {
+      const authority = await verifyV011MaterializationAuthority({
+        store: { root: join(config.stateDir, 'v011', 'object-store') },
+        value: await json(path),
+        actionRoot,
+      })
+      materializations.push({ path, authority })
+    } catch {
+      reasons.push(`materialization authority is invalid: ${path}`)
+    }
+  }
   const generated = []
   let previousCandidateId = baselineIdentity?.candidateId
   for (let generation = 1; generation <= 3; generation += 1) {
@@ -427,19 +436,33 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
       continue
     }
     const materialization = materializations.find(
-      (row) => row.value?.materialization?.proposalDigest === built.proposalDigest,
+      (row) => row.authority.materialization.proposalDigest === built.proposalDigest,
     )
     if (materialization === undefined) {
       reasons.push(`generation ${generation} has no matching materialization`)
       continue
     }
     const actionRoot = materialization.path.slice(0, -'/materialization.json'.length)
-    const proposalResource = await json(join(actionRoot, 'proposal-resource-receipt.json'))
+    const proposalId = materialization.authority.materialization.proposalId
+    const execution = await loadV011ProposalExecution(
+      actionRoot,
+      join(actionRoot, 'children', proposalId, 'worker-output.json'),
+    ).catch(() => null)
+    const proposalResource = execution?.resource ?? null
     const proposalResourceValid = verifyV011ProposalResourceBinding(
-      materialization.value?.materialization,
+      materialization.authority.materialization,
       proposalResource,
     )
-    if (!proposalResourceValid) {
+    let executionBindingValid = false
+    if (execution !== null) {
+      try {
+        assertV011ProposalExecutionBinding(materialization.authority.materialization, execution)
+        executionBindingValid = true
+      } catch {
+        executionBindingValid = false
+      }
+    }
+    if (!proposalResourceValid || !executionBindingValid) {
       reasons.push(`generation ${generation} proposal resource receipt invalid`)
       continue
     }

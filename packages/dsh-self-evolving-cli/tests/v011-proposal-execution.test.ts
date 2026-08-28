@@ -1,0 +1,208 @@
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  digestV011,
+  resourcePolicyDigest,
+  type ResourceDomainReceipt,
+} from '@dsh-self-evolving/candidate-sdk'
+import {
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
+  type V011MaterializationReceipt,
+} from '@dsh-self-evolving/core'
+import {
+  assertV011ProposalExecutionBinding,
+  loadV011ProposalExecution,
+  publishV011ProposalExecution,
+  quarantineIncompleteV011ProposalExecution,
+  v011ProposalExecutionDirectory,
+} from '../src/v011-proposal-execution.js'
+
+let root: string | undefined
+
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), 'v011-proposal-execution-'))
+})
+
+afterEach(async () => {
+  if (root !== undefined) await rm(root, { recursive: true, force: true })
+  root = undefined
+})
+
+function resource(): ResourceDomainReceipt {
+  return {
+    schemaVersion: 1,
+    policyDigest: resourcePolicyDigest(PROPOSAL_RESOURCE_POLICY_V1),
+    policy: PROPOSAL_RESOURCE_POLICY_V1,
+    enforcement: {
+      cgroup: 'v2-delegated',
+      rlimits: true,
+      ioDevices: ['259:0'],
+      writableStorage: 'tmpfs-size-inode-hard-limit',
+      writableStoragePeakSamplingMs: 10,
+      writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1.map(({ path, maxBytes, maxFiles }) => ({
+        path,
+        maxBytes,
+        maxFiles,
+      })),
+      sandbox: {
+        filesystemRoot: 'read-only',
+        writablePaths: 'bounded-tmpfs-only',
+        nestedUserNamespaces: 'disabled',
+        targetPidNamespace: 'private-descendant',
+        targetCapabilities: 'none',
+        noNewPrivileges: true,
+      },
+    },
+    usage: {
+      memoryPeakBytes: 1,
+      pidsPeak: 1,
+      cpuUsageUsec: 2,
+      cpuUserUsec: 1,
+      cpuSystemUsec: 1,
+      cpuThrottledUsec: 0,
+      cpuThrottledPeriods: 0,
+      ioReadBytes: 0,
+      ioWriteBytes: 0,
+      ioReadOps: 0,
+      ioWriteOps: 0,
+      writableStoragePeakBytes: 1,
+      writableStoragePeakFiles: 1,
+    },
+    events: { memoryMaxEvents: 0, memoryOomEvents: 0, memoryOomKills: 0, pidsMaxEvents: 0 },
+    terminationCause: 'COMPLETED',
+    exitCode: 0,
+    signal: null,
+  }
+}
+
+describe('v0.1.1 proposal execution commit', () => {
+  it('adopts only one manifest-committed execution whose worker bytes match the installed tree', async () => {
+    const action = join(root!, 'action')
+    const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
+    const workerBytes = '{"finishedTreeDigest":"sha256:abc"}\n'
+    await mkdir(join(workerPath, '..'), { recursive: true })
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: resource(),
+      gatewayReceipts: [{ requestId: 'r1' }],
+      diagnostic: { schemaVersion: 1 },
+    })
+
+    const loaded = await loadV011ProposalExecution(action, workerPath)
+    expect(loaded?.workerOutputBytes).toBe(workerBytes)
+    expect(loaded?.gatewayReceipts).toEqual([{ requestId: 'r1' }])
+    await writeFile(workerPath, '{"finishedTreeDigest":"sha256:changed"}\n')
+    await expect(loadV011ProposalExecution(action, workerPath)).rejects.toThrow(
+      /worker output differs/,
+    )
+  })
+
+  it('quarantines child-export/receipt residue and permits a clean committed retry', async () => {
+    const action = join(root!, 'action')
+    const children = join(action, 'children')
+    const workerPath = join(children, 'p_1', 'worker-output.json')
+    const execution = v011ProposalExecutionDirectory(action)
+    await mkdir(join(workerPath, '..'), { recursive: true })
+    await mkdir(execution, { recursive: true })
+    await writeFile(workerPath, '{"partial":true}\n')
+    await writeFile(join(execution, 'proposal-resource-receipt.json'), '{"partial":true')
+
+    expect(
+      await quarantineIncompleteV011ProposalExecution({
+        action,
+        childrenRoot: children,
+        workerOutputPath: workerPath,
+      }),
+    ).toBe(true)
+    expect(await stat(children).catch(() => null)).toBeNull()
+    expect(await stat(execution).catch(() => null)).toBeNull()
+    const quarantined = await readdir(join(action, 'incomplete-executions'))
+    expect(quarantined).toHaveLength(1)
+
+    const workerBytes = '{"finishedTreeDigest":"sha256:retry"}\n'
+    await mkdir(join(workerPath, '..'), { recursive: true })
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: resource(),
+      gatewayReceipts: [],
+      diagnostic: { schemaVersion: 1 },
+    })
+    expect((await loadV011ProposalExecution(action, workerPath))?.workerOutputBytes).toBe(
+      workerBytes,
+    )
+    expect(await readFile(join(execution, 'worker-output.json'), 'utf8')).toBe(workerBytes)
+  })
+
+  it('recovers every pre-manifest receipt publication boundary', async () => {
+    const files = [
+      'gateway-receipts.json',
+      'proposal-diagnostic.json',
+      'proposal-resource-receipt.json',
+      'worker-output.json',
+    ]
+    for (let boundary = 0; boundary < files.length; boundary += 1) {
+      const action = join(root!, `boundary-${boundary}`)
+      const children = join(action, 'children')
+      const workerPath = join(children, 'p_1', 'worker-output.json')
+      const execution = v011ProposalExecutionDirectory(action)
+      await mkdir(join(workerPath, '..'), { recursive: true })
+      await mkdir(execution, { recursive: true })
+      await writeFile(workerPath, '{"exported":true}\n')
+      for (const name of files.slice(0, boundary + 1)) {
+        await writeFile(join(execution, name), '{"uncommitted":true}\n')
+      }
+      expect(
+        await quarantineIncompleteV011ProposalExecution({
+          action,
+          childrenRoot: children,
+          workerOutputPath: workerPath,
+        }),
+      ).toBe(true)
+      expect(await stat(children).catch(() => null)).toBeNull()
+      expect(await stat(execution).catch(() => null)).toBeNull()
+    }
+  })
+
+  it('binds materialization usage, diagnostic, transcript, gateway count and resource digest', async () => {
+    const action = join(root!, 'binding')
+    const workerPath = join(action, 'children', 'p_1', 'worker-output.json')
+    const receipt = resource()
+    const workerBytes = '{"transcript":{"eventCount":2}}\n'
+    const gatewayReceipts = [{ requestId: 'r1' }]
+    const diagnostic = {
+      schemaVersion: 1,
+      providerFailure: null,
+      gatewayReceiptCount: 1,
+      sandbox: { exitCode: 0, signal: null, resource: receipt },
+    }
+    await mkdir(join(workerPath, '..'), { recursive: true })
+    await writeFile(workerPath, workerBytes)
+    await publishV011ProposalExecution({
+      action,
+      workerOutputBytes: workerBytes,
+      resource: receipt,
+      gatewayReceipts,
+      diagnostic,
+    })
+    const execution = await loadV011ProposalExecution(action, workerPath)
+    expect(execution).not.toBeNull()
+    const materialization = {
+      proposerResourceReceiptDigest: digestV011(receipt),
+      proposerUsage: { gatewayReceipts: 1, eventCount: 2 },
+    } as V011MaterializationReceipt
+    expect(() => assertV011ProposalExecutionBinding(materialization, execution!)).not.toThrow()
+    expect(() =>
+      assertV011ProposalExecutionBinding(
+        { ...materialization, proposerUsage: { gatewayReceipts: 2, eventCount: 2 } },
+        execution!,
+      ),
+    ).toThrow(/binding mismatch/)
+  })
+})
