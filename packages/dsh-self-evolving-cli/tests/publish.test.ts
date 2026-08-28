@@ -5,7 +5,7 @@
  * (incomplete prior attempt) or a fully verified set of files; any bytes
  * failing their bound digests are rejected on every load.
  */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -57,7 +57,8 @@ describe('atomic publication', () => {
     const dir = join(root!, 'once')
     await mkdir(dir, { recursive: true })
     await publishBundle(dir, { 'a.json': 'A\n' })
-    await expect(publishBundle(dir, { 'a.json': 'A\n' })).rejects.toThrow(/already exists/)
+    await expect(publishBundle(dir, { 'a.json': 'CORRUPT\n' })).rejects.toThrow(/already exists/)
+    expect(await readFile(join(dir, 'a.json'), 'utf8')).toBe('A\n')
   })
 
   it('treats an empty bundle as a protocol violation', async () => {
@@ -72,5 +73,40 @@ describe('atomic publication', () => {
     // The commit marker owns its name exclusively; an impostor entry must
     // fail closed instead of shadowing the verification anchor.
     await expect(publishBundle(dir, { [PUBLISH_MANIFEST]: 'IMPOSTOR\n' })).rejects.toThrow()
+  })
+
+  it('does not expose a manifest when publication stops after its full staging file is synced', async () => {
+    const dir = join(root!, 'manifest-staged')
+    await mkdir(dir, { recursive: true })
+    await expect(
+      publishBundle(
+        dir,
+        { 'proposal.json': '{"id":"p1"}\n' },
+        {
+          onCheckpoint(checkpoint) {
+            if (checkpoint === 'manifest-staged') throw new Error('injected manifest crash')
+          },
+        },
+      ),
+    ).rejects.toThrow(/injected manifest crash/)
+    expect(await stat(join(dir, PUBLISH_MANIFEST)).catch(() => null)).toBeNull()
+    expect(await loadPublishedBundle(dir)).toBeNull()
+  })
+
+  it('links only a complete synced manifest at the final commit path', async () => {
+    const dir = join(root!, 'manifest-linked')
+    await mkdir(dir, { recursive: true })
+    await expect(
+      publishBundle(
+        dir,
+        { 'proposal.json': '{"id":"p1"}\n' },
+        {
+          onCheckpoint(checkpoint) {
+            if (checkpoint === 'manifest-linked') throw new Error('injected post-link crash')
+          },
+        },
+      ),
+    ).rejects.toThrow(/injected post-link crash/)
+    expect(await loadPublishedBundle(dir)).toEqual({ 'proposal.json': '{"id":"p1"}\n' })
   })
 })

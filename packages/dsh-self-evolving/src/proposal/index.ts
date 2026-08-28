@@ -33,11 +33,15 @@ export {
   type ArchiveCatalog,
 } from './catalog.js'
 export {
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
   runProposalSandbox,
   normalizeSandboxPath,
   type ProposalSandboxMounts,
   type ProposalSandboxInput,
   type ProposalSandboxResult,
+  type ProposalExportCommitBoundary,
+  type ProposalExportHooks,
 } from './process-sandbox.js'
 export * from './v011-citations.js'
 export * from './v011-materializer.js'

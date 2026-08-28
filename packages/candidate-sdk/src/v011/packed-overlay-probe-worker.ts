@@ -28,6 +28,14 @@ function writeControl(value: unknown): void {
 const nonce = randomBytes(32).toString('hex')
 writeControl({ schemaVersion: 1, phase: 'challenge', nonce })
 
+// The production ACP service is intentionally long lived and, outside its
+// snapshot mode, does not own process shutdown on stdin EOF. This trusted
+// one-shot probe does: after the parent has completed initialize/newSession it
+// closes stdin, and the target exits zero so the namespace supervisor can
+// sample bounded storage and write a complete resource receipt. A cgroup kill
+// would erase that supervisor control record and cannot represent success.
+process.stdin.once('end', () => process.exit(0))
+
 // The production ACP bin awaits app-boot's Loader activation audit at module
 // top level. Import resolution therefore proves the exact packed config tree
 // settled before the parent is allowed to send initialize/session requests.

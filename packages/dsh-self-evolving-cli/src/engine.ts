@@ -24,6 +24,8 @@ export interface BuiltCandidate {
   sourceDigest: string
   capsuleDigest: string
   buildManifestDigest: string
+  /** Digest of the semantically verified local resource evidence, when applicable. */
+  resourceReceiptDigest?: string
   sourceRoot: string
   evidenceRefs: string[]
   capsuleRoot?: string

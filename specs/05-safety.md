@@ -68,10 +68,50 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 ### 5.2 Proposal sandbox
 
 - parent/contracts/evidence 只读，child root 唯一可写；
+- 每次 proposal 启动先进入独立 delegated cgroup v2 domain，再继续执行 untrusted worker；memory/swap、
+  CPU rate/time、PID、block I/O、file-size/open-file 与 writable bytes/inodes 必须使用版本化固定上限；
+- 非 root launcher 必须由可信 service manager 先放入 delegated root 下的 executor child；每个资源域
+  是其 sibling，确保 launcher 只在已委派的公共祖先内迁移进程，不能依赖对 host cgroup root 的写权限；
+- writable root、`/tmp` 与 `/dev/shm` 必须是 size/inode-bounded tmpfs。需要预置 child tree 时由可信
+  supervisor 从只读 seed 复制；target 启动前移除全部 capabilities，退出后先杀净 PID namespace 再导出；
+- sandbox root 与 `/dev` 只读；可信 supervisor 完成 mount 后必须禁用其 private user namespace 下继续
+  创建 nested user namespace，target 不得通过新 user/mount namespace 重新获得 mount capability；
+- untrusted target 必须在 supervisor 下级的独立 PID namespace 中启动，只能看到自身及其后代；即使宿主
+  user namespace 只能映射一个 UID，也不能观察、发信号给 supervisor 或访问其 control FD；
+- 缺少可委派 controller、配额设置失败、收据控制通道异常或资源超限一律 fail closed；不得退回只有
+  wall timeout 的执行路径；
+- 成功不得通过 `cgroup.kill` 合成：target 必须零退出，trusted supervisor 必须先完成最终 storage sample
+  并写出完整 control receipt；admission/resume/audit 必须按冻结 policy、mount、peak、event、exit/signal
+  逐字段验证，不能只验证 receipt digest；
 - no host home、SSH agent、cloud metadata、Docker socket、controller IPC；
 - network 默认仅允许 fixed LLM gateway 和 approved package mirror；build phase no network；
 - trace 文件视为不可信数据，工具输出不能改变 system policy；
 - output exporter follow-no-symlink，并在 sandbox 外重新 canonicalize。
+- proposal resource receipt 必须独立持久化，其 digest 必须进入 materialization receipt；cache/audit 缺失
+  任一侧或语义不一致时不得采用既有 proposal。
+- sandbox 导出的 child/worker output 本身不是完成标记；resource/gateway/diagnostic/worker bytes 必须先进入
+  fsync + manifest-last 的 execution bundle。导出器必须在返回前依次 fsync 每个 child 文件、完整目录树和
+  原子替换的 parent directory；无 commit marker，或虽有 marker 但安装 worker/tree 缺失或漂移的 residue，
+  要隔离后从 immutable parent 重建。provider 请求仅能经 durable idempotency record 重放；cache/audit 还
+  必须读回 materialization CAS 原文。
+- provider idempotency reservation 必须在任何付费 dispatch 前 fsync file 与 parent directory；完成记录使用
+  fsynced temp + atomic rename + directory fsync。bundle manifest 同样先完整 fsync staging，再 no-clobber 发布；
+  最终 audit 读回并重放 stable proposal 的 resource/gateway/idempotency/proposal 全 bundle。
+- gateway audit 必须重算 frozen route hash，并拒绝空 request/error、扩展或畸形 attempt、以及 retry/ambiguity/
+  usage 语义不一致；只验证字符串/hash/array 外形不构成可信收据。stable 与 V011 必须复用同一验证器；
+  每个 logical request id 最终必须成功，只允许 retryable failure 在前，2xx 或 non-retryable row 后不得再有
+  attempt/receipt，success 不得带 error，failure 必须带非空 error。
+- V011 final audit 必须对 active action namespace 中的 execution manifest 与 materialization 做一一 inventory；
+  任一额外 committed execution 或任一缺 execution 的 materialization 都拒绝。`incomplete-executions/` 是显式
+  去权且保留审计的恢复 namespace，不能重新计为 active authority。inventory 与后续 semantic replay 必须复用
+  同一个只含 direct canonical action 的扫描结果；active namespace 内 symlink、hardlink、socket/FIFO/device 或
+  其他 special entry 一律 fail closed，不能被 walker 静默忽略。
+- materialization cache adoption 只接受全程保持 regular single-link 的 inode；外部 hard-link alias 必须触发
+  cache/execution/children 一起隔离。隔离多链接文件时必须把当时 bytes 写入并 fsync 到新 inode 后移除 active
+  name，不能让外部 alias 继续修改 retained evidence；publication staging 的探测或清理错误不得被吞掉。
+- materialization publication 必须持有 directory/staging descriptor 到 cleanup 结束，验证 requested directory
+  与 held dev/inode 相同、final path 与 staged single-link inode/metadata/bytes 相同，fsync held directory 后再次
+  验证。早先 directory fsync 后发生目录替换或 final name 删除仍必须 fail closed。
 
 ### 5.3 Task sandbox
 
@@ -80,6 +120,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - 不挂载 evidence/archive/sealed/controller；
 - process tree/cgroup/network namespace 独立，无 sibling discovery；
 - credential broker 只允许固定 model route，并拒绝任意 URL/model/headers。
+
+Harbor/TB task 的官方 environment resource policy 仍由冻结 benchmark manifest 管理；controller 内的
+proposal、candidate test/build/Loader/packed-overlay 配额不能替代或改写正式 task 配额。
 
 ### 5.4 Verifier
 

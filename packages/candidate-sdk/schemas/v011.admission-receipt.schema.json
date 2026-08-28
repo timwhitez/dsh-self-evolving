@@ -11,6 +11,7 @@
     "buildCandidateId",
     "materializationDigest",
     "capabilityCatalogDigest",
+    "resourceReceiptDigest",
     "stageReceipts",
     "capsuleDigest",
     "admitted"
@@ -22,6 +23,7 @@
     "buildCandidateId": { "type": "string", "pattern": "^c_[a-z2-7]{26}$" },
     "materializationDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "capabilityCatalogDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "resourceReceiptDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "stageReceipts": {
       "type": "object",
       "additionalProperties": false,

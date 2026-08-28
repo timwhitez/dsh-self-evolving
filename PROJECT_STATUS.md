@@ -73,8 +73,88 @@
   nonblocking mode so FIFOs and other special files reject before they can stall admission.
 - Local gates pass format, lint, typecheck, 851 unit tests (+1 platform skip), and 36 no-key E2E tests
   (+4 credential-gated skips), including exact packed-overlay ACP boot, real Harbor ACP, extract-elf smoke and
-  crash/replay paths. Independent review and hosted CI remain required before merge.
+  crash/replay paths. PR #245 passed hosted CI, received independent exact-head approval and was merged; #65 and #37
+  are closed.
 - This is an admission attribution/isolation repair only. It creates no benchmark, improvement, sealed, promotion or
+  release evidence.
+
+## 2026-08-28 local untrusted-execution resource boundary
+
+- Issue #51 identified that Bubblewrap/process-group timeout cleanup did not prevent memory, PID, CPU, I/O or storage
+  exhaustion before timeout and supplied no kernel accounting receipt.
+- Candidate build/tests, Loader probes, the exact packed overlay and proposer now start in fresh delegated cgroup v2
+  domains. Frozen policies apply memory with zero swap, CPU bandwidth/time, PID and block-I/O limits plus rlimits for
+  CPU time, file size, open files and core dumps; teardown uses whole-domain `cgroup.kill`.
+- Every writable path, including `/tmp` and `/dev/shm`, is a size/inode-bounded tmpfs. A trusted supervisor seeds and
+  exports trees with only mount, namespace-quota and capability-drop privileges in its private user namespace;
+  untrusted targets run with an empty capability set below a second private PID namespace and never inherit or see
+  its control FD. Root and `/dev` are read-only, and nested user namespaces are disabled after trusted mount setup.
+  Missing delegation/control or any quota failure is fail closed.
+- Resource receipts record full limits/digest, enforcement, peaks/events and termination cause. Build/admission and
+  proposer evidence retain these receipts. Memory-bomb, fork-bomb, CPU throttle/time and disk-fill E2E tests exercise
+  the kernel boundaries. Non-root CI commands enter an executor child through a minimal privileged launcher, then
+  drop back to the runner UID; resource domains are siblings under the delegated root.
+- Independent review of commit `d3604d9` correctly blocked merge: packed-overlay admission had accepted a killed
+  `CONTROL_PROTOCOL_FAILURE` receipt, resume/audit only checked its digest, and proposer materialization did not bind
+  its resource receipt. The repaired probe now closes ACP input through a trusted one-shot zero-exit path so the
+  supervisor records peaks/control before teardown. A shared semantic validator requires exact policy/mounts,
+  complete bounded metrics, zero limit events and `COMPLETED`/exit 0/no signal at admission, resume and audit.
+  Proposer receipts are separately persisted and their digest is required by materialization/cache/audit.
+- A later independent review of `a88a6f1` found that capability removal alone did not isolate a same-UID target from
+  the trusted Node supervisor. The repaired supervisor launches the target in a private descendant PID namespace;
+  the disk-fill E2E proves the target sees only PID 1/parent 0, and semantic receipt replay now requires this boundary.
+- The same review found crash windows around proposal output/receipt publication, cache/CAS replay and candidate
+  staging. Proposal execution now commits worker/resource/gateway/diagnostic bytes as one manifest-last bundle;
+  incomplete exports are quarantined and rebuilt while durable gateway ids prevent duplicate dispatch. Cache/build/
+  audit require an exact wrapper plus materialization/analysis CAS bytes. Baseline and generated staging use durable
+  claims, clear them before rename, and fsync the publication parent.
+- Exact-head review of `7812f2e` found one further stable-proposer recovery gap: a crash after any pre-manifest bundle
+  entry left a no-clobber final path that made retry permanently fail. Stable proposal publication now keeps durable
+  gateway request records outside the commit directory, quarantines every manifest-less publication as one directory,
+  and retries from clean final paths while replaying the paid request. Regression tests cover all four entry boundaries.
+- Exact-head review of `06c1218` then found that gateway records and first-use parents were not fsync-durable, the final
+  manifest could tear because it was written directly, and stable audit did not read resource bundles. Reservations
+  now fsync file + directory before paid dispatch; completion uses fsynced temp + rename + directory sync; manifests
+  use fsynced staging + no-clobber link. Stable audit replays exact bundle inventory, proposal/journal/idempotency,
+  gateway shape and complete resource semantics. Fault injection covers every reservation/completion/manifest boundary.
+- Exact-head review of `fb09740` found stable audit still accepted an empty request id, malformed attempt rows, an empty
+  error and any syntactically valid route hash. The audit now requires the exact `llm-<sha256>` request identity, a
+  non-empty exact attempt schema with coherent retry/ambiguity flags and usage, non-empty errors, and the hash of the
+  frozen provider/endpoint/model/reasoning/max-token route.
+- Exact-head review of `13d4976` found receipt-level terminal states were still unchecked and V011 accepted arbitrary
+  gateway arrays. One shared producer-owned validator now requires every logical request id to end in exactly one
+  successful terminal receipt, permits only retryable failures before it, forbids attempts/receipts after success or
+  non-retryable failure, binds same-id request bytes, and runs in both stable and V011 load/binding/final-audit paths.
+- Exact-head review of `e7d1bd8` then found V011 final audit replayed execution only for the three retained generations,
+  not every completed proposal attempt. Final audit now binds every materialization to its exact journal completion and
+  replays its worker/resource/gateway execution, so a later build rejection cannot exempt that paid proposal evidence.
+- Exact-head review of `aeaea55` found an extra manifest-committed V011 execution could still sit outside the
+  materialization inventory, and child export did not fsync its files/tree/parent rename boundaries before execution
+  publication. Final audit now requires a one-to-one active manifest/materialization inventory. Export publication
+  fsyncs all file and directory data before each parent-durable replacement boundary; recovery quarantines a committed
+  execution together with an absent or digest-drifted installed tree, plus interrupted random export/backup directories,
+  and replays from immutable input. Quarantined history remains retained evidence but is explicitly outside the active
+  authority namespace.
+- Exact-head review of `4224a08` found semantic replay still rescanned quarantined materializations after inventory,
+  active symlink/special entries were silently ignored, and a present/torn materialization cache bypassed recovery.
+  One canonical direct-action scanner now drives inventory and replay, never traverses quarantine, and rejects active
+  symlink/hardlink/special entries. Materialization publication is fsynced staging + no-clobber link + directory fsync;
+  cache validation now precedes adoption and quarantines cache/execution/children together on any parse, CAS, worker or
+  tree mismatch while preserving durable gateway requests for replay.
+- Exact-head review of `38eb413` found the publisher suppressed an inaccessible-staging cleanup error and recovery could
+  adopt a cache inode that retained an external hard-link alias. Cleanup probe failures now fail closed. Active cache
+  authority must be a regular single-link inode before and during adoption; any multi-link cache is de-authorized with
+  its execution/tree, and quarantined bytes are copied into fresh fsynced inodes so external aliases cannot mutate the
+  retained evidence. Durable gateway requests remain outside quarantine for deterministic replay.
+- Exact-head review of `f6a6754` found publication could still report success if the action directory was replaced or
+  the final authority name was unlinked after the first directory fsync. Publication now holds both directory and
+  staging descriptors, verifies directory dev/inode plus exact final single-link inode/metadata/bytes after cleanup,
+  fsyncs the held directory, and repeats the authority checks before returning.
+- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 119 files /
+  912 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped. This
+  includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
+  crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
+- This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or
   release evidence.
 
 > **v0.2 release accepted:** live product, package, CLI, Cordis service, protocol/MIME and release identities are

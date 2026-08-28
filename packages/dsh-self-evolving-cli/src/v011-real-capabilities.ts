@@ -7,7 +7,6 @@ import {
   open,
   readFile,
   readdir,
-  rename,
   rm,
   stat,
   writeFile,
@@ -15,8 +14,11 @@ import {
 import { basename, dirname, join } from 'node:path'
 import {
   admitV011Candidate,
+  assertCompletedResourceDomainReceipt,
   assertV011,
   buildCandidate,
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
   canonicalizeV011Tree,
   canonicalV011,
   digestV011,
@@ -27,10 +29,14 @@ import {
   snapshotV011Tree,
   V011_PROTOCOL,
   type FrozenCapabilityCatalog,
+  type ResourceDomainReceipt,
 } from '@dsh-self-evolving/candidate-sdk'
 import {
+  atomicRenameWithDirSync,
   materializeProposerExport,
   materializeV011Proposal,
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
   publishBytes,
   readControllerStatus,
   recoverV011OutcomeDerivation,
@@ -45,8 +51,8 @@ import {
   startProposalGateway,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
-import { claimStagingDir } from './build-claim.js'
-import type { V011DemoConfig } from './config.js'
+import { claimStagingDir, clearBuildIntent, publishClaimedStagingDir } from './build-claim.js'
+import { projectProposalGatewayRoute, type V011DemoConfig } from './config.js'
 import type {
   BuiltCandidate,
   StableBuildInput,
@@ -66,6 +72,16 @@ import {
   createRealEvaluationProvider,
   selectFailureSeekingObservedTasks,
 } from './real-capabilities.js'
+import { verifyV011MaterializationAuthority } from './v011-materialization-authority.js'
+import {
+  assertV011ProposalExecutionBinding,
+  loadBoundV011ProposalExecution,
+  loadV011ProposalExecution,
+  publishV011MaterializationCache,
+  publishV011ProposalExecution,
+  recoverV011ProposalCache,
+  type V011ProposalExecution,
+} from './v011-proposal-execution.js'
 
 const V1_SOURCE_FILES = [
   'src/index.ts',
@@ -88,6 +104,35 @@ const SCHEMAS = [
 
 function sha(bytes: string | Uint8Array): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}
+
+function assertProposalResourceReceipt(value: unknown): ResourceDomainReceipt {
+  return assertCompletedResourceDomainReceipt(value, {
+    policy: PROPOSAL_RESOURCE_POLICY_V1,
+    writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
+    label: 'v0.1.1 proposal resource receipt',
+  })
+}
+
+function assertProposalRuntimeBuildReceipt(value: unknown): void {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(',') !== 'builds,schemaVersion' ||
+    (value as { schemaVersion?: unknown }).schemaVersion !== 1 ||
+    !Array.isArray((value as { builds?: unknown }).builds) ||
+    (value as { builds: unknown[] }).builds.length !== 2
+  ) {
+    throw new Error('v0.1.1 proposer runtime: invalid build resource envelope')
+  }
+  for (const [index, receipt] of (value as { builds: unknown[] }).builds.entries()) {
+    assertCompletedResourceDomainReceipt(receipt, {
+      policy: CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+      writableMounts: CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
+      label: `v0.1.1 proposer runtime build[${index}]`,
+    })
+  }
 }
 
 function diagnosticTail(message: string, maxBytes = 8192): string {
@@ -123,6 +168,12 @@ async function writeExclusive(path: string, bytes: string, mode = 0o600): Promis
     await file.sync()
   } finally {
     await file.close()
+  }
+  const directory = await open(dirname(path), 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
   }
 }
 
@@ -410,70 +461,87 @@ async function prepareBaseline(
   if ((await stat(root).catch(() => null)) !== null)
     throw new Error('v0.1.1 baseline: incomplete prior directory')
   const staging = `${root}.staging`
-  const tree = join(staging, 'tree')
-  await copyBaselineTree(config, tree)
-  const v1Root = join(config.repoRoot, 'packages', 'candidate-baseline')
-  const v1 = await buildCandidate({
-    sourceRoot: v1Root,
-    sourceFiles: V1_SOURCE_FILES,
-    tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
-  })
-  const v011Archive = await canonicalizeV011Tree(await snapshotV011Tree(tree))
-  const migration = {
-    schemaVersion: 1,
-    protocol: V011_PROTOCOL,
-    v01ReleaseCommit: '796201dfe11d1ccf66ef2d6226a4e06cfa27d0b4',
-    v01SourceDigest: `sha256:${v1.sourceHash}`,
-    v011SourceDigest: `sha256:${v011Archive.hash}`,
-    mapping: 'BEHAVIOR_BYTES_PRESERVED_IDENTITY_FIELDS_REMOVED',
-    inheritedResultsPolicy: 'none',
-  }
-  await assertV011('migration-receipt', migration)
-  await writeFile(join(staging, 'migration-receipt.json'), canonicalV011(migration) + '\n', {
-    mode: 0o600,
-  })
-  const admission = await admitV011Candidate({
-    sourceRoot: tree,
-    toolchainRoot: config.repoRoot,
-    tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
-    materializationDigest: digestV011(migration),
-    capabilityCatalogDigest: catalog.digest,
-    capsuleOutDir: join(staging, 'capsule'),
-    runtimeClosure: solverRuntime(config),
-    runnerOverlay: solverOverlay(config),
-    runnerFiles: { 'credential-launcher.sh': credentialLauncher },
-    provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
-    sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
-  })
-  if (admission.buildReceipt.runtimePackageName === undefined) {
-    throw new Error('v0.1.1 baseline: runtime package identity missing')
-  }
-  await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
-  const built: BuiltCandidate = {
-    ...v011BuiltIdentity(admission.receipt),
-    capsuleDigest: admission.receipt.capsuleDigest,
-    buildManifestDigest: digestV011(admission.receipt),
-    sourceRoot: join(root, 'tree'),
-    evidenceRefs: [],
-    capsuleRoot: join(root, 'capsule'),
-    runtimePackageName: admission.buildReceipt.runtimePackageName,
-  }
-  await writeFile(
-    join(staging, 'admission-receipt.json'),
-    canonicalV011(admission.receipt) + '\n',
-    { mode: 0o600 },
-  )
-  await writeFile(join(staging, 'stable-build.json'), JSON.stringify(built, null, 2) + '\n', {
-    mode: 0o600,
-  })
   await mkdir(dirname(root), { recursive: true, mode: 0o700 })
-  await rename(staging, root)
-  return built
+  await claimStagingDir(staging, { identity: `v011-baseline/${catalog.digest}` }, async () =>
+    dirname(root),
+  )
+  try {
+    const tree = join(staging, 'tree')
+    await copyBaselineTree(config, tree)
+    const v1Root = join(config.repoRoot, 'packages', 'candidate-baseline')
+    const v1 = await buildCandidate({
+      sourceRoot: v1Root,
+      sourceFiles: V1_SOURCE_FILES,
+      tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
+    })
+    const v011Archive = await canonicalizeV011Tree(await snapshotV011Tree(tree))
+    const migration = {
+      schemaVersion: 1,
+      protocol: V011_PROTOCOL,
+      v01ReleaseCommit: '796201dfe11d1ccf66ef2d6226a4e06cfa27d0b4',
+      v01SourceDigest: `sha256:${v1.sourceHash}`,
+      v011SourceDigest: `sha256:${v011Archive.hash}`,
+      mapping: 'BEHAVIOR_BYTES_PRESERVED_IDENTITY_FIELDS_REMOVED',
+      inheritedResultsPolicy: 'none',
+    }
+    await assertV011('migration-receipt', migration)
+    await writeExclusive(join(staging, 'migration-receipt.json'), canonicalV011(migration) + '\n')
+    const admission = await admitV011Candidate({
+      sourceRoot: tree,
+      toolchainRoot: config.repoRoot,
+      tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
+      materializationDigest: digestV011(migration),
+      capabilityCatalogDigest: catalog.digest,
+      capsuleOutDir: join(staging, 'capsule'),
+      runtimeClosure: solverRuntime(config),
+      runnerOverlay: solverOverlay(config),
+      runnerFiles: { 'credential-launcher.sh': credentialLauncher },
+      provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
+      sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
+    })
+    if (admission.buildReceipt.runtimePackageName === undefined) {
+      throw new Error('v0.1.1 baseline: runtime package identity missing')
+    }
+    await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
+    const built: BuiltCandidate = {
+      ...v011BuiltIdentity(admission.receipt),
+      capsuleDigest: admission.receipt.capsuleDigest,
+      buildManifestDigest: digestV011(admission.receipt),
+      sourceRoot: join(root, 'tree'),
+      evidenceRefs: [],
+      capsuleRoot: join(root, 'capsule'),
+      runtimePackageName: admission.buildReceipt.runtimePackageName,
+    }
+    await writeExclusive(
+      join(staging, 'admission-receipt.json'),
+      canonicalV011(admission.receipt) + '\n',
+    )
+    await writeExclusive(
+      join(staging, 'resource-receipt.json'),
+      canonicalV011(admission.resourceReceipt) + '\n',
+    )
+    await writeExclusive(join(staging, 'stable-build.json'), JSON.stringify(built, null, 2) + '\n')
+    await publishClaimedStagingDir(staging, root)
+    return built
+  } catch (error) {
+    await clearBuildIntent(staging).catch(() => undefined)
+    throw error
+  }
 }
 
 async function prepareProposalBaseRuntime(config: V011DemoConfig): Promise<string> {
   const root = join(config.stateDir, 'trusted-runtime', 'v011-proposer-base')
-  if ((await stat(join(root, 'node')).catch(() => null))?.isFile()) return root
+  const existingNode = (await stat(join(root, 'node')).catch(() => null))?.isFile() === true
+  const existingReceipt =
+    (await stat(join(root, 'build-resource.json')).catch(() => null))?.isFile() === true
+  if (existingNode && existingReceipt) {
+    const receipt = JSON.parse(await readFile(join(root, 'build-resource.json'), 'utf8'))
+    assertProposalRuntimeBuildReceipt(receipt)
+    return root
+  }
+  if (existingNode || existingReceipt) {
+    throw new Error('v0.1.1 proposer runtime: incomplete resource-bound publication')
+  }
   const staging = await mkdtemp(join(config.stateDir, '.v011-proposer-base-'))
   try {
     const baselineRoot = join(config.repoRoot, 'packages', 'candidate-baseline')
@@ -507,8 +575,16 @@ async function prepareProposalBaseRuntime(config: V011DemoConfig): Promise<strin
         entryBin: 'lib/v011-sandbox-worker.js',
       },
     })
+    const published = join(staging, 'published')
+    await cp(join(capsule, 'runtime'), published, { recursive: true, errorOnExist: true })
+    const buildResource = { schemaVersion: 1, builds: receipt.buildResources }
+    assertProposalRuntimeBuildReceipt(buildResource)
+    await writeExclusive(
+      join(published, 'build-resource.json'),
+      canonicalV011(buildResource) + '\n',
+    )
     await mkdir(dirname(root), { recursive: true, mode: 0o700 })
-    await cp(join(capsule, 'runtime'), root, { recursive: true, errorOnExist: true })
+    await atomicRenameWithDirSync(published, root)
     return root
   } finally {
     await rm(staging, { recursive: true, force: true })
@@ -693,6 +769,7 @@ async function realV011Proposal(
   catalog: FrozenCapabilityCatalog,
   input: StableProposalInput,
 ): Promise<StableProposal> {
+  const proposalRoute = projectProposalGatewayRoute(config)
   const action = join(
     config.stateDir,
     'v011',
@@ -700,9 +777,6 @@ async function realV011Proposal(
     `proposal-${input.generation}-${input.attempt}`,
   )
   const cache = join(action, 'materialization.json')
-  const existing = await readFile(cache, 'utf8').catch(() => null)
-  if (existing !== null)
-    return (JSON.parse(existing) as { stableProposal: StableProposal }).stableProposal
   const exported = await exportForProposal(config, input.generation, input.attempt)
   const requiredParentEvidence = await exactParentEvidenceBinding(config, input, exported.manifest)
   const exportDigest = digestV011(canonicalV011(exported.manifest))
@@ -732,6 +806,36 @@ async function realV011Proposal(
   const contractsInput = join(action, 'input', 'contracts')
   const childrenRoot = join(action, 'children')
   const slot = join(childrenRoot, proposalId)
+  const workerOutput = join(slot, 'worker-output.json')
+  const workerTree = join(slot, 'tree')
+  const cached = await recoverV011ProposalCache({
+    action,
+    childrenRoot,
+    workerOutputPath: workerOutput,
+    workerTreePath: workerTree,
+    materializationPath: cache,
+    route: proposalRoute,
+    async load(existing) {
+      const authority = await verifyV011MaterializationAuthority({
+        store: { root: join(config.stateDir, 'v011', 'object-store') },
+        value: JSON.parse(existing) as unknown,
+        actionRoot: action,
+      })
+      await loadBoundV011ProposalExecution({
+        action,
+        materialization: authority.materialization,
+        route: proposalRoute,
+      })
+      return authority.stableProposal
+    },
+  })
+  if (cached !== null) return cached
+  let execution: V011ProposalExecution | null = await loadV011ProposalExecution({
+    action,
+    route: proposalRoute,
+    workerOutputPath: workerOutput,
+    workerTreePath: workerTree,
+  })
   if ((await stat(slot).catch(() => null)) === null) {
     await mkdir(parentInput, { recursive: true, mode: 0o700 })
     await cp(input.parent.sourceRoot, join(parentInput, 'tree'), { recursive: true })
@@ -769,8 +873,7 @@ async function realV011Proposal(
     await mkdir(slot, { recursive: true, mode: 0o700 })
     await materializeV011ChildSlot(input.parent.sourceRoot, join(slot, 'tree'))
   }
-  const workerOutput = join(slot, 'worker-output.json')
-  if ((await stat(workerOutput).catch(() => null)) === null) {
+  if (execution === null) {
     if (input.parent.capsuleRoot === undefined || input.parent.runtimePackageName === undefined) {
       throw new Error('v0.1.1 proposer: parent capsule runtime identity missing')
     }
@@ -799,12 +902,9 @@ async function realV011Proposal(
     }
     const route = await loadTrustedRoute()
     const sandboxTimeoutMs = 1_800_000
-    const lockedRoute: ProposalGatewayRoute = {
-      provider: 'deepseek',
-      endpoint: route.baseUrl,
-      model: config.model.requested,
-      reasoningEffort: config.model.reasoningEffort,
-      maxTokens: config.model.maxOutputTokens,
+    const lockedRoute: ProposalGatewayRoute = proposalRoute
+    if (route.baseUrl !== lockedRoute.endpoint) {
+      throw new Error('v0.1.1 proposer: trusted route differs from frozen config')
     }
     await writeFile(
       join(contractsInput, 'request.json'),
@@ -834,7 +934,14 @@ async function realV011Proposal(
     let gateway: Awaited<ReturnType<typeof startProposalGateway>> | undefined
     let providerFailure: string | null = null
     const sandboxResultRef: {
-      value: { exitCode: number | null; signal: string | null; stderr: string } | undefined
+      value:
+        | {
+            exitCode: number | null
+            signal: string | null
+            stderr: string
+            resource: Awaited<ReturnType<typeof runProposalSandbox>>['resource']
+          }
+        | undefined
     } = { value: undefined }
     const cleanupErrors: unknown[] = []
     const bodyErrorRef: { value?: unknown } = {}
@@ -883,6 +990,14 @@ async function realV011Proposal(
         exitCode: result.exitCode,
         signal: result.signal,
         stderr: result.stderr,
+        resource: result.resource,
+      }
+      try {
+        assertProposalResourceReceipt(result.resource)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'invalid proposal resource receipt'
+        await retainProposalRejection(action, 'PROPOSAL_SANDBOX_REJECT', message)
+        throw error
       }
       if (result.exitCode !== 0) {
         const message = `v0.1.1 real proposer failed: ${result.stderr}`
@@ -892,36 +1007,51 @@ async function realV011Proposal(
     } catch (error) {
       bodyErrorRef.value = error
     } finally {
-      // Teardown first so the trusted socket never outlives the work; receipt
-      // publication happens independently afterwards.
+      // Teardown first so the trusted socket never outlives the work. A
+      // successful worker output is authority only after one atomic execution
+      // bundle commits every receipt and diagnostic behind its manifest.
       if (gateway !== undefined) {
         await gateway.close().catch((error) => cleanupErrors.push(error))
       }
-      const receiptsBytes = JSON.stringify(gateway?.receipts() ?? [], null, 2) + '\n'
-      await writeExclusive(join(action, 'gateway-receipts.json'), receiptsBytes).catch((error) =>
-        cleanupErrors.push(error),
-      )
-      await writeExclusive(
-        join(action, 'proposal-diagnostic.json'),
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            providerFailure,
-            gatewayReceiptCount: gateway?.receipts().length ?? 0,
-            sandbox:
-              sandboxResultRef.value === undefined
-                ? null
-                : {
-                    exitCode: sandboxResultRef.value.exitCode,
-                    signal: sandboxResultRef.value.signal,
-                    stderrSha256: sha(sandboxResultRef.value.stderr),
-                    stderrTail: diagnosticTail(sandboxResultRef.value.stderr),
-                  },
-          },
-          null,
-          2,
-        ) + '\n',
-      ).catch((error) => cleanupErrors.push(error))
+      const gatewayReceipts = gateway?.receipts() ?? []
+      const diagnostic = {
+        schemaVersion: 1,
+        providerFailure,
+        gatewayReceiptCount: gatewayReceipts.length,
+        sandbox:
+          sandboxResultRef.value === undefined
+            ? null
+            : {
+                exitCode: sandboxResultRef.value.exitCode,
+                signal: sandboxResultRef.value.signal,
+                stderrSha256: sha(sandboxResultRef.value.stderr),
+                stderrTail: diagnosticTail(sandboxResultRef.value.stderr),
+                resource: sandboxResultRef.value.resource,
+              },
+      }
+      if (
+        bodyErrorRef.value === undefined &&
+        cleanupErrors.length === 0 &&
+        sandboxResultRef.value !== undefined
+      ) {
+        await readFile(workerOutput, 'utf8')
+          .then((workerOutputBytes) =>
+            publishV011ProposalExecution({
+              action,
+              workerOutputBytes,
+              resource: sandboxResultRef.value!.resource,
+              gatewayReceipts,
+              diagnostic,
+            }),
+          )
+          .catch((error) => cleanupErrors.push(error))
+      } else {
+        const failureBytes = `${JSON.stringify({ ...diagnostic, gatewayReceipts }, null, 2)}\n`
+        await writeIdempotent(
+          join(action, 'proposal-failures', `${sha(failureBytes).slice('sha256:'.length)}.json`),
+          failureBytes,
+        ).catch((error) => cleanupErrors.push(error))
+      }
       if (previousKey === undefined) delete process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY']
       else process.env['DSH_SELF_EVOLVING_PROVIDER_API_KEY'] = previousKey
     }
@@ -935,8 +1065,21 @@ async function realV011Proposal(
         ? cleanupErrors[0]
         : new Error(String(cleanupErrors[0]))
     }
+    execution = await loadV011ProposalExecution({
+      action,
+      route: proposalRoute,
+      workerOutputPath: workerOutput,
+      workerTreePath: workerTree,
+    })
+    if (execution === null) {
+      throw new Error('v0.1.1 proposal: execution commit missing after successful sandbox')
+    }
   }
-  const worker = JSON.parse(await readFile(workerOutput, 'utf8')) as {
+  if (execution === null) {
+    throw new Error('v0.1.1 proposal: execution commit unavailable')
+  }
+  const proposalResource = execution.resource
+  const worker = execution.worker as unknown as {
     transcript: { assistantText: string; toolTrace: unknown[]; eventCount: number }
     toolCallCount: number
     finishedTreeDigest?: unknown
@@ -969,9 +1112,9 @@ async function realV011Proposal(
       capabilityCatalog: catalog,
       transcript: Buffer.from(worker.transcript.assistantText),
       toolTrace: Buffer.from(JSON.stringify(worker.transcript.toolTrace)),
+      proposerResourceReceiptDigest: digestV011(proposalResource),
       proposerUsage: {
-        gatewayReceipts: JSON.parse(await readFile(join(action, 'gateway-receipts.json'), 'utf8'))
-          .length,
+        gatewayReceipts: execution.gatewayReceipts.length,
         eventCount: worker.transcript.eventCount,
       },
       ancestorClustersRequiringReconciliation:
@@ -1007,11 +1150,18 @@ async function realV011Proposal(
     evidenceRefs: exported.refs.map((ref) => `object:sha256:${ref.digest}`),
     artifactDigest: `sha256:${materialized.receiptRef.digest}`,
   }
-  await writeExclusive(
-    cache,
-    JSON.stringify({ stableProposal, materialization: materialized.receipt }, null, 2) + '\n',
-  )
-  return stableProposal
+  const cacheValue = { stableProposal, materialization: materialized.receipt }
+  assertV011ProposalExecutionBinding(materialized.receipt, execution, proposalRoute)
+  await publishV011MaterializationCache({
+    path: cache,
+    bytes: JSON.stringify(cacheValue, null, 2) + '\n',
+  })
+  const authority = await verifyV011MaterializationAuthority({
+    store,
+    value: cacheValue,
+    actionRoot: action,
+  })
+  return authority.stableProposal
 }
 
 async function realV011BuildUnretained(
@@ -1029,69 +1179,79 @@ async function realV011BuildUnretained(
   if (typeof parsed.slot !== 'string')
     throw new Error('v0.1.1 builder: proposal slot binding missing')
   const staging = `${root}.attempt-${input.attempt}.staging`
+  await mkdir(dirname(root), { recursive: true, mode: 0o700 })
   await claimStagingDir(
     staging,
     { attempt: input.attempt, identity: input.proposal.artifactDigest },
     async () => dirname(root),
   )
-  await mkdir(staging, { recursive: true, mode: 0o700 })
-  await cp(join(parsed.slot, 'tree'), join(staging, 'tree'), { recursive: true })
-  const admission = await admitV011Candidate({
-    sourceRoot: join(staging, 'tree'),
-    toolchainRoot: config.repoRoot,
-    tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
-    materializationDigest: input.proposal.artifactDigest as `sha256:${string}`,
-    capabilityCatalogDigest: catalog.digest,
-    capsuleOutDir: join(staging, 'capsule'),
-    runtimeClosure: solverRuntime(config),
-    runnerOverlay: solverOverlay(config),
-    runnerFiles: { 'credential-launcher.sh': credentialLauncher },
-    provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
-    sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
-  })
-  if (admission.buildReceipt.runtimePackageName === undefined) {
-    throw new Error('v0.1.1 builder: runtime package identity missing')
+  try {
+    await mkdir(staging, { recursive: true, mode: 0o700 })
+    await cp(join(parsed.slot, 'tree'), join(staging, 'tree'), { recursive: true })
+    const admission = await admitV011Candidate({
+      sourceRoot: join(staging, 'tree'),
+      toolchainRoot: config.repoRoot,
+      tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
+      materializationDigest: input.proposal.artifactDigest as `sha256:${string}`,
+      capabilityCatalogDigest: catalog.digest,
+      capsuleOutDir: join(staging, 'capsule'),
+      runtimeClosure: solverRuntime(config),
+      runnerOverlay: solverOverlay(config),
+      runnerFiles: { 'credential-launcher.sh': credentialLauncher },
+      provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
+      sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
+    })
+    if (admission.buildReceipt.runtimePackageName === undefined) {
+      throw new Error('v0.1.1 builder: runtime package identity missing')
+    }
+    await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
+    const actionRoot = join(
+      config.stateDir,
+      'v011',
+      'actions',
+      `proposal-${input.generation}-${input.attempt}`,
+    )
+    const materialization = await verifyV011MaterializationAuthority({
+      store: { root: join(config.stateDir, 'v011', 'object-store') },
+      value: JSON.parse(
+        await readFile(join(actionRoot, 'materialization.json'), 'utf8'),
+      ) as unknown,
+      actionRoot,
+    })
+    if (canonicalV011(materialization.stableProposal) !== canonicalV011(input.proposal)) {
+      throw new Error('v0.1.1 builder: proposal differs from materialization authority')
+    }
+    const analysis = JSON.parse(await readFile(join(parsed.slot, 'analysis.json'), 'utf8')) as {
+      selectedCluster: string
+    }
+    const built: BuiltCandidate = {
+      ...v011BuiltIdentity(admission.receipt),
+      capsuleDigest: admission.receipt.capsuleDigest,
+      buildManifestDigest: digestV011(admission.receipt),
+      sourceRoot: join(root, 'tree'),
+      evidenceRefs: input.proposal.evidenceRefs,
+      capsuleRoot: join(root, 'capsule'),
+      runtimePackageName: admission.buildReceipt.runtimePackageName,
+      proposalDigest: materialization.materialization.proposalDigest,
+      analysisDigest: materialization.materialization.analysisDigest,
+      targetClusterSlug: analysis.selectedCluster,
+      hypothesis: input.proposal.hypothesis,
+    }
+    await writeExclusive(
+      join(staging, 'admission-receipt.json'),
+      canonicalV011(admission.receipt) + '\n',
+    )
+    await writeExclusive(
+      join(staging, 'resource-receipt.json'),
+      canonicalV011(admission.resourceReceipt) + '\n',
+    )
+    await writeExclusive(join(staging, 'stable-build.json'), JSON.stringify(built, null, 2) + '\n')
+    await publishClaimedStagingDir(staging, root)
+    return built
+  } catch (error) {
+    await clearBuildIntent(staging).catch(() => undefined)
+    throw error
   }
-  await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
-  const materialization = JSON.parse(
-    await readFile(
-      join(
-        config.stateDir,
-        'v011',
-        'actions',
-        `proposal-${input.generation}-${input.attempt}`,
-        'materialization.json',
-      ),
-      'utf8',
-    ),
-  ) as { materialization: { proposalDigest: string; analysisDigest: string } }
-  const analysis = JSON.parse(await readFile(join(parsed.slot, 'analysis.json'), 'utf8')) as {
-    selectedCluster: string
-  }
-  const built: BuiltCandidate = {
-    ...v011BuiltIdentity(admission.receipt),
-    capsuleDigest: admission.receipt.capsuleDigest,
-    buildManifestDigest: digestV011(admission.receipt),
-    sourceRoot: join(root, 'tree'),
-    evidenceRefs: input.proposal.evidenceRefs,
-    capsuleRoot: join(root, 'capsule'),
-    runtimePackageName: admission.buildReceipt.runtimePackageName,
-    proposalDigest: materialization.materialization.proposalDigest,
-    analysisDigest: materialization.materialization.analysisDigest,
-    targetClusterSlug: analysis.selectedCluster,
-    hypothesis: input.proposal.hypothesis,
-  }
-  await writeFile(
-    join(staging, 'admission-receipt.json'),
-    canonicalV011(admission.receipt) + '\n',
-    { mode: 0o600 },
-  )
-  await writeFile(join(staging, 'stable-build.json'), JSON.stringify(built, null, 2) + '\n', {
-    mode: 0o600,
-  })
-  await mkdir(dirname(root), { recursive: true, mode: 0o700 })
-  await rename(staging, root)
-  return built
 }
 
 async function realV011Build(

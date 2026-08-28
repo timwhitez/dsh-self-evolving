@@ -1,7 +1,14 @@
 /** Bubblewrap-backed one-shot proposal process sandbox (spec 05 §§5.2, 9). */
-import { spawn } from 'node:child_process'
-import { lstat, readdir, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  spawnResourceBoundSandbox,
+  type ResourceDomainReceipt,
+  type ResourcePolicyV1,
+  type ResourceSandboxFile,
+  type WritableSandboxMount,
+} from '@dsh-self-evolving/candidate-sdk'
 
 export interface ProposalSandboxMounts {
   parent: string
@@ -22,6 +29,20 @@ export interface ProposalSandboxInput {
   maxOutputBytes?: number
   /** Optional fixed trusted gateway Unix socket; the sandbox still has no network. */
   gatewaySocket?: string
+  /** Test-only crash-boundary observer for the trusted export commit. */
+  exportHooks?: ProposalExportHooks
+}
+
+export type ProposalExportCommitBoundary =
+  | 'stage-create-directory-fsync'
+  | 'stage-file-fsync'
+  | 'stage-tree-directory-fsync'
+  | 'original-rename-directory-fsync'
+  | 'install-rename-directory-fsync'
+  | 'backup-remove-directory-fsync'
+
+export interface ProposalExportHooks {
+  afterBoundary?: (boundary: ProposalExportCommitBoundary) => void | Promise<void>
 }
 
 export interface ProposalSandboxResult {
@@ -30,7 +51,42 @@ export interface ProposalSandboxResult {
   stdout: string
   stderr: string
   timedOut: boolean
+  resource: ResourceDomainReceipt
 }
+
+const MiB = 1024 * 1024
+
+export const PROPOSAL_RESOURCE_POLICY_V1: ResourcePolicyV1 = Object.freeze({
+  schemaVersion: 1,
+  policyId: 'proposal-sandbox-v1',
+  memoryMaxBytes: 1536 * MiB,
+  memorySwapMaxBytes: 0,
+  pidsMax: 128,
+  cpuQuotaMicros: 100_000,
+  cpuPeriodMicros: 100_000,
+  cpuTimeSoftSeconds: 600,
+  cpuTimeHardSeconds: 601,
+  fileSizeMaxBytes: 16 * MiB,
+  openFilesMax: 512,
+  ioReadBytesPerSecond: 128 * MiB,
+  ioWriteBytesPerSecond: 64 * MiB,
+  ioReadIops: 8192,
+  ioWriteIops: 4096,
+  writableStorageMaxBytes: 64 * MiB,
+  writableStorageMaxFiles: 2048,
+})
+
+export const PROPOSAL_WRITABLE_MOUNTS_V1 = [
+  { path: '/tmp', maxBytes: 16 * MiB, maxFiles: 512, exportFiles: false },
+  { path: '/dev/shm', maxBytes: 8 * MiB, maxFiles: 256, exportFiles: false },
+  {
+    path: '/work/children',
+    maxBytes: 40 * MiB,
+    maxFiles: 1280,
+    exportFiles: true,
+    seedPath: '/input/children-seed',
+  },
+] satisfies WritableSandboxMount[]
 
 async function assertTreeHasNoSymlink(root: string, label: string): Promise<string> {
   const rootStat = await lstat(root)
@@ -99,6 +155,100 @@ function validateCommand(command: string): void {
   }
 }
 
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function fsyncTreeDirectories(root: string): Promise<void> {
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) await walk(join(directory, entry.name))
+    }
+    await fsyncDirectory(directory)
+  }
+  await walk(root)
+}
+
+async function writeDurableExclusive(
+  path: string,
+  bytes: Uint8Array,
+  hooks: ProposalExportHooks | undefined,
+): Promise<void> {
+  const handle = await open(path, 'wx', 0o600)
+  try {
+    await handle.writeFile(bytes)
+    await handle.sync()
+    await hooks?.afterBoundary?.('stage-file-fsync')
+  } finally {
+    await handle.close()
+  }
+}
+
+async function materializeExport(
+  root: string,
+  files: ResourceSandboxFile[],
+  hooks: ProposalExportHooks | undefined,
+): Promise<void> {
+  const parent = dirname(root)
+  const stage = join(parent, `.${basename(root)}-resource-export-${randomUUID()}`)
+  const backup = join(parent, `.${basename(root)}-resource-backup-${randomUUID()}`)
+  await mkdir(stage, { mode: 0o700 })
+  await fsyncDirectory(parent)
+  await hooks?.afterBoundary?.('stage-create-directory-fsync')
+  let movedOriginal = false
+  let installed = false
+  try {
+    for (const file of files) {
+      if (file.mountPath !== '/work/children') {
+        throw new Error(`proposal sandbox: unexpected exported mount ${file.mountPath}`)
+      }
+      const destination = resolve(stage, file.path)
+      const rel = relative(stage, destination)
+      if (rel.startsWith('..') || isAbsolute(rel)) {
+        throw new Error(`proposal sandbox: exported path escapes childrenRoot: ${file.path}`)
+      }
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+      await writeDurableExclusive(destination, file.bytes, hooks)
+    }
+    // A directory rename cannot make unsynced descendants durable. Flush the
+    // complete staged tree bottom-up before publishing its root name.
+    await fsyncTreeDirectories(stage)
+    await hooks?.afterBoundary?.('stage-tree-directory-fsync')
+    await rename(root, backup)
+    movedOriginal = true
+    await fsyncDirectory(parent)
+    await hooks?.afterBoundary?.('original-rename-directory-fsync')
+    await rename(stage, root)
+    installed = true
+    await fsyncDirectory(parent)
+    await hooks?.afterBoundary?.('install-rename-directory-fsync')
+    await rm(backup, { recursive: true, force: true })
+    movedOriginal = false
+    await fsyncDirectory(parent)
+    await hooks?.afterBoundary?.('backup-remove-directory-fsync')
+  } catch (error) {
+    if (movedOriginal) {
+      // This is runtime rollback, not the crash-safety boundary. If rollback
+      // itself fails the caller still fails closed and the next replay treats
+      // the non-authoritative tree as residue.
+      if (installed) await rm(root, { recursive: true, force: true }).catch(() => undefined)
+      await rename(backup, root).catch(() => undefined)
+      await fsyncDirectory(parent).catch(() => undefined)
+    }
+    throw error
+  } finally {
+    if ((await stat(stage).catch(() => null)) !== null) {
+      await rm(stage, { recursive: true, force: true }).catch(() => undefined)
+      await fsyncDirectory(parent).catch(() => undefined)
+    }
+  }
+}
+
 export async function runProposalSandbox(
   input: ProposalSandboxInput,
 ): Promise<ProposalSandboxResult> {
@@ -141,8 +291,6 @@ export async function runProposalSandbox(
     '--unshare-all',
     '--hostname',
     'dsh-self-evolving-proposer',
-    '--cap-drop',
-    'ALL',
     '--proc',
     '/proc',
     '--dev',
@@ -179,12 +327,14 @@ export async function runProposalSandbox(
     '--ro-bind',
     resolved.contracts,
     '/input/contracts',
+    '--ro-bind',
+    resolved.childrenRoot,
+    '/input/children-seed',
     '--dir',
     '/work',
-    '--bind',
-    resolved.childrenRoot,
+    '--dir',
     '/work/children',
-    '--tmpfs',
+    '--dir',
     '/tmp',
     '--dir',
     '/run',
@@ -199,12 +349,11 @@ export async function runProposalSandbox(
     '/work/children',
   ]
   let sandboxCommand = input.command
-  if (input.command === '/usr/bin/node') {
-    const hostNode = await realpath(process.execPath)
-    if (hostNode !== '/usr/bin/node') {
-      args.push('--dir', '/sandbox-bin', '--ro-bind', hostNode, '/sandbox-bin/node')
-      sandboxCommand = '/sandbox-bin/node'
-    }
+  const hostNode = await realpath(process.execPath)
+  const needsHostNode = runtimeRoot === undefined || input.command === '/usr/bin/node'
+  if (needsHostNode && hostNode !== '/usr/bin/node') {
+    args.push('--dir', '/sandbox-bin', '--ro-bind', hostNode, '/sandbox-bin/node')
+    if (input.command === '/usr/bin/node') sandboxCommand = '/sandbox-bin/node'
   }
   if (input.gatewaySocket !== undefined) {
     const socket = await realpath(input.gatewaySocket)
@@ -219,62 +368,58 @@ export async function runProposalSandbox(
       args.push('--ro-bind', runtimeModules, '/node_modules')
     }
   }
-  args.push('--', sandboxCommand, ...input.args)
+  const supervisorNode =
+    runtimeRoot === undefined
+      ? hostNode === '/usr/bin/node'
+        ? '/usr/bin/node'
+        : '/sandbox-bin/node'
+      : '/runtime/node'
 
   const maxOutputBytes = input.maxOutputBytes ?? 1024 * 1024
-  const result = await new Promise<ProposalSandboxResult>((done, reject) => {
-    const child = spawn('/usr/bin/bwrap', args, {
-      detached: true,
-      env: { PATH: '/usr/bin:/bin' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    let outputBytes = 0
-    let timedOut = false
-    let settled = false
-    const killGroup = () => {
-      if (child.pid === undefined) return
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-      }
-    }
-    const timer = setTimeout(() => {
-      timedOut = true
-      killGroup()
-    }, input.timeoutMs)
-    const collect = (target: Buffer[]) => (chunk: Buffer) => {
-      outputBytes += chunk.byteLength
-      if (outputBytes > maxOutputBytes) {
-        timedOut = true
-        killGroup()
-        return
-      }
-      target.push(chunk)
-    }
-    child.stdout.on('data', collect(stdout))
-    child.stderr.on('data', collect(stderr))
-    child.once('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(error)
-    })
-    child.once('exit', (exitCode, signal) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      done({
-        exitCode,
-        signal,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-        timedOut,
-      })
-    })
+  const sandbox = await spawnResourceBoundSandbox({
+    bwrapArgs: args,
+    sandboxNode: supervisorNode,
+    targetCommand: sandboxCommand,
+    targetArgs: input.args,
+    mounts: PROPOSAL_WRITABLE_MOUNTS_V1,
+    policy: PROPOSAL_RESOURCE_POLICY_V1,
   })
+  sandbox.child.stdin.destroy()
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  let outputBytes = 0
+  const collect = (target: Buffer[]) => (chunk: Buffer) => {
+    outputBytes += chunk.byteLength
+    if (outputBytes > maxOutputBytes) void sandbox.kill('OUTPUT_LIMIT')
+    else target.push(chunk)
+  }
+  sandbox.child.stdout.on('data', collect(stdout))
+  sandbox.child.stderr.on('data', collect(stderr))
+  const timer = setTimeout(() => void sandbox.kill('WALL_TIME_LIMIT'), input.timeoutMs)
+  let sandboxResult
+  try {
+    sandboxResult = await sandbox.finish()
+  } finally {
+    clearTimeout(timer)
+  }
+  const completed = sandboxResult.resource.terminationCause === 'COMPLETED'
+  if (completed)
+    await materializeExport(resolved.childrenRoot, sandboxResult.files, input.exportHooks)
+  const result: ProposalSandboxResult = {
+    exitCode: completed ? sandboxResult.exitCode : null,
+    signal: sandboxResult.signal,
+    stdout: Buffer.concat(stdout).toString('utf8'),
+    stderr: Buffer.concat(stderr).toString('utf8'),
+    timedOut: ['WALL_TIME_LIMIT', 'OUTPUT_LIMIT'].includes(sandboxResult.resource.terminationCause),
+    resource: sandboxResult.resource,
+  }
+  if (
+    ['CONTROL_PROTOCOL_FAILURE', 'LAUNCH_FAILURE'].includes(sandboxResult.resource.terminationCause)
+  ) {
+    throw new Error(
+      `proposal sandbox: trusted export failed: ${result.stderr}\nresource=${JSON.stringify(result.resource)}`,
+    )
+  }
 
   // Re-canonicalize outside the sandbox and reject link/special-file output.
   await assertTreeHasNoSymlink(resolved.childrenRoot, 'childrenRoot output')

@@ -223,6 +223,51 @@ build manifest、compiled bundle、capsule、SBOM、scan/unit/Loader/unload/mock
 每个 evaluation ref 至少指向：request/Harbor config、external job ID、逐 trial config/result、ACP events/
 summary、ATIF、DSH session log、verifier logs、resource/process/network audit、usage/cost、normalizer receipt。
 
+每个本地 untrusted execution 的 resource receipt 至少绑定版本化 policy id 与 digest、完整 limits、
+cgroup/rlimit/writable-mount enforcement、memory/PID/CPU/I/O/storage peak 与 event counters、exit/signal 以及
+唯一 termination cause。receipt 缺失或控制通道损坏不能解释为正常完成；成功 publication 必须把 receipt
+与 proposal/build/admission artifact 一起内容绑定，失败路径也必须保留可审计诊断。
+`sandbox` enforcement 还必须明确记录 target 位于 supervisor 下级私有 PID namespace；capability drop
+不能替代该隔离，因为单 UID user namespace 内的同 UID target 仍可能影响可信 supervisor/control channel。
+成功收据还必须由 verifier 重放完整结构与语义：冻结 policy/mount 精确相等，storage peaks 非空且不越界，
+limit events 为零，termination 为 `COMPLETED`、exit 为 0 且 signal 为空。仅重算 digest 或 candidate id
+不足以恢复/审计成功。长期运行服务的 one-shot probe 必须走可信正常停止协议，让 supervisor 先发布
+control receipt；主动杀整个 cgroup 只能记录失败。proposal 的 resource receipt digest 是 materialization
+receipt 的 required 顶层字段，cache 和正式 audit 必须同时验证 receipt bytes、语义与 digest binding。
+proposal execution 使用 manifest-last commit：manifest 精确绑定 worker output、resource receipt、gateway
+receipts 和 diagnostic。child export 后但 manifest 前的任何崩溃都只能留下 quarantined residue，不能成为
+resume authority。导出文件与 staging 目录树必须先 fsync，原 tree → backup、staging → active 和 backup
+删除的每个 rename/remove 边界都必须 fsync parent；只有随后才可提交 execution manifest。已提交 manifest
+若与安装 worker/tree 缺失或 digest 漂移，必须把两侧一起移入 `incomplete-executions/` 后从 immutable parent
+重放；rename 中断留下的随机 staging/backup 目录也必须移入同一去权 namespace，不能永久卡住 action 或
+形成隐形 active tree。materialization cache 只能把完整 fsynced staging inode 以 no-clobber link 发布，随后
+fsync action directory；不得直接在最终 authority path 写入。cache 已存在但 JSON/CAS/execution/worker/tree
+任一侧损坏时，必须在 cache adoption 前把 cache、execution 与 child 一起隔离，同时保留 durable gateway
+request store 供确定性重放。active cache 在 adoption 全程必须是 regular single-link inode；存在外部 hard-link
+alias 时不得规范化后采用，隔离留存必须复制为新的 fsynced inode 后删除 active name。staging path 无法检查或
+清理也必须使 publication fail closed。publisher 必须持有 directory/staging descriptor，cleanup 后验证请求目录
+仍是同一 dev/inode、final path 仍是 staged 的 stable single-link inode 且 bytes 未变，再 fsync held directory 并
+重复验证；目录替换或 final name 删除必须失败。materialization wrapper 必须无扩展字段，并与 content-addressed receipt/analysis bytes、
+stable proposal artifact digest 交叉验证。candidate staging claim 在最终 rename 前清除且 fsync；rename 后
+fsync parent directory，正式 candidate root 不得携带 live claim marker。
+稳定 proposer 的 proposal/resource/gateway/idempotency bundle 服从同一规则：manifest 必须先在 staging
+完整写入并 fsync，再以 no-clobber link 发布并 fsync parent；不得直接写最终 marker。provider request 的
+pending record 必须在调用 provider 前完成 file + directory fsync，completion 必须用 fsynced temp + rename +
+directory fsync。durable request store 的首次父目录也必须持久化。正式 audit 必须读回 bundle 的精确 inventory、
+proposal/journal/idempotency binding 与 resource receipt 完整语义，不能只数 proposal event 或相信 digest。
+gateway receipt 还必须把 route hash 重新绑定到冻结 provider/endpoint/model/reasoning/max-token tuple，并逐字段
+验证非空 request identity、transport attempt index/status/retry/ambiguity/usage/response id 与非空 error；合法
+hash 格式、任意数组或空字符串都不是 authority。完成 proposal 的每个 request id 必须具有成功终态；仅
+retryable failure 可被后续 receipt 接续，2xx/non-retryable 终态后不得出现额外 attempt/receipt。该规则必须
+同时在 stable bundle audit 与 V011 execution load/binding/final audit 重放，不能仅绑定 receipt count。
+V011 final audit 必须先对 active action namespace 中的 manifest-committed execution 与 materialization 做严格
+一一 inventory，再枚举每一个 `proposal.completed` action 并重放其 materialization、resource、gateway、
+worker-output/tree 与 journal binding；额外 committed execution、缺 execution 的 materialization、后续 build
+rejection 或未进入最终三代都不能逃过审计。`incomplete-executions/` 下的留存 bytes 已显式去权，不属于 active
+inventory，但必须继续作为 crash/corruption evidence 保留。inventory 和 semantic replay 必须来自同一份
+direct-action scan；quarantine subtree 不得被第二次递归选中，active symlink/hardlink/special entry 必须产生明确
+拒绝原因。
+
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。
 

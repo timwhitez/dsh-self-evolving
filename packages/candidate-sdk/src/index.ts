@@ -42,10 +42,34 @@ export {
 
 export {
   buildCandidate,
+  CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
   type BuildInput,
   type BuildReceipt,
   type BuildArtifactFile,
 } from './builder-sandbox.js'
+
+export {
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  CANDIDATE_TEST_RESOURCE_POLICY_V1,
+  CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+  assertCompletedResourceDomainReceipt,
+  resourcePolicyDigest,
+  validateResourcePolicy,
+  type CompletedResourceReceiptExpectation,
+  type ResourceDomainReceipt,
+  type ResourceEvents,
+  type ResourcePolicyV1,
+  type ResourceTerminationCause,
+  type ResourceUsage,
+} from './resource-domain.js'
+
+export {
+  spawnResourceBoundSandbox,
+  type ResourceSandboxFile,
+  type ResourceSandboxProcess,
+  type ResourceSandboxResult,
+  type WritableSandboxMount,
+} from './resource-sandbox.js'
 
 export { packCapsule, type CapsuleInput, type CapsuleOutput } from './capsule.js'
 export * from './v011/index.js'

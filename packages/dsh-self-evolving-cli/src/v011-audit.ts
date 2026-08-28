@@ -1,15 +1,20 @@
 import { createHash } from 'node:crypto'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, readFile, readdir, stat } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
   readAll,
   readControllerStatus,
   type V011Analysis,
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
 import {
+  assertCompletedResourceDomainReceipt,
+  assertV011AdmissionResourceReceipt,
   assertV011,
+  canonicalV011,
   digestV011,
   freezeCapabilityCatalog,
   validateV011,
@@ -17,7 +22,12 @@ import {
 } from '@dsh-self-evolving/candidate-sdk'
 import { auditStableRun } from './audit.js'
 import { readV011StableBuild } from './v011-identity.js'
-import type { V011DemoConfig } from './config.js'
+import { projectProposalGatewayRoute, type V011DemoConfig } from './config.js'
+import { verifyV011MaterializationAuthority } from './v011-materialization-authority.js'
+import {
+  loadBoundV011ProposalExecution,
+  type V011ProposalExecution,
+} from './v011-proposal-execution.js'
 
 export interface V011AuditReport {
   accepted: boolean
@@ -39,6 +49,22 @@ async function json(path: string): Promise<unknown | null> {
 
 function sha(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+export function verifyV011ProposalResourceBinding(
+  materialization: { proposerResourceReceiptDigest?: unknown } | null | undefined,
+  resource: unknown,
+): boolean {
+  try {
+    const verified = assertCompletedResourceDomainReceipt(resource, {
+      policy: PROPOSAL_RESOURCE_POLICY_V1,
+      writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
+      label: 'v0.1.1 proposal resource receipt',
+    })
+    return materialization?.proposerResourceReceiptDigest === digestV011(verified)
+  } catch {
+    return false
+  }
 }
 
 interface AuditedStableBuildIdentity {
@@ -115,6 +141,145 @@ async function files(root: string): Promise<string[]> {
   }
   if ((await stat(root).catch(() => null))?.isDirectory()) await walk(root)
   return output.sort()
+}
+
+const V011_EXECUTION_MANIFEST_SUFFIX = `${sep}proposal-execution-v1${sep}publish-manifest.json`
+const V011_MATERIALIZATION_SUFFIX = `${sep}materialization.json`
+const V011_ACTION_NAME = /^proposal-[1-9]\d*-[1-9]\d*$/
+
+export interface V011ActiveActionScan {
+  actionRoots: string[]
+  files: string[]
+  reasons: string[]
+}
+
+/**
+ * Enumerate the active authority namespace exactly once. Recovery history is
+ * an immediate, real `incomplete-executions/` directory beneath an action and
+ * is never traversed. Every other symlink, hardlink, socket, fifo, device or
+ * unknown direct action entry fails closed instead of disappearing from audit.
+ */
+export async function scanV011ActiveActions(actionsRoot: string): Promise<V011ActiveActionScan> {
+  const actionRoots: string[] = []
+  const activeFiles: string[] = []
+  const reasons: string[] = []
+
+  async function walk(directory: string, actionRoot: string): Promise<void> {
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch {
+      reasons.push(`v0.1.1 active action directory is unreadable: ${directory}`)
+      return
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      if (directory === actionRoot && entry.name === 'incomplete-executions') {
+        if (!entry.isDirectory()) {
+          reasons.push(`v0.1.1 quarantine boundary is not a real directory: ${path}`)
+        }
+        continue
+      }
+      if (entry.isDirectory()) {
+        await walk(path, actionRoot)
+        continue
+      }
+      if (entry.isFile()) {
+        const info = await lstat(path).catch(() => null)
+        if (info === null || !info.isFile() || info.nlink !== 1) {
+          reasons.push(`v0.1.1 active action file is missing or hardlinked: ${path}`)
+        } else {
+          activeFiles.push(path)
+        }
+        continue
+      }
+      reasons.push(`v0.1.1 active action contains a symlink or special entry: ${path}`)
+    }
+  }
+
+  const rootInfo = await lstat(actionsRoot).catch(() => null)
+  if (rootInfo === null || !rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    return {
+      actionRoots,
+      files: activeFiles,
+      reasons: [`v0.1.1 active actions root is missing or not a real directory: ${actionsRoot}`],
+    }
+  }
+  let entries
+  try {
+    entries = await readdir(actionsRoot, { withFileTypes: true })
+  } catch {
+    return {
+      actionRoots,
+      files: activeFiles,
+      reasons: [`v0.1.1 active actions root is unreadable: ${actionsRoot}`],
+    }
+  }
+  for (const entry of entries) {
+    const actionRoot = join(actionsRoot, entry.name)
+    if (!entry.isDirectory() || !V011_ACTION_NAME.test(entry.name)) {
+      reasons.push(`v0.1.1 actions root contains a non-canonical action entry: ${actionRoot}`)
+      continue
+    }
+    const info = await lstat(actionRoot).catch(() => null)
+    if (info === null || !info.isDirectory() || info.isSymbolicLink()) {
+      reasons.push(`v0.1.1 action root is missing or not a real directory: ${actionRoot}`)
+      continue
+    }
+    actionRoots.push(actionRoot)
+    await walk(actionRoot, actionRoot)
+  }
+  return {
+    actionRoots: actionRoots.sort(),
+    files: activeFiles.sort(),
+    reasons: reasons.sort(),
+  }
+}
+
+/**
+ * Final audit requires a one-to-one inventory before trusting any individual
+ * receipt. Otherwise an extra manifest-committed paid execution can sit beside
+ * the materialization/event set and evade semantic replay entirely.
+ */
+export function verifyV011ProposalExecutionInventory(input: {
+  actionRoots: string[]
+  actionTreeFiles: string[]
+}): string[] {
+  const reasons: string[] = []
+  const activeActionRoots = new Set(input.actionRoots)
+  const materializationRoots = new Set<string>()
+  const executionRoots = new Set<string>()
+  for (const path of input.actionTreeFiles) {
+    if (path.endsWith(V011_MATERIALIZATION_SUFFIX)) {
+      const root = path.slice(0, -V011_MATERIALIZATION_SUFFIX.length)
+      if (activeActionRoots.has(root) && path === join(root, 'materialization.json')) {
+        materializationRoots.add(root)
+      } else {
+        reasons.push(`v0.1.1 materialization is outside a direct proposal action: ${path}`)
+      }
+    } else if (path.endsWith(V011_EXECUTION_MANIFEST_SUFFIX)) {
+      const root = path.slice(0, -V011_EXECUTION_MANIFEST_SUFFIX.length)
+      if (
+        activeActionRoots.has(root) &&
+        path === join(root, 'proposal-execution-v1', 'publish-manifest.json')
+      ) {
+        executionRoots.add(root)
+      } else {
+        reasons.push(`v0.1.1 execution manifest is outside a direct proposal action: ${path}`)
+      }
+    }
+  }
+  for (const root of executionRoots) {
+    if (!materializationRoots.has(root)) {
+      reasons.push(`committed proposal execution has no materialization: ${root}`)
+    }
+  }
+  for (const root of materializationRoots) {
+    if (!executionRoots.has(root)) {
+      reasons.push(`materialization has no committed proposal execution: ${root}`)
+    }
+  }
+  return reasons
 }
 
 export interface FixtureCrossBinding {
@@ -307,6 +472,7 @@ export async function verifyCapabilityCatalog(
 }
 
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
+  const proposalRoute = projectProposalGatewayRoute(config)
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
   const events = await readAll({
@@ -337,20 +503,73 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
   if (baselineMigration?.inheritedResultsPolicy !== 'none') {
     reasons.push('v0.1 to v0.1.1 migration receipt missing or inherited results')
   }
-  const actionFiles = (await files(join(config.stateDir, 'v011', 'actions'))).filter((path) =>
-    path.endsWith('/materialization.json'),
+  const actionsRoot = join(config.stateDir, 'v011', 'actions')
+  const actionScan = await scanV011ActiveActions(actionsRoot)
+  reasons.push(...actionScan.reasons)
+  reasons.push(
+    ...verifyV011ProposalExecutionInventory({
+      actionRoots: actionScan.actionRoots,
+      actionTreeFiles: actionScan.files,
+    }),
   )
+  const actionFileSet = new Set(actionScan.files)
+  const actionFiles = actionScan.actionRoots
+    .map((root) => join(root, 'materialization.json'))
+    .filter((path) => actionFileSet.has(path))
   if (actionFiles.length < 3)
     reasons.push(`materialization receipt matrix is ${actionFiles.length}/at-least-3`)
-  const materializations = await Promise.all(
-    actionFiles.map(async (path) => ({
-      path,
-      value: (await json(path)) as {
-        stableProposal?: { artifactDigest?: string }
-        materialization?: { proposalDigest?: string; operations?: Array<{ path?: string }> }
-      } | null,
-    })),
-  )
+  const materializations: Array<{
+    path: string
+    actionRoot: string
+    authority: Awaited<ReturnType<typeof verifyV011MaterializationAuthority>>
+    execution: V011ProposalExecution | null
+  }> = []
+  const auditedProposalEvents = new Set<string>()
+  for (const path of actionFiles) {
+    const actionRoot = path.slice(0, -'/materialization.json'.length)
+    try {
+      const authority = await verifyV011MaterializationAuthority({
+        store: { root: join(config.stateDir, 'v011', 'object-store') },
+        value: await json(path),
+        actionRoot,
+      })
+      const identity = /^proposal-(\d+)-(\d+)$/.exec(basename(actionRoot))
+      const eventId = identity === null ? null : `proposal:${identity[1]}:${identity[2]}:completed`
+      const matchingEvents =
+        eventId === null
+          ? []
+          : events.filter(
+              (event) => event.type === 'proposal.completed' && event.eventId === eventId,
+            )
+      if (
+        eventId === null ||
+        matchingEvents.length !== 1 ||
+        canonicalV011(matchingEvents[0]!.payload) !== canonicalV011(authority.stableProposal)
+      ) {
+        reasons.push(`materialization journal binding is invalid: ${path}`)
+      } else {
+        auditedProposalEvents.add(eventId)
+      }
+      let execution: V011ProposalExecution | null = null
+      try {
+        execution = await loadBoundV011ProposalExecution({
+          action: actionRoot,
+          materialization: authority.materialization,
+          route: proposalRoute,
+        })
+      } catch {
+        reasons.push(`materialization proposal execution is invalid: ${path}`)
+      }
+      materializations.push({ path, actionRoot, authority, execution })
+    } catch {
+      reasons.push(`materialization authority is invalid: ${path}`)
+    }
+  }
+  for (const event of events.filter((candidate) => candidate.type === 'proposal.completed')) {
+    if (!auditedProposalEvents.has(event.eventId)) {
+      reasons.push(`proposal completion has no audited materialization execution: ${event.eventId}`)
+    }
+  }
   const generated = []
   let previousCandidateId = baselineIdentity?.candidateId
   for (let generation = 1; generation <= 3; generation += 1) {
@@ -374,24 +593,47 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     const admission = (await json(join(candidateRoot, 'admission-receipt.json'))) as {
       admitted?: unknown
       stageReceipts?: unknown
+      resourceReceiptDigest?: unknown
     } | null
+    const resource = (await json(join(candidateRoot, 'resource-receipt.json'))) as {
+      candidateDigest?: unknown
+    } | null
+    let resourceValid = false
+    if (resource !== null && built !== null) {
+      try {
+        assertV011AdmissionResourceReceipt(resource, built.candidateId)
+        resourceValid = true
+      } catch {
+        resourceValid = false
+      }
+    }
     if (
       built?.proposalDigest === undefined ||
       built.runtimePackageName === undefined ||
       admission?.admitted !== true ||
-      admission.stageReceipts === undefined
+      admission.stageReceipts === undefined ||
+      typeof admission.resourceReceiptDigest !== 'string' ||
+      resource === null ||
+      !resourceValid ||
+      admission.resourceReceiptDigest !== digestV011(resource) ||
+      resource.candidateDigest !== built.candidateId
     ) {
       reasons.push(`generation ${generation} admission binding incomplete`)
       continue
     }
     const materialization = materializations.find(
-      (row) => row.value?.materialization?.proposalDigest === built.proposalDigest,
+      (row) => row.authority.materialization.proposalDigest === built.proposalDigest,
     )
     if (materialization === undefined) {
       reasons.push(`generation ${generation} has no matching materialization`)
       continue
     }
-    const actionRoot = materialization.path.slice(0, -'/materialization.json'.length)
+    const actionRoot = materialization.actionRoot
+    const execution = materialization.execution
+    if (execution === null) {
+      reasons.push(`generation ${generation} proposal resource receipt invalid`)
+      continue
+    }
     const children = join(actionRoot, 'children')
     const slots = await readdir(children).catch(() => [])
     if (slots.length !== 1) {

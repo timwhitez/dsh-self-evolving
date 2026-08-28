@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   chmod,
   cp,
@@ -12,16 +12,29 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { basename, join } from 'node:path'
-import { buildCandidate, packCapsule } from '@dsh-self-evolving/candidate-sdk'
-import { runProposalSandbox, type EvaluationObservation } from '@dsh-self-evolving/core'
+import { basename, dirname, join } from 'node:path'
+import {
+  assertCompletedResourceDomainReceipt,
+  buildCandidate,
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
+  packCapsule,
+  type ResourceDomainReceipt,
+} from '@dsh-self-evolving/candidate-sdk'
+import {
+  atomicRenameWithDirSync,
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
+  runProposalSandbox,
+  type EvaluationObservation,
+} from '@dsh-self-evolving/core'
 import {
   TrustedResponsesAdapter,
   createProposalGatewayLlmHandler,
   startProposalGateway,
   type ProposalGatewayRoute,
 } from '@dsh-self-evolving/proposer'
-import { loadPublishedBundle, PUBLISH_MANIFEST, publishBundle } from './publish.js'
+import { loadPublishedBundle, publishBundle } from './publish.js'
 import { runDoctor } from './doctor.js'
 import type { StableDemoConfig } from './config.js'
 import type {
@@ -33,7 +46,7 @@ import type {
   StableProposalInput,
 } from './engine.js'
 import { evaluationReserveUsd } from './engine.js'
-import { claimStagingDir, clearBuildIntent } from './build-claim.js'
+import { claimStagingDir, clearBuildIntent, publishClaimedStagingDir } from './build-claim.js'
 import { loadTrustedRoute } from './trusted-route.js'
 
 const SOURCE_FILES = [
@@ -78,11 +91,100 @@ async function writeExclusive(path: string, bytes: string): Promise<void> {
   } finally {
     await file.close()
   }
+  const directory = await open(dirname(path), 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
+  }
+}
+
+function assertBuildResourceEnvelope(
+  value: unknown,
+  candidateId?: string,
+): {
+  schemaVersion: 1
+  candidateId?: string
+  builds: [ResourceDomainReceipt, ResourceDomainReceipt]
+} {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !Array.isArray((value as { builds?: unknown }).builds) ||
+    (value as { builds: unknown[] }).builds.length !== 2
+  ) {
+    throw new Error('real resource receipt: invalid build envelope')
+  }
+  const record = value as Record<string, unknown>
+  const expectedKeys =
+    candidateId === undefined
+      ? ['builds', 'schemaVersion']
+      : ['builds', 'candidateId', 'schemaVersion']
+  if (
+    JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys) ||
+    record['schemaVersion'] !== 1 ||
+    (candidateId !== undefined && record['candidateId'] !== candidateId)
+  ) {
+    throw new Error('real resource receipt: build identity/envelope mismatch')
+  }
+  const builds = record['builds'] as unknown[]
+  const verified = builds.map((receipt, index) =>
+    assertCompletedResourceDomainReceipt(receipt, {
+      policy: CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+      writableMounts: CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
+      label: `real build resource[${index}]`,
+    }),
+  ) as [ResourceDomainReceipt, ResourceDomainReceipt]
+  return {
+    schemaVersion: 1,
+    ...(candidateId === undefined ? {} : { candidateId }),
+    builds: verified,
+  }
+}
+
+export function assertProposalResourceReceipt(value: unknown): ResourceDomainReceipt {
+  return assertCompletedResourceDomainReceipt(value, {
+    policy: PROPOSAL_RESOURCE_POLICY_V1,
+    writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
+    label: 'real proposal resource receipt',
+  })
+}
+
+async function writeIdempotent(path: string, bytes: string): Promise<void> {
+  const existing = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (existing !== null) {
+    if (existing !== bytes)
+      throw new Error(`real proposer: conflicting retained evidence at ${path}`)
+    return
+  }
+  try {
+    await writeExclusive(path, bytes)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    if ((await readFile(path, 'utf8')) !== bytes) {
+      throw new Error(`real proposer: conflicting retained evidence at ${path}`, { cause: error })
+    }
+  }
 }
 
 async function prepareProposalRuntime(config: StableDemoConfig): Promise<string> {
   const runtimeRoot = join(config.stateDir, 'trusted-runtime', 'proposer')
-  if ((await stat(join(runtimeRoot, 'node')).catch(() => null))?.isFile()) return runtimeRoot
+  const existingNode = (await stat(join(runtimeRoot, 'node')).catch(() => null))?.isFile() === true
+  const existingReceipt =
+    (await stat(join(runtimeRoot, 'build-resource.json')).catch(() => null))?.isFile() === true
+  if (existingNode && existingReceipt) {
+    assertBuildResourceEnvelope(
+      JSON.parse(await readFile(join(runtimeRoot, 'build-resource.json'), 'utf8')) as unknown,
+    )
+    return runtimeRoot
+  }
+  if (existingNode || existingReceipt) {
+    throw new Error('real proposer runtime: incomplete resource-bound publication')
+  }
   const staging = await mkdtemp(join(config.stateDir, '.proposer-runtime-'))
   try {
     const baselineRoot = join(config.repoRoot, 'packages', 'candidate-baseline')
@@ -113,13 +215,81 @@ async function prepareProposalRuntime(config: StableDemoConfig): Promise<string>
         entryBin: 'lib/sandbox-worker.js',
       },
     })
+    const published = join(staging, 'published')
+    await cp(join(capsuleDir, 'runtime'), published, { recursive: true, errorOnExist: true })
+    const buildResource = { schemaVersion: 1 as const, builds: receipt.buildResources }
+    assertBuildResourceEnvelope(buildResource)
+    await writeExclusive(
+      join(published, 'build-resource.json'),
+      JSON.stringify(buildResource, null, 2) + '\n',
+    )
     await mkdir(join(config.stateDir, 'trusted-runtime'), { recursive: true, mode: 0o700 })
-    await cp(join(capsuleDir, 'runtime'), runtimeRoot, { recursive: true, errorOnExist: true })
+    await atomicRenameWithDirSync(published, runtimeRoot)
     await chmod(runtimeRoot, 0o700)
     return runtimeRoot
   } finally {
     await rm(staging, { recursive: true, force: true })
   }
+}
+
+async function fsyncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * A manifest-less stable proposal directory is a crashed publication, never
+ * authority. Move the entire residue aside before retrying so no final entry
+ * can collide with the next no-clobber publish. The legacy durable gateway
+ * request store is migrated first and kept outside the publication directory:
+ * provider calls can replay without adopting any uncommitted evidence bytes.
+ */
+export async function recoverIncompleteStableProposalPublication(input: {
+  stateDir: string
+  artifactDir: string
+  gatewayStateDir: string
+}): Promise<{ quarantined: boolean; quarantinePath: string | null }> {
+  const artifactInfo = await stat(input.artifactDir).catch(() => null)
+  if (artifactInfo === null) return { quarantined: false, quarantinePath: null }
+  if (!artifactInfo.isDirectory()) {
+    throw new Error(
+      `real proposer: proposal publication path is not a directory: ${input.artifactDir}`,
+    )
+  }
+
+  const legacyGatewayState = join(input.artifactDir, 'gateway-requests')
+  const [legacyInfo, currentInfo] = await Promise.all([
+    stat(legacyGatewayState).catch(() => null),
+    stat(input.gatewayStateDir).catch(() => null),
+  ])
+  if (legacyInfo !== null && currentInfo !== null) {
+    throw new Error('real proposer: conflicting legacy and current durable gateway request stores')
+  }
+  if (legacyInfo !== null) {
+    if (!legacyInfo.isDirectory()) {
+      throw new Error('real proposer: legacy durable gateway request store is not a directory')
+    }
+    await mkdir(dirname(input.gatewayStateDir), { recursive: true, mode: 0o700 })
+    await fsyncDirectory(dirname(input.gatewayStateDir))
+    await fsyncDirectory(input.stateDir)
+    await rename(legacyGatewayState, input.gatewayStateDir)
+    await fsyncDirectory(input.artifactDir)
+    await fsyncDirectory(dirname(input.gatewayStateDir))
+  }
+
+  const quarantineRoot = join(input.stateDir, 'incomplete-proposal-publications')
+  await mkdir(quarantineRoot, { recursive: true, mode: 0o700 })
+  await fsyncDirectory(quarantineRoot)
+  await fsyncDirectory(input.stateDir)
+  const quarantinePath = join(quarantineRoot, `${basename(input.artifactDir)}-${randomUUID()}`)
+  await rename(input.artifactDir, quarantinePath)
+  await fsyncDirectory(dirname(input.artifactDir))
+  await fsyncDirectory(quarantineRoot)
+  return { quarantined: true, quarantinePath }
 }
 
 async function realProposal(
@@ -131,12 +301,25 @@ async function realProposal(
     'artifacts',
     `proposal-${input.generation}-${input.attempt}`,
   )
-  const outputPath = join(artifactDir, 'proposal.json')
+  const gatewayStateDir = join(
+    config.stateDir,
+    'proposal-gateway-requests',
+    `proposal-${input.generation}-${input.attempt}`,
+  )
   // Resume gates on the bundle commit marker, not bare proposal.json: a crash
   // between the proposal write and its receipts used to be adopted as a
   // complete evidenced result (issue #55).
   const published = await loadPublishedBundle(artifactDir)
   if (published !== null) {
+    const expectedFiles = [
+      'gateway-receipts.json',
+      'idempotency-key.json',
+      'proposal.json',
+      'sandbox-resource.json',
+    ]
+    if (JSON.stringify(Object.keys(published).sort()) !== JSON.stringify(expectedFiles)) {
+      throw new Error(`real proposer: published bundle inventory mismatch: ${artifactDir}`)
+    }
     const keyBytes = published['idempotency-key.json']
     if (keyBytes === undefined) {
       throw new Error(
@@ -149,16 +332,14 @@ async function realProposal(
         `real proposer: published proposal binds a different idempotency key: ${artifactDir}`,
       )
     }
+    assertProposalResourceReceipt(JSON.parse(published['sandbox-resource.json']!) as unknown)
     return JSON.parse(published['proposal.json']!) as StableProposal
   }
-  if (
-    (await stat(outputPath).catch(() => null)) !== null ||
-    (await stat(join(artifactDir, PUBLISH_MANIFEST)).catch(() => null)) !== null
-  ) {
-    throw new Error(
-      `real proposer: incomplete prior proposal publication without commit manifest: ${artifactDir}`,
-    )
-  }
+  await recoverIncompleteStableProposalPublication({
+    stateDir: config.stateDir,
+    artifactDir,
+    gatewayStateDir,
+  })
   await mkdir(artifactDir, { recursive: true, mode: 0o700 })
   const runtimeRoot = await prepareProposalRuntime(config)
   const scratch = await mkdtemp(
@@ -221,10 +402,10 @@ async function realProposal(
       route: lockedRoute,
       requestTimeoutMs: sandboxTimeoutMs,
       handle: createProposalGatewayLlmHandler(adapter, lockedRoute),
-      // Stable across restarts: artifactDir is the generation+attempt-addressed
-      // proposal artifact directory, so a resumed run re-enters the same store
-      // and replays instead of re-billing (issue #56).
-      stateDir: join(artifactDir, 'gateway-requests'),
+      // Stable across restarts and outside the manifest-last publication
+      // directory: a resumed generation+attempt can quarantine partial
+      // evidence while reusing the same request records instead of re-billing.
+      stateDir: gatewayStateDir,
     })
     try {
       const result = await runProposalSandbox({
@@ -236,7 +417,12 @@ async function realProposal(
         maxOutputBytes: 2 * 1024 * 1024,
         gatewaySocket: gateway.socketPath,
       })
-      if (result.exitCode !== 0) throw new Error(`real proposer failed: ${result.stderr}`)
+      const resourceBytes = JSON.stringify(result.resource, null, 2) + '\n'
+      if (result.exitCode !== 0) {
+        await writeIdempotent(join(artifactDir, 'failed-sandbox-resource.json'), resourceBytes)
+        throw new Error(`real proposer failed: ${result.stderr}`)
+      }
+      assertProposalResourceReceipt(result.resource)
       const output = JSON.parse(
         await readFile(join(mounts.childrenRoot, 'proposal-output.json'), 'utf8'),
       ) as {
@@ -263,6 +449,7 @@ async function realProposal(
         'proposal.json': JSON.stringify(proposal, null, 2) + '\n',
         'gateway-receipts.json': JSON.stringify(gateway.receipts(), null, 2) + '\n',
         'idempotency-key.json': `${JSON.stringify({ idempotencyKey: input.idempotencyKey }, null, 2)}\n`,
+        'sandbox-resource.json': resourceBytes,
       })
       return proposal
     } finally {
@@ -275,17 +462,33 @@ async function realProposal(
   }
 }
 
+export async function readResourceBoundStableBuild(root: string): Promise<BuiltCandidate | null> {
+  const stableBytes = await readFile(join(root, 'stable-build.json'), 'utf8').catch(() => null)
+  if (stableBytes === null) return null
+  const built = JSON.parse(stableBytes) as BuiltCandidate
+  if (
+    typeof built.candidateId !== 'string' ||
+    typeof built.resourceReceiptDigest !== 'string' ||
+    built.sourceDigest !== built.candidateId
+  ) {
+    throw new Error('real builder: cached build identity is incomplete')
+  }
+  const resource = JSON.parse(await readFile(join(root, 'build-resource.json'), 'utf8')) as unknown
+  assertBuildResourceEnvelope(resource, built.candidateId)
+  if (built.resourceReceiptDigest !== sha256(JSON.stringify(resource))) {
+    throw new Error('real builder: cached resource receipt digest mismatch')
+  }
+  return built
+}
+
 async function realBuild(
   config: StableDemoConfig,
   input: StableBuildInput,
 ): Promise<BuiltCandidate> {
   const candidateRoot = join(config.stateDir, 'candidates', `generation-${input.generation}`)
   const receiptPath = join(candidateRoot, 'stable-build.json')
-  const existing = await readFile(receiptPath, 'utf8').catch(() => null)
-  if (existing !== null) return JSON.parse(existing) as BuiltCandidate
-  if ((await stat(candidateRoot).catch(() => null)) !== null) {
-    throw new Error(`real builder: incomplete prior candidate directory ${candidateRoot}`)
-  }
+  const existing = await readResourceBoundStableBuild(candidateRoot)
+  if (existing !== null) return existing
   const stagingRoot = `${candidateRoot}.attempt-${input.attempt}.staging`
   // Crash-resumable claim: stale residue is quarantined aside, never fatal
   // (issue #71). A candidate root without a parseable receipt is likewise a
@@ -305,69 +508,85 @@ async function realBuild(
     },
     async () => join(config.stateDir, 'candidates'),
   )
-  await mkdir(join(stagingRoot, 'src'), { recursive: true, mode: 0o700 })
-  for (const relative of SOURCE_FILES) {
-    if (relative === 'src/index.ts' || relative === 'tsconfig.json') continue
-    await cp(join(input.parent.sourceRoot, relative), join(stagingRoot, relative))
-  }
-  await writeFile(
-    join(stagingRoot, 'tsconfig.json'),
-    JSON.stringify(
-      {
-        extends: join(config.repoRoot, 'tsconfig.json'),
-        compilerOptions: {
-          outDir: 'lib',
-          rootDir: 'src',
-          composite: true,
-          tsBuildInfoFile: 'lib/.tsbuildinfo',
-          baseUrl: config.repoRoot,
-          paths: {
-            '@deepseek-ai/cordis': ['deepseek-harness/vendor/cordis/lib/types/index.d.ts'],
-            '@deepseek-ai/schemastery': [
-              'deepseek-harness/vendor/schemastery/lib/types/index.d.ts',
-            ],
-            '@deepseek-ai/dsh-system-prompt': [
-              'deepseek-harness/packages/core/system-prompt/lib/types/index.d.ts',
-            ],
+  try {
+    await mkdir(join(stagingRoot, 'src'), { recursive: true, mode: 0o700 })
+    for (const relative of SOURCE_FILES) {
+      if (relative === 'src/index.ts' || relative === 'tsconfig.json') continue
+      await cp(join(input.parent.sourceRoot, relative), join(stagingRoot, relative))
+    }
+    await writeFile(
+      join(stagingRoot, 'tsconfig.json'),
+      JSON.stringify(
+        {
+          extends: join(config.repoRoot, 'tsconfig.json'),
+          compilerOptions: {
+            outDir: 'lib',
+            rootDir: 'src',
+            composite: true,
+            tsBuildInfoFile: 'lib/.tsbuildinfo',
+            baseUrl: config.repoRoot,
+            paths: {
+              '@deepseek-ai/cordis': ['deepseek-harness/vendor/cordis/lib/types/index.d.ts'],
+              '@deepseek-ai/schemastery': [
+                'deepseek-harness/vendor/schemastery/lib/types/index.d.ts',
+              ],
+              '@deepseek-ai/dsh-system-prompt': [
+                'deepseek-harness/packages/core/system-prompt/lib/types/index.d.ts',
+              ],
+            },
           },
+          include: ['src'],
         },
-        include: ['src'],
-      },
-      null,
-      2,
-    ) + '\n',
-  )
-  const parentSource = await readFile(join(input.parent.sourceRoot, 'src', 'index.ts'), 'utf8')
-  await writeFile(join(stagingRoot, 'src', 'index.ts'), parentSource)
-  await applyCandidateSourceDiff(stagingRoot, input.proposal.sourceDiff)
-  const receipt = await buildCandidate({
-    sourceRoot: stagingRoot,
-    sourceFiles: SOURCE_FILES,
-    tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
-  })
-  const identity = {
-    sourceHash: receipt.sourceHash,
-    bundleHash: receipt.bundleHash,
-    capsuleHash: receipt.capsuleHash,
-    proposalDigest: input.proposal.artifactDigest,
-    parentCandidateId: input.parent.candidateId,
+        null,
+        2,
+      ) + '\n',
+    )
+    const parentSource = await readFile(join(input.parent.sourceRoot, 'src', 'index.ts'), 'utf8')
+    await writeFile(join(stagingRoot, 'src', 'index.ts'), parentSource)
+    await applyCandidateSourceDiff(stagingRoot, input.proposal.sourceDiff)
+    const receipt = await buildCandidate({
+      sourceRoot: stagingRoot,
+      sourceFiles: SOURCE_FILES,
+      tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
+    })
+    const resourceReceipt = {
+      schemaVersion: 1,
+      candidateId: `sha256:${receipt.sourceHash}`,
+      builds: receipt.buildResources,
+    }
+    assertBuildResourceEnvelope(resourceReceipt, resourceReceipt.candidateId)
+    const identity = {
+      sourceHash: receipt.sourceHash,
+      bundleHash: receipt.bundleHash,
+      capsuleHash: receipt.capsuleHash,
+      proposalDigest: input.proposal.artifactDigest,
+      parentCandidateId: input.parent.candidateId,
+      resourceReceiptDigest: sha256(JSON.stringify(resourceReceipt)),
+    }
+    const built: BuiltCandidate = {
+      candidateId: `sha256:${receipt.sourceHash}`,
+      sourceDigest: `sha256:${receipt.sourceHash}`,
+      capsuleDigest: `sha256:${receipt.capsuleHash}`,
+      buildManifestDigest: sha256(JSON.stringify(identity)),
+      resourceReceiptDigest: identity.resourceReceiptDigest,
+      sourceRoot: candidateRoot,
+      evidenceRefs: input.proposal.evidenceRefs,
+    }
+    await writeExclusive(
+      join(stagingRoot, 'build-resource.json'),
+      JSON.stringify(resourceReceipt, null, 2) + '\n',
+    )
+    await writeExclusive(
+      join(stagingRoot, 'stable-build.json'),
+      JSON.stringify(built, null, 2) + '\n',
+    )
+    await mkdir(join(config.stateDir, 'candidates'), { recursive: true, mode: 0o700 })
+    await publishClaimedStagingDir(stagingRoot, candidateRoot)
+    return built
+  } catch (error) {
+    await clearBuildIntent(stagingRoot).catch(() => undefined)
+    throw error
   }
-  const built: BuiltCandidate = {
-    candidateId: `sha256:${receipt.sourceHash}`,
-    sourceDigest: `sha256:${receipt.sourceHash}`,
-    capsuleDigest: `sha256:${receipt.capsuleHash}`,
-    buildManifestDigest: sha256(JSON.stringify(identity)),
-    sourceRoot: candidateRoot,
-    evidenceRefs: input.proposal.evidenceRefs,
-  }
-  await writeExclusive(
-    join(stagingRoot, 'stable-build.json'),
-    JSON.stringify(built, null, 2) + '\n',
-  )
-  await clearBuildIntent(stagingRoot)
-  await mkdir(join(config.stateDir, 'candidates'), { recursive: true, mode: 0o700 })
-  await rename(stagingRoot, candidateRoot)
-  return built
 }
 
 export async function applyCandidateSourceDiff(

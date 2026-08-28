@@ -212,6 +212,132 @@ describe('proposal gateway idempotency (issue #56)', () => {
     }
   })
 
+  it('syncs the reservation file and directory before any paid handler dispatch', async () => {
+    const checkpoints: string[] = []
+    let calls = 0
+    const gateway = await startProposalGateway({
+      socketPath: join(root!, 'proposal.sock'),
+      route,
+      stateDir: join(root!, 'gateway-state'),
+      onDurabilityCheckpoint(checkpoint) {
+        checkpoints.push(checkpoint)
+      },
+      handle: async () => {
+        calls += 1
+        expect(checkpoints.at(-1)).toBe('reservation-directory-synced')
+        return { value: 'durable' }
+      },
+    })
+    try {
+      const response = await gateway.request(envelope('req-durable-order', { a: 1 }))
+      expect(response.ok).toBe(true)
+      expect(calls).toBe(1)
+      expect(checkpoints).toEqual([
+        'reservation-file-synced',
+        'reservation-directory-synced',
+        'completion-file-synced',
+        'completion-renamed',
+        'completion-directory-synced',
+      ])
+    } finally {
+      await gateway.close()
+    }
+  })
+
+  it.each(['reservation-file-synced', 'reservation-directory-synced'] as const)(
+    'never dispatches after a crash injected at %s',
+    async (injectedCheckpoint) => {
+      const stateDir = join(root!, 'gateway-state')
+      let calls = 0
+      const first = await startProposalGateway({
+        socketPath: join(root!, 'proposal.sock'),
+        route,
+        stateDir,
+        onDurabilityCheckpoint(checkpoint) {
+          if (checkpoint === injectedCheckpoint) {
+            throw new Error(`injected host crash at ${checkpoint}`)
+          }
+        },
+        handle: async () => {
+          calls += 1
+          return { value: 'must-not-run' }
+        },
+      })
+      await expect(first.request(envelope(`req-${injectedCheckpoint}`, { a: 1 }))).rejects.toThrow(
+        /injected host crash/,
+      )
+      await first.close()
+      expect(calls).toBe(0)
+
+      const restarted = await startProposalGateway({
+        socketPath: join(root!, 'proposal.sock'),
+        route,
+        stateDir,
+        handle: async () => {
+          calls += 1
+          return { value: 'duplicate' }
+        },
+      })
+      try {
+        const response = await restarted.request(envelope(`req-${injectedCheckpoint}`, { a: 1 }))
+        expect(response.ok).toBe(false)
+        if (!response.ok) {
+          expect(response.error).toBe('durable request pending from an interrupted dispatch')
+        }
+        expect(calls).toBe(0)
+      } finally {
+        await restarted.close()
+      }
+    },
+  )
+
+  it.each([
+    ['completion-file-synced', false],
+    ['completion-renamed', true],
+    ['completion-directory-synced', true],
+  ] as const)(
+    'never repeats a paid call after caller loss at %s',
+    async (injectedCheckpoint, expectReplay) => {
+      const stateDir = join(root!, 'gateway-state')
+      let calls = 0
+      const first = await startProposalGateway({
+        socketPath: join(root!, 'proposal.sock'),
+        route,
+        stateDir,
+        onDurabilityCheckpoint(checkpoint) {
+          if (checkpoint === injectedCheckpoint) {
+            throw new Error(`injected caller loss at ${checkpoint}`)
+          }
+        },
+        handle: async () => {
+          calls += 1
+          return { value: 'paid-once' }
+        },
+      })
+      const firstResponse = await first.request(envelope(`req-${injectedCheckpoint}`, { a: 1 }))
+      expect(firstResponse).toMatchObject({ ok: false, error: 'durable completion write failed' })
+      await first.close()
+      expect(calls).toBe(1)
+
+      const restarted = await startProposalGateway({
+        socketPath: join(root!, 'proposal.sock'),
+        route,
+        stateDir,
+        handle: async () => {
+          calls += 1
+          return { value: 'duplicate' }
+        },
+      })
+      try {
+        const replayed = await restarted.request(envelope(`req-${injectedCheckpoint}`, { a: 1 }))
+        expect(replayed.ok).toBe(expectReplay)
+        expect(calls).toBe(1)
+      } finally {
+        await restarted.close()
+      }
+    },
+  )
+
   it('allows an in-place retry after a failed dispatch and records the success durably', async () => {
     const stateDir = join(root!, 'gateway-state')
     let calls = 0

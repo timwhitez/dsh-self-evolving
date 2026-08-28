@@ -313,3 +313,87 @@ builder-owned config remove compiler read/write authority from candidate configu
 can differ because the trusted compiler no longer emits candidate-selected incremental metadata; no historical receipt
 is relabeled or migrated. Resume continues to verify stored receipts rather than silently rebuilding them under the new
 builder.
+
+## ADR-025 — Use delegated cgroup v2 plus bounded tmpfs for local untrusted execution
+
+**Decision:** every local proposer, candidate-test, candidate-build, Loader and packed-overlay process runs in a fresh
+child of a delegated cgroup v2 root. The trusted launcher stops before untrusted `exec`, is attached to the child, then
+continues under frozen memory/swap, CPU bandwidth, PID and block-I/O controls plus CPU-time, file-size, open-file and
+core-dump rlimits. Teardown uses `cgroup.kill` and records controller events and peak usage. A host may use
+the default root-owned subtree or provide `DSH_SELF_EVOLVING_CGROUP_ROOT`; absence of all required delegated
+controllers fails closed. A non-root launcher must itself start in an executor child beneath that root, so Linux grants
+it migration authority between the executor and each sibling resource domain. CI explicitly creates and delegates an
+ephemeral subtree, enters the executor through a minimal root launcher, then drops back to the runner UID before any
+repository command executes. This avoids a runtime dependency on a user/system D-Bus or `systemd-run` while retaining
+a kernel-enforced accounting boundary.
+
+All writable sandbox paths, including `/tmp` and `/dev/shm`, are size/inode-bounded tmpfs mounts created by a trusted
+PID-namespace supervisor. The supervisor alone temporarily retains the required private-namespace capabilities. It
+starts the target through `setpriv` with an empty capability bounding set and `no_new_privs`; the target never inherits
+the export control FD.
+For an unprivileged host caller, Bubblewrap maps the trusted supervisor to uid/gid 0 inside its private user namespace
+and grants only `CAP_SYS_ADMIN` for bounded mounts, `CAP_SYS_RESOURCE` for the namespace quota and `CAP_SETPCAP` to
+clear the target's bounding set; caller-supplied capability options are rejected. The outer root and `/dev` are
+read-only, and after mounting the supervisor freezes its private user namespace's nested namespace quota at zero so
+the target cannot reacquire mount capability. The target additionally runs below a second private PID namespace, so
+it cannot observe or signal the trusted Node supervisor or reach the supervisor's control descriptor even on hosts
+whose private user namespace maps only one uid. This PID boundary is a required field in successful resource
+receipts. Seed trees enter through a read-only mount, and output is
+inspected/exported only after namespace descendants are killed. Resource policies have versioned ids; every receipt
+carries the full policy and its digest, and build identity also binds the build policy digests.
+Successful stages additionally require a complete supervisor control record, exact frozen policy/mount enforcement,
+non-null bounded-storage peaks, zero resource-limit events and `COMPLETED` with exit code 0/no signal. A content digest
+alone is not authority. The packed-overlay probe closes its owned ACP input and lets a trusted one-shot wrapper exit
+zero so the namespace supervisor can publish that record; `cgroup.kill` is reserved for failure/teardown and can never
+be relabeled as success. Admission, stable-build resume and audit all replay the same semantic receipt validator.
+Proposal execution persists a separate receipt whose digest is a required top-level materialization field; cached
+materializations and the run audit reject a missing, rehashed-failure or policy-drifted receipt.
+Worker output is not a completion marker. Worker bytes, the resource receipt, gateway receipts and diagnostics commit
+as one fsynced manifest-last execution bundle. A crash before that marker quarantines the exported child and partial
+bundle, recreates the declared slot from the immutable parent and reuses durable gateway requests without a second
+provider dispatch. Cache/build/audit require an exact wrapper, recompute the stable proposal artifact digest, and read
+the canonical materialization and analysis bytes back from the object store. The trusted child exporter fsyncs every
+file and the staged directory tree before rename, then fsyncs the parent after moving the original aside, installing
+the staged tree and removing the backup. A committed bundle with an absent or mismatched installed worker/tree is
+quarantined together and deterministically replayed rather than stranding the action; interrupted random export/backup
+directories are moved into that same non-authoritative history. Baseline and generated-candidate staging use durable
+ownership claims, remove the claim before publication, and fsync the parent after rename.
+The stable proposer applies the same authority rule to its proposal/resource/gateway/idempotency bundle. Its durable
+gateway request store lives outside the publication directory; a manifest-less directory is atomically quarantined as
+audit residue before retry, so no-clobber evidence paths cannot strand recovery and paid requests still replay.
+Before a paid dispatch, the pending request file and its directory are both fsynced, including first-use directory
+parents. Completion uses a fully fsynced sibling, atomic rename and directory fsync. The bundle manifest is likewise
+fully staged and synced before a no-clobber final hard link, so a crash exposes either no marker or complete bytes,
+never a torn authority file. Stable audit reads the committed bundle back and revalidates exact inventory,
+proposal/journal/idempotency bindings, gateway receipt shape and full resource-receipt semantics.
+Gateway receipt validation binds `routeHash` to the frozen provider/endpoint/model/reasoning/max-token tuple and
+requires the exact request-id and transport-attempt schemas, including coherent retry/ambiguity flags and bounded
+usage fields; well-formed hashes or arrays alone are not evidence. A shared validator is used by both stable and V011
+adoption/audit: every logical request id must terminate in success, only retryable failure receipts may precede it,
+and no attempt or receipt may follow a 2xx or non-retryable terminal row. Success cannot carry `error`, failure must,
+and a completed proposal cannot be justified by a failure-only matrix.
+V011 final audit enumerates every `proposal.completed` materialization and replays its committed execution against the
+journal, even when a later build rejection means that proposal never becomes one of the three retained generations.
+It first requires a one-to-one inventory between active execution manifests and materializations, so an extra committed
+execution cannot hide outside the journal set. Recovery history under `incomplete-executions/` is retained evidence but
+is explicitly outside the active authority namespace. One canonical direct-action scanner supplies both inventory and
+semantic replay, rejects active symlink/hardlink/special entries, and never traverses quarantine history. Materialization
+cache publication uses a fsynced staging inode, no-clobber link and action-directory fsync. Cache parsing/CAS/binding and
+installed execution/tree validation happen before adoption; any mismatch quarantines cache, execution and children
+together while leaving durable gateway requests in place for deterministic replay. The active cache must remain a
+regular single-link inode throughout adoption; a hard-linked cache is never normalized into authority. Quarantine copies
+multi-link file bytes into fresh fsynced inodes before removing the active name so an external alias cannot mutate retained
+evidence. Failure to inspect or remove the publication staging path is itself a failed publication, not ignorable cleanup.
+The publisher holds the action directory and staging descriptors through cleanup, then proves the requested directory
+still names the held directory and the final path names the exact stable single-link staged inode with unchanged bytes.
+It fsyncs the held directory and repeats those checks before returning; directory replacement or final-name removal is
+a failed publication even if an earlier fsync completed.
+
+**Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
+but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they
+provide attributable peak/event evidence.
+
+**Compatibility:** historical receipts remain immutable and are not upgraded. New build/capsule identities may differ
+because the resource-policy digest is newly bound. Existing run config `codeCommit` freezes the policy implementation;
+changing a policy produces a different digest and requires a new execution lineage. Harbor/TB task-container limits
+remain the authority for benchmark trials and are not changed by this ADR.

@@ -16,14 +16,17 @@ export {
 export {
   startProposalGateway,
   requestProposalGateway,
+  proposalGatewayRouteHash,
   type ProposalGatewayRoute,
   type ProposalGatewayRequest,
   type ProposalGatewayResponse,
   type ProposalGatewayReceipt,
   type ProposalGatewayOptions,
+  type ProposalGatewayDurabilityCheckpoint,
   type ProposalGatewayHandle,
   ProposalGatewayHandlerFailure,
 } from './gateway.js'
+export { assertCompletedProposalGatewayReceipts } from './gateway-receipt-validation.js'
 export {
   ProposalGatewayAdapter,
   createProposalGatewayLlmHandler,

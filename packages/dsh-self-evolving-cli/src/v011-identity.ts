@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { digestV011, isValidCandidateId, validateV011 } from '@dsh-self-evolving/candidate-sdk'
+import {
+  assertV011AdmissionResourceReceipt,
+  digestV011,
+  isValidCandidateId,
+  validateV011,
+} from '@dsh-self-evolving/candidate-sdk'
 import type { BuiltCandidate } from './engine.js'
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/
@@ -36,28 +41,44 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
   if (recordBytes === null) return null
 
   const built = JSON.parse(recordBytes) as Partial<BuiltCandidate>
-  const [admissionBytes, manifestBytes] = await Promise.all([
+  const [admissionBytes, manifestBytes, resourceBytes] = await Promise.all([
     readFile(join(root, 'admission-receipt.json'), 'utf8'),
     readFile(join(root, 'capsule', 'capsule.json'), 'utf8'),
+    readFile(join(root, 'resource-receipt.json'), 'utf8'),
   ])
   const admission = JSON.parse(admissionBytes) as {
     candidateDigest?: unknown
     buildCandidateId?: unknown
     capsuleDigest?: unknown
+    resourceReceiptDigest?: unknown
     admitted?: unknown
   }
+  const resource = JSON.parse(resourceBytes) as { candidateDigest?: unknown }
   const manifest = JSON.parse(manifestBytes) as {
     candidateId?: unknown
     candidate?: { buildCandidateId?: unknown }
   }
   const admissionValidation = await validateV011('admission-receipt', admission)
+  let resourceValid = false
+  if (typeof built.candidateId === 'string' && DIGEST.test(built.candidateId)) {
+    try {
+      assertV011AdmissionResourceReceipt(resource, built.candidateId)
+      resourceValid = true
+    } catch {
+      resourceValid = false
+    }
+  }
 
   const expectedSourceRoot = resolve(root, 'tree')
   const expectedCapsuleRoot = resolve(root, 'capsule')
   const matches =
     typeof built.candidateId === 'string' &&
     DIGEST.test(built.candidateId) &&
+    resourceValid &&
     admissionValidation.valid &&
+    typeof admission.resourceReceiptDigest === 'string' &&
+    admission.resourceReceiptDigest === digestV011(resource) &&
+    resource.candidateDigest === built.candidateId &&
     built.sourceDigest === built.candidateId &&
     admission.admitted === true &&
     admission.candidateDigest === built.candidateId &&

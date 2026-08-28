@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { runProposalSandbox, type ProposalSandboxMounts } from '../src/index.js'
+import {
+  runProposalSandbox,
+  type ProposalExportCommitBoundary,
+  type ProposalSandboxMounts,
+} from '../src/index.js'
 
 let root: string | undefined
 
@@ -36,21 +40,30 @@ describe('Gate 4 — outer proposal process sandbox', () => {
     const paths = await mounts()
     const probe = [
       "import { readFile, writeFile, access } from 'node:fs/promises'",
+      "import { spawnSync } from 'node:child_process'",
       "import { connect } from 'node:net'",
       "await readFile('/input/parent/parent.txt', 'utf8')",
       "await readFile('/input/archive/catalog.json', 'utf8')",
       "await readFile('/input/evidence/trace.txt', 'utf8')",
+      "const processStatus = await readFile('/proc/self/status', 'utf8')",
+      'const targetPrivilegesDropped = /^CapInh:\\s+0+$/m.test(processStatus) && /^CapPrm:\\s+0+$/m.test(processStatus) && /^CapEff:\\s+0+$/m.test(processStatus) && /^CapBnd:\\s+0+$/m.test(processStatus) && /^CapAmb:\\s+0+$/m.test(processStatus) && /^NoNewPrivs:\\s+1$/m.test(processStatus)',
       'let parentWriteDenied = false',
       "try { await writeFile('/input/parent/forbidden.txt', 'x') } catch { parentWriteDenied = true }",
       'let hostPathAbsent = false',
       "try { await access('/root/.ssh') } catch { hostPathAbsent = true }",
+      'const undeclaredWritesDenied = []',
+      "for (const path of ['/input/forbidden', '/work/forbidden', '/run/forbidden', '/dev/forbidden', '/proc/sys/user/max_user_namespaces']) {",
+      '  try { await writeFile(path, "x"); undeclaredWritesDenied.push(false) }',
+      '  catch { undeclaredWritesDenied.push(true) }',
+      '}',
       'const networkDenied = await new Promise((done) => {',
       "  const socket = connect({ host: '127.0.0.1', port: 9 })",
       "  socket.once('connect', () => { socket.destroy(); done(false) })",
       "  socket.once('error', () => done(true))",
       '})',
-      'if (!parentWriteDenied || !hostPathAbsent || !networkDenied || process.env.DEEPSEEK_API_KEY) process.exit(41)',
-      "await writeFile('/work/children/result.json', JSON.stringify({ parentWriteDenied, hostPathAbsent, networkDenied }))",
+      "const nestedUsernsDenied = spawnSync('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/true']).status !== 0",
+      'if (!parentWriteDenied || !hostPathAbsent || !networkDenied || !nestedUsernsDenied || !targetPrivilegesDropped || undeclaredWritesDenied.some((value) => !value) || process.env.DEEPSEEK_API_KEY) process.exit(41)',
+      "await writeFile('/work/children/result.json', JSON.stringify({ parentWriteDenied, hostPathAbsent, networkDenied, nestedUsernsDenied, targetPrivilegesDropped, undeclaredWritesDenied }))",
       "process.stdout.write('SANDBOX_OK\\n')",
       '',
     ].join('\n')
@@ -69,6 +82,9 @@ describe('Gate 4 — outer proposal process sandbox', () => {
       parentWriteDenied: true,
       hostPathAbsent: true,
       networkDenied: true,
+      nestedUsernsDenied: true,
+      targetPrivilegesDropped: true,
+      undeclaredWritesDenied: [true, true, true, true, true],
     })
     await expect(stat(join(paths.parent, 'forbidden.txt'))).rejects.toMatchObject({
       code: 'ENOENT',
@@ -120,8 +136,100 @@ describe('Gate 4 — outer proposal process sandbox', () => {
       args: ['/input/contracts/survivor.mjs'],
       timeoutMs: 200,
     })
-    expect(result.timedOut).toBe(true)
+    expect(result.timedOut, JSON.stringify(result)).toBe(true)
     await expect.poll(() => processMarkerExists(marker), { timeout: 5_000 }).toBe(false)
+  })
+
+  it('contains writable-tree exhaustion and leaves the trusted seed untouched', async () => {
+    const paths = await mounts()
+    await writeFile(join(paths.childrenRoot, 'seed.txt'), 'trusted-seed\n')
+    await writeFile(
+      join(paths.contracts, 'disk-fill.mjs'),
+      [
+        "import { writeFile } from 'node:fs/promises'",
+        'const chunk = Buffer.alloc(1024 * 1024, 1)',
+        'for (let index = 0; ; index += 1) {',
+        '  try { await writeFile(`/work/children/fill-${index}`, chunk) }',
+        "  catch (error) { if (error.code === 'ENOSPC') break; throw error }",
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const result = await runProposalSandbox({
+      mounts: paths,
+      command: '/usr/bin/node',
+      args: ['/input/contracts/disk-fill.mjs'],
+      timeoutMs: 20_000,
+    })
+
+    expect(result.resource.terminationCause).toBe('WRITABLE_STORAGE_LIMIT')
+    expect(result.exitCode).toBeNull()
+    expect(result.resource.usage.writableStoragePeakBytes).toBeLessThanOrEqual(64 * 1024 * 1024)
+    expect(await readFile(join(paths.childrenRoot, 'seed.txt'), 'utf8')).toBe('trusted-seed\n')
+    expect(await readdir(paths.childrenRoot)).toEqual(['seed.txt'])
+  })
+
+  it('fsyncs export data and directories before the installed tree becomes authoritative', async () => {
+    const paths = await mounts()
+    await writeFile(join(paths.childrenRoot, 'seed.txt'), 'trusted-seed\n')
+    await writeFile(
+      join(paths.contracts, 'durable-export.mjs'),
+      [
+        "import { mkdir, writeFile } from 'node:fs/promises'",
+        "await mkdir('/work/children/src', { recursive: true })",
+        "await writeFile('/work/children/src/index.ts', 'export const durable = true\\n')",
+        '',
+      ].join('\n'),
+    )
+    const boundaries: ProposalExportCommitBoundary[] = []
+
+    const result = await runProposalSandbox({
+      mounts: paths,
+      command: '/usr/bin/node',
+      args: ['/input/contracts/durable-export.mjs'],
+      timeoutMs: 10_000,
+      exportHooks: { afterBoundary: (boundary) => boundaries.push(boundary) },
+    })
+
+    expect(result.exitCode, result.stderr).toBe(0)
+    const unique = boundaries.filter((boundary, index) => boundaries.indexOf(boundary) === index)
+    expect(unique).toEqual([
+      'stage-create-directory-fsync',
+      'stage-file-fsync',
+      'stage-tree-directory-fsync',
+      'original-rename-directory-fsync',
+      'install-rename-directory-fsync',
+      'backup-remove-directory-fsync',
+    ])
+    expect(await readFile(join(paths.childrenRoot, 'src', 'index.ts'), 'utf8')).toBe(
+      'export const durable = true\n',
+    )
+  })
+
+  it('keeps the trusted seed when export commit stops before the rename boundary', async () => {
+    const paths = await mounts()
+    await writeFile(join(paths.childrenRoot, 'seed.txt'), 'trusted-seed\n')
+    await writeFile(
+      join(paths.contracts, 'interrupted-export.mjs'),
+      "import { writeFile } from 'node:fs/promises'; await writeFile('/work/children/result.txt', 'new')\n",
+    )
+
+    await expect(
+      runProposalSandbox({
+        mounts: paths,
+        command: '/usr/bin/node',
+        args: ['/input/contracts/interrupted-export.mjs'],
+        timeoutMs: 10_000,
+        exportHooks: {
+          afterBoundary(boundary) {
+            if (boundary === 'stage-tree-directory-fsync') throw new Error('simulated crash')
+          },
+        },
+      }),
+    ).rejects.toThrow(/simulated crash/)
+    expect(await readdir(paths.childrenRoot)).toEqual(['seed.txt'])
+    expect(await readFile(join(paths.childrenRoot, 'seed.txt'), 'utf8')).toBe('trusted-seed\n')
   })
 })
 
