@@ -36,16 +36,19 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
   if (recordBytes === null) return null
 
   const built = JSON.parse(recordBytes) as Partial<BuiltCandidate>
-  const [admissionBytes, manifestBytes] = await Promise.all([
+  const [admissionBytes, manifestBytes, resourceBytes] = await Promise.all([
     readFile(join(root, 'admission-receipt.json'), 'utf8'),
     readFile(join(root, 'capsule', 'capsule.json'), 'utf8'),
+    readFile(join(root, 'resource-receipt.json'), 'utf8'),
   ])
   const admission = JSON.parse(admissionBytes) as {
     candidateDigest?: unknown
     buildCandidateId?: unknown
     capsuleDigest?: unknown
+    resourceReceiptDigest?: unknown
     admitted?: unknown
   }
+  const resource = JSON.parse(resourceBytes) as { candidateDigest?: unknown }
   const manifest = JSON.parse(manifestBytes) as {
     candidateId?: unknown
     candidate?: { buildCandidateId?: unknown }
@@ -58,6 +61,9 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
     typeof built.candidateId === 'string' &&
     DIGEST.test(built.candidateId) &&
     admissionValidation.valid &&
+    typeof admission.resourceReceiptDigest === 'string' &&
+    admission.resourceReceiptDigest === digestV011(resource) &&
+    resource.candidateDigest === built.candidateId &&
     built.sourceDigest === built.candidateId &&
     admission.admitted === true &&
     admission.candidateDigest === built.candidateId &&

@@ -68,6 +68,14 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 ### 5.2 Proposal sandbox
 
 - parent/contracts/evidence 只读，child root 唯一可写；
+- 每次 proposal 启动先进入独立 delegated cgroup v2 domain，再继续执行 untrusted worker；memory/swap、
+  CPU rate/time、PID、block I/O、file-size/open-file 与 writable bytes/inodes 必须使用版本化固定上限；
+- writable root、`/tmp` 与 `/dev/shm` 必须是 size/inode-bounded tmpfs。需要预置 child tree 时由可信
+  supervisor 从只读 seed 复制；target 启动前移除全部 capabilities，退出后先杀净 PID namespace 再导出；
+- sandbox root 与 `/dev` 只读；可信 supervisor 完成 mount 后必须禁用其 private user namespace 下继续
+  创建 nested user namespace，target 不得通过新 user/mount namespace 重新获得 mount capability；
+- 缺少可委派 controller、配额设置失败、收据控制通道异常或资源超限一律 fail closed；不得退回只有
+  wall timeout 的执行路径；
 - no host home、SSH agent、cloud metadata、Docker socket、controller IPC；
 - network 默认仅允许 fixed LLM gateway 和 approved package mirror；build phase no network；
 - trace 文件视为不可信数据，工具输出不能改变 system policy；
@@ -80,6 +88,9 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - 不挂载 evidence/archive/sealed/controller；
 - process tree/cgroup/network namespace 独立，无 sibling discovery；
 - credential broker 只允许固定 model route，并拒绝任意 URL/model/headers。
+
+Harbor/TB task 的官方 environment resource policy 仍由冻结 benchmark manifest 管理；controller 内的
+proposal、candidate test/build/Loader/packed-overlay 配额不能替代或改写正式 task 配额。
 
 ### 5.4 Verifier
 

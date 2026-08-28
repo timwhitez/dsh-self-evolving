@@ -13,14 +13,12 @@
  * source/bundle/capsule hashes and writes them into a build manifest.
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import {
   link,
   mkdir,
   mkdtemp,
   open,
   readFile,
-  readdir,
   realpath,
   rename,
   rm,
@@ -30,6 +28,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { type CanonicalArchive } from './identity/canonical-tar.js'
+import {
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  type ResourceDomainReceipt,
+} from './resource-domain.js'
+import { spawnResourceBoundSandbox } from './resource-sandbox.js'
 import { scanPaths, type ScanResult } from './scan/policy-scan.js'
 import { freezeDeclaredSource, type FrozenCandidateSource } from './source-snapshot.js'
 import { validateManifest, type ValidationResult } from './validate/index.js'
@@ -58,6 +61,7 @@ export interface BuildReceipt {
   scan: ScanResult
   schemaValidation: ValidationResult
   doubleBuildIdentical: boolean
+  buildResources: [ResourceDomainReceipt, ResourceDomainReceipt]
   /** Immutable source/bundle bytes consumed by the capsule packer. */
   sourceFiles: BuildArtifactFile[]
   bundleFiles: BuildArtifactFile[]
@@ -72,48 +76,13 @@ export interface BuildArtifactFile {
   bytes: Uint8Array
 }
 
-/** sha256 of all files under a dir, concatenated as `relpath:hash\n` sorted. */
-async function hashTree(root: string): Promise<string> {
-  const entries: string[] = []
-  async function walk(dir: string): Promise<void> {
-    const names = await readdir(dir, { withFileTypes: true })
-    for (const e of names) {
-      const abs = join(dir, e.name)
-      if (e.isDirectory()) await walk(abs)
-      else if (e.isFile()) {
-        const content = await readFile(abs)
-        const rel = abs.slice(root.length + 1)
-        entries.push(`${rel}:${createHash('sha256').update(content).digest('hex')}`)
-      }
-    }
-  }
-  await walk(root)
-  entries.sort()
+/** sha256 of `relpath:hash\n` entries sorted by path. */
+function hashArtifacts(files: BuildArtifactFile[]): string {
+  const entries = files.map(
+    (file) => `${file.path}:${createHash('sha256').update(file.bytes).digest('hex')}`,
+  )
+  entries.sort((left, right) => Buffer.from(left).compare(Buffer.from(right)))
   return createHash('sha256').update(entries.join('\n')).digest('hex')
-}
-
-async function snapshotTree(root: string): Promise<BuildArtifactFile[]> {
-  const files: BuildArtifactFile[] = []
-  async function walk(directory: string): Promise<void> {
-    const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )
-    for (const entry of entries) {
-      const absolute = join(directory, entry.name)
-      if (entry.isDirectory()) await walk(absolute)
-      else if (entry.isFile()) {
-        files.push({
-          path: absolute
-            .slice(root.length + 1)
-            .split('\\')
-            .join('/'),
-          bytes: new Uint8Array(await readFile(absolute)),
-        })
-      }
-    }
-  }
-  await walk(root)
-  return files
 }
 
 const TRUSTED_DECLARED_TSCONFIG = {
@@ -156,80 +125,6 @@ function validateDeclaredTsconfig(source: FrozenCandidateSource): void {
   }
 }
 
-function spawnBounded(
-  command: string,
-  args: string[],
-  timeoutMs: number,
-): Promise<{
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-  stdout: string
-  stderr: string
-}> {
-  return new Promise((done, reject) => {
-    const child = spawn(command, args, {
-      detached: true,
-      env: { PATH: '/usr/bin:/bin' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    const maxOutputBytes = 2 * 1024 * 1024
-    let outputBytes = 0
-    let outputExceeded = false
-    let timedOut = false
-    let settled = false
-    const kill = (): void => {
-      if (child.pid === undefined) return
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-      }
-    }
-    const timer = setTimeout(() => {
-      timedOut = true
-      kill()
-    }, timeoutMs)
-    const collect = (target: Buffer[]) => (chunk: Buffer) => {
-      outputBytes += chunk.byteLength
-      if (outputBytes > maxOutputBytes) {
-        outputExceeded = true
-        kill()
-      } else {
-        target.push(chunk)
-      }
-    }
-    child.stdout.on('data', collect(stdout))
-    child.stderr.on('data', collect(stderr))
-    child.once('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(error)
-    })
-    child.once('exit', (exitCode, signal) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (timedOut) {
-        reject(new Error(`trusted TypeScript compiler timed out after ${timeoutMs}ms`))
-        return
-      }
-      if (outputExceeded) {
-        reject(new Error('trusted TypeScript compiler exceeded output byte limit'))
-        return
-      }
-      done({
-        exitCode,
-        signal,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      })
-    })
-  })
-}
-
 function trustedCompilerConfig(): Record<string, unknown> {
   return {
     compilerOptions: {
@@ -263,11 +158,10 @@ function trustedCompilerConfig(): Record<string, unknown> {
 
 async function execTrustedTsc(input: {
   sourceRoot: string
-  outputRoot: string
   configPath: string
   toolchainRoot: string
   tscBin: string
-}): Promise<void> {
+}): Promise<{ files: BuildArtifactFile[]; resource: ResourceDomainReceipt }> {
   const toolchainRoot = resolve(input.toolchainRoot)
   const typescriptRoot = await realpath(join(toolchainRoot, 'node_modules', 'typescript'))
   if (resolve(input.tscBin) !== join(toolchainRoot, 'node_modules', '.bin', 'tsc')) {
@@ -282,8 +176,6 @@ async function execTrustedTsc(input: {
     '--unshare-all',
     '--hostname',
     'dsh-candidate-builder',
-    '--cap-drop',
-    'ALL',
     '--proc',
     '/proc',
     '--dev',
@@ -340,10 +232,9 @@ async function execTrustedTsc(input: {
     '--ro-bind',
     input.configPath,
     '/build/tsconfig.json',
-    '--bind',
-    input.outputRoot,
+    '--dir',
     '/output',
-    '--tmpfs',
+    '--dir',
     '/tmp',
     '--clearenv',
     '--setenv',
@@ -360,18 +251,53 @@ async function execTrustedTsc(input: {
     'UTC',
     '--chdir',
     '/workspace/source',
-    '--',
-    sandboxNode,
-    '/toolchain/typescript/bin/tsc',
-    '--project',
-    '/build/tsconfig.json',
   ]
-  const result = await spawnBounded('/usr/bin/bwrap', args, 120_000)
-  if (result.exitCode !== 0) {
+  const sandbox = await spawnResourceBoundSandbox({
+    bwrapArgs: args,
+    sandboxNode,
+    targetCommand: sandboxNode,
+    targetArgs: ['/toolchain/typescript/bin/tsc', '--project', '/build/tsconfig.json'],
+    mounts: [
+      { path: '/tmp', maxBytes: 16 * 1024 * 1024, maxFiles: 128, exportFiles: false },
+      { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 128, exportFiles: false },
+      { path: '/output', maxBytes: 96 * 1024 * 1024, maxFiles: 256, exportFiles: true },
+    ],
+    policy: CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  })
+  sandbox.child.stdin.destroy()
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  let outputBytes = 0
+  const collect = (target: Buffer[]) => (chunk: Buffer) => {
+    outputBytes += chunk.byteLength
+    if (outputBytes > 2 * 1024 * 1024) {
+      void sandbox.kill('OUTPUT_LIMIT')
+      return
+    }
+    target.push(chunk)
+  }
+  sandbox.child.stdout.on('data', collect(stdout))
+  sandbox.child.stderr.on('data', collect(stderr))
+  const timer = setTimeout(() => void sandbox.kill('WALL_TIME_LIMIT'), 120_000)
+  let result
+  try {
+    result = await sandbox.finish()
+  } finally {
+    clearTimeout(timer)
+  }
+  if (result.exitCode !== 0 || result.resource.terminationCause !== 'COMPLETED') {
     throw new Error(
-      `trusted TypeScript compiler failed (${result.exitCode ?? result.signal}): ${result.stderr}\n${result.stdout}`,
+      `trusted TypeScript compiler failed (${result.exitCode ?? result.signal}; ${result.resource.terminationCause}): ${Buffer.concat(stderr).toString('utf8')}\n${Buffer.concat(stdout).toString('utf8')}\nresource=${JSON.stringify(result.resource)}`,
     )
   }
+  const files = result.files.map((file) => {
+    if (file.mountPath !== '/output' || !file.path.startsWith('lib/')) {
+      throw new Error(`trusted TypeScript compiler emitted outside lib/: ${file.path}`)
+    }
+    return { path: file.path.slice('lib/'.length), bytes: file.bytes }
+  })
+  if (files.length === 0) throw new Error('trusted TypeScript compiler emitted no bundle files')
+  return { files, resource: result.resource }
 }
 
 async function processStartTicks(pid: number): Promise<string | null> {
@@ -541,39 +467,33 @@ export async function buildCandidateFromFrozenSource(
   const toolchainRoot = input.toolchainRoot ?? resolve(dirname(tscBin), '..', '..')
   const compileRoot = await mkdtemp(join(tmpdir(), 'dsh-candidate-compile-'))
   const configPath = join(compileRoot, 'trusted-tsconfig.json')
-  const output1 = join(compileRoot, 'output-1')
-  const output2 = join(compileRoot, 'output-2')
-  await Promise.all([
-    writeFile(configPath, JSON.stringify(trustedCompilerConfig(), null, 2) + '\n', {
-      flag: 'wx',
-      mode: 0o400,
-    }),
-    mkdir(output1, { mode: 0o700 }),
-    mkdir(output2, { mode: 0o700 }),
-  ])
+  await writeFile(configPath, JSON.stringify(trustedCompilerConfig(), null, 2) + '\n', {
+    flag: 'wx',
+    mode: 0o400,
+  })
   let bundleHash: string
   let doubleBuildIdentical: boolean
   let build1: string
   let build2: string
   let immutableBundleFiles: BuildArtifactFile[]
+  let buildResources: [ResourceDomainReceipt, ResourceDomainReceipt]
   try {
-    await execTrustedTsc({
+    const first = await execTrustedTsc({
       sourceRoot: frozenSource.root,
-      outputRoot: output1,
       configPath,
       toolchainRoot,
       tscBin,
     })
-    build1 = await hashTree(join(output1, 'lib'))
-    await execTrustedTsc({
+    build1 = hashArtifacts(first.files)
+    const second = await execTrustedTsc({
       sourceRoot: frozenSource.root,
-      outputRoot: output2,
       configPath,
       toolchainRoot,
       tscBin,
     })
-    build2 = await hashTree(join(output2, 'lib'))
-    immutableBundleFiles = await snapshotTree(join(output2, 'lib'))
+    build2 = hashArtifacts(second.files)
+    immutableBundleFiles = second.files
+    buildResources = [first.resource, second.resource]
     bundleHash = build2
     doubleBuildIdentical = build1 === build2
   } finally {
@@ -591,6 +511,8 @@ export async function buildCandidateFromFrozenSource(
     .update(bundleHash)
     .update(schemaValidation.valid ? '1' : '0')
     .update(scan.passed ? '1' : '0')
+    .update(buildResources[0].policyDigest)
+    .update(buildResources[1].policyDigest)
     .digest('hex')
 
   return {
@@ -602,6 +524,7 @@ export async function buildCandidateFromFrozenSource(
     scan,
     schemaValidation,
     doubleBuildIdentical,
+    buildResources,
     sourceFiles: immutableSourceFiles,
     bundleFiles: immutableBundleFiles,
   }

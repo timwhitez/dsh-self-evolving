@@ -47,6 +47,27 @@ export {
   type BuildArtifactFile,
 } from './builder-sandbox.js'
 
+export {
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  CANDIDATE_TEST_RESOURCE_POLICY_V1,
+  CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+  resourcePolicyDigest,
+  validateResourcePolicy,
+  type ResourceDomainReceipt,
+  type ResourceEvents,
+  type ResourcePolicyV1,
+  type ResourceTerminationCause,
+  type ResourceUsage,
+} from './resource-domain.js'
+
+export {
+  spawnResourceBoundSandbox,
+  type ResourceSandboxFile,
+  type ResourceSandboxProcess,
+  type ResourceSandboxResult,
+  type WritableSandboxMount,
+} from './resource-sandbox.js'
+
 export { packCapsule, type CapsuleInput, type CapsuleOutput } from './capsule.js'
 export * from './v011/index.js'
 export { canonicalV011, digestV011 } from './v011/contract.js'

@@ -42,6 +42,17 @@ jobs:
           # Ubuntu 24.04 AppArmor otherwise denies bwrap's isolated loopback setup.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      - name: Delegate cgroup v2 resource controls
+        run: |
+          quota_root="/sys/fs/cgroup/dsh-self-evolving-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for controller in cpu io memory pids; do
+            grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers
+          done
+          sudo mkdir "$quota_root"
+          sudo sh -c 'printf "+cpu +io +memory +pids\n" > "$1/cgroup.subtree_control"' sh "$quota_root"
+          sudo chown -R "$(id -u):$(id -g)" "$quota_root"
+          echo "DSH_SELF_EVOLVING_CGROUP_ROOT=$quota_root" >> "$GITHUB_ENV"
+
       - name: Materialize pinned source closure
         run: pnpm setup:source
 

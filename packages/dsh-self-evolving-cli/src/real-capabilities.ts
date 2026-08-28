@@ -80,9 +80,35 @@ async function writeExclusive(path: string, bytes: string): Promise<void> {
   }
 }
 
+async function writeIdempotent(path: string, bytes: string): Promise<void> {
+  const existing = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (existing !== null) {
+    if (existing !== bytes)
+      throw new Error(`real proposer: conflicting retained evidence at ${path}`)
+    return
+  }
+  try {
+    await writeExclusive(path, bytes)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    if ((await readFile(path, 'utf8')) !== bytes) {
+      throw new Error(`real proposer: conflicting retained evidence at ${path}`, { cause: error })
+    }
+  }
+}
+
 async function prepareProposalRuntime(config: StableDemoConfig): Promise<string> {
   const runtimeRoot = join(config.stateDir, 'trusted-runtime', 'proposer')
-  if ((await stat(join(runtimeRoot, 'node')).catch(() => null))?.isFile()) return runtimeRoot
+  const existingNode = (await stat(join(runtimeRoot, 'node')).catch(() => null))?.isFile() === true
+  const existingReceipt =
+    (await stat(join(runtimeRoot, 'build-resource.json')).catch(() => null))?.isFile() === true
+  if (existingNode && existingReceipt) return runtimeRoot
+  if (existingNode || existingReceipt) {
+    throw new Error('real proposer runtime: incomplete resource-bound publication')
+  }
   const staging = await mkdtemp(join(config.stateDir, '.proposer-runtime-'))
   try {
     const baselineRoot = join(config.repoRoot, 'packages', 'candidate-baseline')
@@ -113,8 +139,15 @@ async function prepareProposalRuntime(config: StableDemoConfig): Promise<string>
         entryBin: 'lib/sandbox-worker.js',
       },
     })
+    const published = join(staging, 'published')
+    await cp(join(capsuleDir, 'runtime'), published, { recursive: true, errorOnExist: true })
+    await writeFile(
+      join(published, 'build-resource.json'),
+      JSON.stringify({ schemaVersion: 1, builds: receipt.buildResources }, null, 2) + '\n',
+      { flag: 'wx', mode: 0o600 },
+    )
     await mkdir(join(config.stateDir, 'trusted-runtime'), { recursive: true, mode: 0o700 })
-    await cp(join(capsuleDir, 'runtime'), runtimeRoot, { recursive: true, errorOnExist: true })
+    await rename(published, runtimeRoot)
     await chmod(runtimeRoot, 0o700)
     return runtimeRoot
   } finally {
@@ -236,7 +269,11 @@ async function realProposal(
         maxOutputBytes: 2 * 1024 * 1024,
         gatewaySocket: gateway.socketPath,
       })
-      if (result.exitCode !== 0) throw new Error(`real proposer failed: ${result.stderr}`)
+      const resourceBytes = JSON.stringify(result.resource, null, 2) + '\n'
+      if (result.exitCode !== 0) {
+        await writeIdempotent(join(artifactDir, 'failed-sandbox-resource.json'), resourceBytes)
+        throw new Error(`real proposer failed: ${result.stderr}`)
+      }
       const output = JSON.parse(
         await readFile(join(mounts.childrenRoot, 'proposal-output.json'), 'utf8'),
       ) as {
@@ -263,6 +300,7 @@ async function realProposal(
         'proposal.json': JSON.stringify(proposal, null, 2) + '\n',
         'gateway-receipts.json': JSON.stringify(gateway.receipts(), null, 2) + '\n',
         'idempotency-key.json': `${JSON.stringify({ idempotencyKey: input.idempotencyKey }, null, 2)}\n`,
+        'sandbox-resource.json': resourceBytes,
       })
       return proposal
     } finally {
@@ -345,12 +383,18 @@ async function realBuild(
     sourceFiles: SOURCE_FILES,
     tscBin: join(config.repoRoot, 'node_modules', '.bin', 'tsc'),
   })
+  const resourceReceipt = {
+    schemaVersion: 1,
+    candidateId: `sha256:${receipt.sourceHash}`,
+    builds: receipt.buildResources,
+  }
   const identity = {
     sourceHash: receipt.sourceHash,
     bundleHash: receipt.bundleHash,
     capsuleHash: receipt.capsuleHash,
     proposalDigest: input.proposal.artifactDigest,
     parentCandidateId: input.parent.candidateId,
+    resourceReceiptDigest: sha256(JSON.stringify(resourceReceipt)),
   }
   const built: BuiltCandidate = {
     candidateId: `sha256:${receipt.sourceHash}`,
@@ -360,6 +404,10 @@ async function realBuild(
     sourceRoot: candidateRoot,
     evidenceRefs: input.proposal.evidenceRefs,
   }
+  await writeExclusive(
+    join(stagingRoot, 'build-resource.json'),
+    JSON.stringify(resourceReceipt, null, 2) + '\n',
+  )
   await writeExclusive(
     join(stagingRoot, 'stable-build.json'),
     JSON.stringify(built, null, 2) + '\n',

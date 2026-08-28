@@ -313,3 +313,30 @@ builder-owned config remove compiler read/write authority from candidate configu
 can differ because the trusted compiler no longer emits candidate-selected incremental metadata; no historical receipt
 is relabeled or migrated. Resume continues to verify stored receipts rather than silently rebuilding them under the new
 builder.
+
+## ADR-025 — Use delegated cgroup v2 plus bounded tmpfs for local untrusted execution
+
+**Decision:** every local proposer, candidate-test, candidate-build, Loader and packed-overlay process runs in a fresh
+child of a delegated cgroup v2 root. The trusted launcher stops before untrusted `exec`, is attached to the child, then
+continues under frozen memory/swap, CPU bandwidth, PID and block-I/O controls plus CPU-time, file-size, open-file and
+core-dump rlimits. Teardown uses `cgroup.kill` and records controller events and peak usage. A host may use
+the default root-owned subtree or provide `DSH_SELF_EVOLVING_CGROUP_ROOT`; absence of all required delegated
+controllers fails closed. CI explicitly creates and delegates an ephemeral subtree. This avoids a runtime dependency
+on a user/system D-Bus or `systemd-run` while retaining a kernel-enforced accounting boundary.
+
+All writable sandbox paths, including `/tmp` and `/dev/shm`, are size/inode-bounded tmpfs mounts created by a trusted
+PID-namespace supervisor. The supervisor alone temporarily retains mount capability. It starts the target through
+`setpriv` with an empty capability bounding set and `no_new_privs`; the target never inherits the export control FD.
+The outer root and `/dev` are read-only, and after mounting the supervisor freezes its private user namespace's nested
+namespace quota at zero so the target cannot reacquire mount capability. Seed trees enter through a read-only mount,
+and output is inspected/exported only after namespace descendants are killed. Resource policies have versioned ids;
+every receipt carries the full policy and its digest, and build identity also binds the build policy digests.
+
+**Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
+but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they
+provide attributable peak/event evidence.
+
+**Compatibility:** historical receipts remain immutable and are not upgraded. New build/capsule identities may differ
+because the resource-policy digest is newly bound. Existing run config `codeCommit` freezes the policy implementation;
+changing a policy produces a different digest and requires a new execution lineage. Harbor/TB task-container limits
+remain the authority for benchmark trials and are not changed by this ADR.

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { lstat, readFile, readdir, readlink, realpath } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { Readable, Transform, Writable, type TransformCallback } from 'node:stream'
@@ -19,6 +18,13 @@ import {
   type BuildReceipt,
 } from '../builder-sandbox.js'
 import { packCapsule, type CapsuleOutput, type RuntimeClosureInput } from '../capsule.js'
+import {
+  CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+  CANDIDATE_TEST_RESOURCE_POLICY_V1,
+  type ResourceDomainReceipt,
+  type ResourcePolicyV1,
+} from '../resource-domain.js'
+import { spawnResourceBoundSandbox, type WritableSandboxMount } from '../resource-sandbox.js'
 import { freezeSourceTree } from '../source-snapshot.js'
 import { assertV011, digestV011, V011_PROTOCOL } from './contract.js'
 import { canonicalizeV011Tree, snapshotV011Tree } from './tree.js'
@@ -32,6 +38,7 @@ export interface V011LoaderProbeReceipt {
   promptSections: string[]
   replayDigest: `sha256:${string}`
   leakedHandles: string[]
+  resource: ResourceDomainReceipt
 }
 
 export interface V011PackedOverlayProbeReceipt {
@@ -46,6 +53,7 @@ export interface V011PackedOverlayProbeReceipt {
   runtimeSettled: true
   sessionCreated: true
   sandbox: 'bwrap-unshare-all-clearenv'
+  resource: ResourceDomainReceipt
 }
 
 export interface V011AdmissionReceipt {
@@ -56,6 +64,7 @@ export interface V011AdmissionReceipt {
   buildCandidateId: string
   materializationDigest: `sha256:${string}`
   capabilityCatalogDigest: `sha256:${string}`
+  resourceReceiptDigest: `sha256:${string}`
   stageReceipts: {
     containment: `sha256:${string}`
     schema: `sha256:${string}`
@@ -72,6 +81,16 @@ export interface V011AdmissionReceipt {
   admitted: true
 }
 
+export interface V011AdmissionResourceReceipt {
+  schemaVersion: 1
+  candidateDigest: `sha256:${string}`
+  candidateTests: ResourceDomainReceipt
+  builds: [ResourceDomainReceipt, ResourceDomainReceipt]
+  loaderSolve: ResourceDomainReceipt
+  loaderPropose: ResourceDomainReceipt
+  packedOverlayBoot: ResourceDomainReceipt
+}
+
 export interface V011AdmissionOutput {
   receipt: V011AdmissionReceipt
   buildReceipt: BuildReceipt
@@ -79,6 +98,8 @@ export interface V011AdmissionOutput {
   loader: { solve: V011LoaderProbeReceipt; propose: V011LoaderProbeReceipt }
   packedOverlay: V011PackedOverlayProbeReceipt
   candidateTestOutputDigest: `sha256:${string}`
+  candidateTestResource: ResourceDomainReceipt
+  resourceReceipt: V011AdmissionResourceReceipt
 }
 
 export const V011_PACKED_OVERLAY_CONTROL_LIMIT_BYTES = 16 * 1024
@@ -281,75 +302,62 @@ export class V011PackedOverlayAcpOutputGuard extends Transform {
   }
 }
 
-function killProcessGroup(pid: number): void {
-  try {
-    process.kill(-pid, 'SIGKILL')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-  }
-}
-
-function spawnBounded(
-  command: string,
-  args: string[],
-  options: { timeoutMs: number; maxOutputBytes?: number },
-): Promise<{
+async function runBoundedSandbox(input: {
+  bwrapArgs: string[]
+  sandboxNode: string
+  targetCommand: string
+  targetArgs: string[]
+  mounts: WritableSandboxMount[]
+  policy: ResourcePolicyV1
+  timeoutMs: number
+  maxOutputBytes?: number
+}): Promise<{
   exitCode: number | null
   signal: NodeJS.Signals | null
   stdout: string
   stderr: string
+  resource: ResourceDomainReceipt
 }> {
-  return new Promise((done, reject) => {
-    const child = spawn(command, args, {
-      detached: true,
-      env: { PATH: '/usr/bin:/bin' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    const cap = options.maxOutputBytes ?? 2 * 1024 * 1024
-    let bytes = 0
-    let settled = false
-    const kill = () => {
-      if (child.pid === undefined) return
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-      }
-    }
-    const timer = setTimeout(kill, options.timeoutMs)
-    const collect = (target: Buffer[]) => (chunk: Buffer) => {
-      bytes += chunk.byteLength
-      if (bytes > cap) kill()
-      else target.push(chunk)
-    }
-    child.stdout.on('data', collect(stdout))
-    child.stderr.on('data', collect(stderr))
-    child.once('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(error)
-    })
-    child.once('exit', (exitCode, signal) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      done({
-        exitCode,
-        signal,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      })
-    })
+  const sandbox = await spawnResourceBoundSandbox({
+    bwrapArgs: input.bwrapArgs,
+    sandboxNode: input.sandboxNode,
+    targetCommand: input.targetCommand,
+    targetArgs: input.targetArgs,
+    mounts: input.mounts,
+    policy: input.policy,
   })
+  sandbox.child.stdin.destroy()
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  const cap = input.maxOutputBytes ?? 2 * 1024 * 1024
+  let bytes = 0
+  const collect = (target: Buffer[]) => (chunk: Buffer) => {
+    bytes += chunk.byteLength
+    if (bytes > cap) void sandbox.kill('OUTPUT_LIMIT')
+    else target.push(chunk)
+  }
+  sandbox.child.stdout.on('data', collect(stdout))
+  sandbox.child.stderr.on('data', collect(stderr))
+  const timer = setTimeout(() => void sandbox.kill('WALL_TIME_LIMIT'), input.timeoutMs)
+  let result
+  try {
+    result = await sandbox.finish()
+  } finally {
+    clearTimeout(timer)
+  }
+  return {
+    exitCode: result.exitCode,
+    signal: result.signal,
+    stdout: Buffer.concat(stdout).toString('utf8'),
+    stderr: Buffer.concat(stderr).toString('utf8'),
+    resource: result.resource,
+  }
 }
 
 async function runCandidateTests(
   sourceRoot: string,
   toolchainRoot: string,
-): Promise<`sha256:${string}`> {
+): Promise<{ digest: `sha256:${string}`; resource: ResourceDomainReceipt }> {
   const tests = (await snapshotV011Tree(sourceRoot)).files
     .filter((file) => file.path.startsWith('tests/') && file.path.endsWith('.spec.ts'))
     .map((file) => `/work/${file.path}`)
@@ -366,8 +374,6 @@ async function runCandidateTests(
     '--unshare-all',
     '--hostname',
     'dsh-self-evolving-candidate-tests',
-    '--cap-drop',
-    'ALL',
     '--proc',
     '/proc',
     '--dev',
@@ -425,7 +431,7 @@ async function runCandidateTests(
     '--ro-bind',
     join(resolve(toolchainRoot), 'node_modules'),
     '/toolchain/node_modules',
-    '--tmpfs',
+    '--dir',
     '/tmp',
     '--clearenv',
     '--setenv',
@@ -433,20 +439,38 @@ async function runCandidateTests(
     '/usr/bin:/bin',
     '--chdir',
     '/work',
-    '--',
-    sandboxNode,
-    '/toolchain/node_modules/vitest/vitest.mjs',
-    'run',
-    '--root',
-    '/work',
-    '--no-file-parallelism',
-    ...tests,
   ]
-  const result = await spawnBounded('/usr/bin/bwrap', args, { timeoutMs: 120_000 })
-  if (result.exitCode !== 0) {
-    throw new Error(`v0.1.1 admission: candidate tests failed: ${result.stderr}\n${result.stdout}`)
+  const result = await runBoundedSandbox({
+    bwrapArgs: args,
+    sandboxNode,
+    targetCommand: sandboxNode,
+    targetArgs: [
+      '/toolchain/node_modules/vitest/vitest.mjs',
+      'run',
+      '--root',
+      '/work',
+      '--no-file-parallelism',
+      ...tests,
+    ],
+    mounts: [
+      { path: '/tmp', maxBytes: 96 * 1024 * 1024, maxFiles: 3072, exportFiles: false },
+      { path: '/dev/shm', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
+    ],
+    policy: CANDIDATE_TEST_RESOURCE_POLICY_V1,
+    timeoutMs: 120_000,
+  })
+  if (result.exitCode !== 0 || result.resource.terminationCause !== 'COMPLETED') {
+    throw new Error(
+      `v0.1.1 admission: candidate tests failed: ${result.stderr}\n${result.stdout}\nresource=${JSON.stringify(result.resource)}`,
+    )
   }
-  return digestV011(`${result.stdout}\n${result.stderr}`)
+  return {
+    digest: digestV011({
+      transcript: `${result.stdout}\n${result.stderr}`,
+      resource: result.resource,
+    }),
+    resource: result.resource,
+  }
 }
 
 /**
@@ -540,8 +564,6 @@ async function runLoaderProbe(input: {
     '--unshare-all',
     '--hostname',
     'dsh-self-evolving-loader-probe',
-    '--cap-drop',
-    'ALL',
     '--proc',
     '/proc',
     '--dev',
@@ -561,7 +583,7 @@ async function runLoaderProbe(input: {
     '--ro-bind',
     runtime,
     '/runtime',
-    '--tmpfs',
+    '--dir',
     '/tmp',
     '--clearenv',
     '--setenv',
@@ -569,23 +591,31 @@ async function runLoaderProbe(input: {
     '/usr/bin:/bin',
     '--chdir',
     '/tmp',
-    '--',
-    '/runtime/node',
-    worker,
-    candidateEntry,
-    input.candidateId,
-    input.mode,
   ]
-  const result = await spawnBounded('/usr/bin/bwrap', args, { timeoutMs: 60_000 })
-  if (result.exitCode !== 0)
-    throw new Error(`v0.1.1 admission: Loader ${input.mode} failed: ${result.stderr}`)
+  const result = await runBoundedSandbox({
+    bwrapArgs: args,
+    sandboxNode: '/runtime/node',
+    targetCommand: '/runtime/node',
+    targetArgs: [worker, candidateEntry, input.candidateId, input.mode],
+    mounts: [
+      { path: '/tmp', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
+      { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 512, exportFiles: false },
+    ],
+    policy: CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+    timeoutMs: 60_000,
+  })
+  if (result.exitCode !== 0 || result.resource.terminationCause !== 'COMPLETED')
+    throw new Error(
+      `v0.1.1 admission: Loader ${input.mode} failed: ${result.stderr}\nresource=${JSON.stringify(result.resource)}`,
+    )
   const line = result.stdout
     .split('\n')
     .findLast((row) => row.startsWith('DSH_SELF_EVOLVING_V011_LOADER_RECEIPT='))
   if (line === undefined) throw new Error('v0.1.1 admission: Loader receipt missing')
-  const receipt = JSON.parse(
-    line.slice('DSH_SELF_EVOLVING_V011_LOADER_RECEIPT='.length),
-  ) as V011LoaderProbeReceipt
+  const receipt = JSON.parse(line.slice('DSH_SELF_EVOLVING_V011_LOADER_RECEIPT='.length)) as Omit<
+    V011LoaderProbeReceipt,
+    'resource'
+  >
   if (
     receipt.mode !== input.mode ||
     receipt.leakedHandles.length !== 0 ||
@@ -593,7 +623,7 @@ async function runLoaderProbe(input: {
   ) {
     throw new Error('v0.1.1 admission: Loader receipt identity/quiescence mismatch')
   }
-  return receipt
+  return { ...receipt, resource: result.resource }
 }
 
 /**
@@ -633,8 +663,6 @@ async function runPackedOverlayProbe(input: {
     '--unshare-all',
     '--hostname',
     'dsh-self-evolving-packed-overlay',
-    '--cap-drop',
-    'ALL',
     '--proc',
     '/proc',
     '--dev',
@@ -657,11 +685,11 @@ async function runPackedOverlayProbe(input: {
     '--ro-bind',
     runner,
     '/runner',
-    '--tmpfs',
+    '--dir',
     '/tmp',
-    '--tmpfs',
+    '--dir',
     '/workspace',
-    '--tmpfs',
+    '--dir',
     '/logs',
     '--clearenv',
     '--setenv',
@@ -678,18 +706,21 @@ async function runPackedOverlayProbe(input: {
     '/workspace/.agents',
     '--chdir',
     '/workspace',
-    '--',
-    '/runtime/node',
-    worker,
-    productionEntry,
-    '/runtime/cordis.yml',
-    input.candidateId,
   ]
-  const child = spawn('/usr/bin/bwrap', args, {
-    detached: true,
-    env: { PATH: '/usr/bin:/bin' },
-    stdio: ['pipe', 'pipe', 'pipe'],
+  const sandbox = await spawnResourceBoundSandbox({
+    bwrapArgs: args,
+    sandboxNode: '/runtime/node',
+    targetCommand: '/runtime/node',
+    targetArgs: [worker, productionEntry, '/runtime/cordis.yml', input.candidateId],
+    mounts: [
+      { path: '/tmp', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
+      { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 512, exportFiles: false },
+      { path: '/workspace', maxBytes: 64 * 1024 * 1024, maxFiles: 2048, exportFiles: false },
+      { path: '/logs', maxBytes: 64 * 1024 * 1024, maxFiles: 2048, exportFiles: false },
+    ],
+    policy: CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
   })
+  const child = sandbox.child
   const stderr: Buffer[] = []
   let stderrBytes = 0
   let stderrLineBuffer = ''
@@ -708,7 +739,7 @@ async function runPackedOverlayProbe(input: {
   void controlReady.catch(() => undefined)
   void controlViolation.catch(() => undefined)
   const failControl = (error: Error): void => {
-    if (child.pid !== undefined) killProcessGroup(child.pid)
+    void sandbox.kill('CONTROL_PROTOCOL_FAILURE')
     if (!controlReadySettled) {
       controlReadySettled = true
       rejectControlReady(error)
@@ -751,7 +782,9 @@ async function runPackedOverlayProbe(input: {
   child.stdout.pipe(stdoutGuard)
   const stdoutFailure = new Promise<never>((_resolve, reject) => {
     stdoutGuard.once('error', (error) => {
-      if (child.pid !== undefined) killProcessGroup(child.pid)
+      void sandbox.kill(
+        error.message.includes('exceeds byte limit') ? 'OUTPUT_LIMIT' : 'CONTROL_PROTOCOL_FAILURE',
+      )
       reject(error)
     })
   })
@@ -768,9 +801,15 @@ async function runPackedOverlayProbe(input: {
   })
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('packed overlay ACP handshake timed out')), 60_000)
+    timer = setTimeout(() => {
+      void sandbox.kill('WALL_TIME_LIMIT')
+      reject(new Error('packed overlay ACP handshake timed out'))
+    }, 60_000)
   })
 
+  let completed: Omit<V011PackedOverlayProbeReceipt, 'resource'> | undefined
+  let failure: Error | undefined
+  let resource: ResourceDomainReceipt | undefined
   try {
     await Promise.race([controlReady, prematureExit, timeout, stdoutFailure])
     stdoutGuard.beginHandshake()
@@ -808,7 +847,7 @@ async function runPackedOverlayProbe(input: {
     if (typeof agentName !== 'string' || agentName.length === 0) {
       throw new Error('packed overlay ACP returned no agent identity')
     }
-    return {
+    completed = {
       schemaVersion: 1,
       candidateId: input.candidateId,
       authoritativeOverlayRef: 'runner/cordis.patch.yml',
@@ -822,7 +861,7 @@ async function runPackedOverlayProbe(input: {
       sandbox: 'bwrap-unshare-all-clearenv',
     }
   } catch (cause) {
-    throw new Error(
+    failure = new Error(
       `v0.1.1 admission: exact packed overlay boot failed: ${Buffer.concat(stderr).toString('utf8')}`,
       { cause },
     )
@@ -831,11 +870,20 @@ async function runPackedOverlayProbe(input: {
     child.stdin.destroy()
     child.stdout.unpipe(stdoutGuard)
     stdoutGuard.destroy()
-    if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-      killProcessGroup(child.pid)
-    }
+    await sandbox.kill(completed === undefined ? 'CONTROL_PROTOCOL_FAILURE' : 'COMPLETED')
     await childSettled
+    resource = (await sandbox.finish()).resource
   }
+  if (failure !== undefined) {
+    throw new Error(
+      `${failure.message}\nresource=${resource === undefined ? 'missing' : JSON.stringify(resource)}`,
+      { cause: failure },
+    )
+  }
+  if (completed === undefined || resource === undefined) {
+    throw new Error('v0.1.1 admission: packed overlay completion receipt missing')
+  }
+  return { ...completed, resource }
 }
 
 export async function verifyV011PackedOverlayBytes(
@@ -900,7 +948,7 @@ export async function admitV011Candidate(input: {
     const source = await snapshotV011Tree(frozenSource.root)
     const archive = await canonicalizeV011Tree(source)
     const candidateDigest = `sha256:${archive.hash}` as const
-    const testOutputDigest = await runCandidateTests(frozenSource.root, input.toolchainRoot)
+    const candidateTests = await runCandidateTests(frozenSource.root, input.toolchainRoot)
     const buildReceipt = await buildCandidateFromFrozenSource({
       frozenSource,
       tscBin: input.tscBin,
@@ -966,6 +1014,15 @@ export async function admitV011Candidate(input: {
       mode: 'propose',
     })
     const fixedReplay = digestV011({ solve: solve.replayDigest, propose: propose.replayDigest })
+    const resourceReceipt: V011AdmissionResourceReceipt = {
+      schemaVersion: 1,
+      candidateDigest,
+      candidateTests: candidateTests.resource,
+      builds: buildReceipt.buildResources,
+      loaderSolve: solve.resource,
+      loaderPropose: propose.resource,
+      packedOverlayBoot: packedOverlay.resource,
+    }
     const receipt: V011AdmissionReceipt = {
       schemaVersion: 1,
       protocol: V011_PROTOCOL,
@@ -973,6 +1030,7 @@ export async function admitV011Candidate(input: {
       buildCandidateId: buildReceipt.candidateId,
       materializationDigest: input.materializationDigest,
       capabilityCatalogDigest: input.capabilityCatalogDigest,
+      resourceReceiptDigest: digestV011(resourceReceipt),
       stageReceipts: {
         containment: digestV011({
           files: source.files.map((file) => file.path),
@@ -980,10 +1038,11 @@ export async function admitV011Candidate(input: {
         }),
         schema: digestV011(buildReceipt.schemaValidation),
         policy: digestV011(buildReceipt.scan),
-        candidateTests: testOutputDigest,
+        candidateTests: candidateTests.digest,
         doubleBuild: digestV011({
           bundleHash: buildReceipt.bundleHash,
           identical: buildReceipt.doubleBuildIdentical,
+          resources: buildReceipt.buildResources,
         }),
         loaderSolve: digestV011(solve),
         loaderPropose: digestV011(propose),
@@ -1001,7 +1060,9 @@ export async function admitV011Candidate(input: {
       capsule,
       loader: { solve, propose },
       packedOverlay,
-      candidateTestOutputDigest: testOutputDigest,
+      candidateTestOutputDigest: candidateTests.digest,
+      candidateTestResource: candidateTests.resource,
+      resourceReceipt,
     }
   } finally {
     await frozenSource.cleanup()

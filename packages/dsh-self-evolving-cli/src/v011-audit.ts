@@ -374,12 +374,20 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     const admission = (await json(join(candidateRoot, 'admission-receipt.json'))) as {
       admitted?: unknown
       stageReceipts?: unknown
+      resourceReceiptDigest?: unknown
+    } | null
+    const resource = (await json(join(candidateRoot, 'resource-receipt.json'))) as {
+      candidateDigest?: unknown
     } | null
     if (
       built?.proposalDigest === undefined ||
       built.runtimePackageName === undefined ||
       admission?.admitted !== true ||
-      admission.stageReceipts === undefined
+      admission.stageReceipts === undefined ||
+      typeof admission.resourceReceiptDigest !== 'string' ||
+      resource === null ||
+      admission.resourceReceiptDigest !== digestV011(resource) ||
+      resource.candidateDigest !== built.candidateId
     ) {
       reasons.push(`generation ${generation} admission binding incomplete`)
       continue

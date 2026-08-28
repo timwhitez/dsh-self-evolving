@@ -223,6 +223,11 @@ build manifest、compiled bundle、capsule、SBOM、scan/unit/Loader/unload/mock
 每个 evaluation ref 至少指向：request/Harbor config、external job ID、逐 trial config/result、ACP events/
 summary、ATIF、DSH session log、verifier logs、resource/process/network audit、usage/cost、normalizer receipt。
 
+每个本地 untrusted execution 的 resource receipt 至少绑定版本化 policy id 与 digest、完整 limits、
+cgroup/rlimit/writable-mount enforcement、memory/PID/CPU/I/O/storage peak 与 event counters、exit/signal 以及
+唯一 termination cause。receipt 缺失或控制通道损坏不能解释为正常完成；成功 publication 必须把 receipt
+与 proposal/build/admission artifact 一起内容绑定，失败路径也必须保留可审计诊断。
+
 Evidence catalog 只存小 metadata/ref；proposer 用 `rg`/manifest 定位 object export。不得维护一份手工
 摘要代替 raw evidence。
 

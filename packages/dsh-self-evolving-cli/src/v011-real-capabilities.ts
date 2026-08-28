@@ -463,6 +463,11 @@ async function prepareBaseline(
     canonicalV011(admission.receipt) + '\n',
     { mode: 0o600 },
   )
+  await writeFile(
+    join(staging, 'resource-receipt.json'),
+    canonicalV011(admission.resourceReceipt) + '\n',
+    { mode: 0o600 },
+  )
   await writeFile(join(staging, 'stable-build.json'), JSON.stringify(built, null, 2) + '\n', {
     mode: 0o600,
   })
@@ -473,7 +478,13 @@ async function prepareBaseline(
 
 async function prepareProposalBaseRuntime(config: V011DemoConfig): Promise<string> {
   const root = join(config.stateDir, 'trusted-runtime', 'v011-proposer-base')
-  if ((await stat(join(root, 'node')).catch(() => null))?.isFile()) return root
+  const existingNode = (await stat(join(root, 'node')).catch(() => null))?.isFile() === true
+  const existingReceipt =
+    (await stat(join(root, 'build-resource.json')).catch(() => null))?.isFile() === true
+  if (existingNode && existingReceipt) return root
+  if (existingNode || existingReceipt) {
+    throw new Error('v0.1.1 proposer runtime: incomplete resource-bound publication')
+  }
   const staging = await mkdtemp(join(config.stateDir, '.v011-proposer-base-'))
   try {
     const baselineRoot = join(config.repoRoot, 'packages', 'candidate-baseline')
@@ -507,8 +518,15 @@ async function prepareProposalBaseRuntime(config: V011DemoConfig): Promise<strin
         entryBin: 'lib/v011-sandbox-worker.js',
       },
     })
+    const published = join(staging, 'published')
+    await cp(join(capsule, 'runtime'), published, { recursive: true, errorOnExist: true })
+    await writeFile(
+      join(published, 'build-resource.json'),
+      canonicalV011({ schemaVersion: 1, builds: receipt.buildResources }) + '\n',
+      { flag: 'wx', mode: 0o600 },
+    )
     await mkdir(dirname(root), { recursive: true, mode: 0o700 })
-    await cp(join(capsule, 'runtime'), root, { recursive: true, errorOnExist: true })
+    await rename(published, root)
     return root
   } finally {
     await rm(staging, { recursive: true, force: true })
@@ -834,7 +852,14 @@ async function realV011Proposal(
     let gateway: Awaited<ReturnType<typeof startProposalGateway>> | undefined
     let providerFailure: string | null = null
     const sandboxResultRef: {
-      value: { exitCode: number | null; signal: string | null; stderr: string } | undefined
+      value:
+        | {
+            exitCode: number | null
+            signal: string | null
+            stderr: string
+            resource: Awaited<ReturnType<typeof runProposalSandbox>>['resource']
+          }
+        | undefined
     } = { value: undefined }
     const cleanupErrors: unknown[] = []
     const bodyErrorRef: { value?: unknown } = {}
@@ -883,6 +908,7 @@ async function realV011Proposal(
         exitCode: result.exitCode,
         signal: result.signal,
         stderr: result.stderr,
+        resource: result.resource,
       }
       if (result.exitCode !== 0) {
         const message = `v0.1.1 real proposer failed: ${result.stderr}`
@@ -916,6 +942,7 @@ async function realV011Proposal(
                     signal: sandboxResultRef.value.signal,
                     stderrSha256: sha(sandboxResultRef.value.stderr),
                     stderrTail: diagnosticTail(sandboxResultRef.value.stderr),
+                    resource: sandboxResultRef.value.resource,
                   },
           },
           null,
@@ -1084,6 +1111,11 @@ async function realV011BuildUnretained(
   await writeFile(
     join(staging, 'admission-receipt.json'),
     canonicalV011(admission.receipt) + '\n',
+    { mode: 0o600 },
+  )
+  await writeFile(
+    join(staging, 'resource-receipt.json'),
+    canonicalV011(admission.resourceReceipt) + '\n',
     { mode: 0o600 },
   )
   await writeFile(join(staging, 'stable-build.json'), JSON.stringify(built, null, 2) + '\n', {

@@ -32,6 +32,7 @@ async function stableFixture(
   await mkdir(join(root, 'capsule'), { recursive: true })
   await mkdir(join(root, 'tree'), { recursive: true })
   const candidateId = overrides.builtCandidateId ?? PARENT
+  const resource = { schemaVersion: 1, candidateDigest: PARENT, fixture: true }
   const admission = {
     schemaVersion: 1,
     protocol: 'dsh-self-evolving-candidate-tree-v2',
@@ -39,6 +40,7 @@ async function stableFixture(
     ...(overrides.omitBuildCandidateId ? {} : { buildCandidateId: BUILD_ID }),
     materializationDigest: `sha256:${'5'.repeat(64)}`,
     capabilityCatalogDigest: `sha256:${'6'.repeat(64)}`,
+    resourceReceiptDigest: digestV011(resource),
     stageReceipts: {
       containment: `sha256:${'7'.repeat(64)}`,
       schema: `sha256:${'8'.repeat(64)}`,
@@ -55,6 +57,7 @@ async function stableFixture(
     admitted: true,
   }
   await writeFile(join(root, 'admission-receipt.json'), JSON.stringify(admission) + '\n')
+  await writeFile(join(root, 'resource-receipt.json'), JSON.stringify(resource) + '\n')
   await writeFile(
     join(root, 'capsule', 'capsule.json'),
     JSON.stringify({
@@ -107,6 +110,15 @@ describe('v0.1.1 canonical candidate identity (issue #198)', () => {
   it('rejects a self-consistent pre-#197 receipt that lacks packed-overlay boot evidence', async () => {
     const legacy = await stableFixture({ omitPackedOverlayBoot: true })
     await expect(readV011StableBuild(legacy)).rejects.toThrow(/identity chain mismatch/)
+  })
+
+  it('rejects a resource receipt that no longer matches the admitted digest', async () => {
+    const root = await stableFixture()
+    await writeFile(
+      join(root, 'resource-receipt.json'),
+      JSON.stringify({ schemaVersion: 1, candidateDigest: CHILD, fixture: true }) + '\n',
+    )
+    await expect(readV011StableBuild(root)).rejects.toThrow(/identity chain mismatch/)
   })
 
   it('keeps the admitted root baseline across generation 2/3 and distinct target tasks', () => {
