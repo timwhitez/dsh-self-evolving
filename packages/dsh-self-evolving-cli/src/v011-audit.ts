@@ -3,12 +3,16 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
   readAll,
   readControllerStatus,
   type V011Analysis,
   type V011ParentEvidenceBinding,
 } from '@dsh-self-evolving/core'
 import {
+  assertCompletedResourceDomainReceipt,
+  assertV011AdmissionResourceReceipt,
   assertV011,
   digestV011,
   freezeCapabilityCatalog,
@@ -39,6 +43,22 @@ async function json(path: string): Promise<unknown | null> {
 
 function sha(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+export function verifyV011ProposalResourceBinding(
+  materialization: { proposerResourceReceiptDigest?: unknown } | null | undefined,
+  resource: unknown,
+): boolean {
+  try {
+    const verified = assertCompletedResourceDomainReceipt(resource, {
+      policy: PROPOSAL_RESOURCE_POLICY_V1,
+      writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
+      label: 'v0.1.1 proposal resource receipt',
+    })
+    return materialization?.proposerResourceReceiptDigest === digestV011(verified)
+  } catch {
+    return false
+  }
 }
 
 interface AuditedStableBuildIdentity {
@@ -347,7 +367,11 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
       path,
       value: (await json(path)) as {
         stableProposal?: { artifactDigest?: string }
-        materialization?: { proposalDigest?: string; operations?: Array<{ path?: string }> }
+        materialization?: {
+          proposalDigest?: string
+          operations?: Array<{ path?: string }>
+          proposerResourceReceiptDigest?: unknown
+        }
       } | null,
     })),
   )
@@ -379,6 +403,15 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     const resource = (await json(join(candidateRoot, 'resource-receipt.json'))) as {
       candidateDigest?: unknown
     } | null
+    let resourceValid = false
+    if (resource !== null && built !== null) {
+      try {
+        assertV011AdmissionResourceReceipt(resource, built.candidateId)
+        resourceValid = true
+      } catch {
+        resourceValid = false
+      }
+    }
     if (
       built?.proposalDigest === undefined ||
       built.runtimePackageName === undefined ||
@@ -386,6 +419,7 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
       admission.stageReceipts === undefined ||
       typeof admission.resourceReceiptDigest !== 'string' ||
       resource === null ||
+      !resourceValid ||
       admission.resourceReceiptDigest !== digestV011(resource) ||
       resource.candidateDigest !== built.candidateId
     ) {
@@ -400,6 +434,15 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
       continue
     }
     const actionRoot = materialization.path.slice(0, -'/materialization.json'.length)
+    const proposalResource = await json(join(actionRoot, 'proposal-resource-receipt.json'))
+    const proposalResourceValid = verifyV011ProposalResourceBinding(
+      materialization.value?.materialization,
+      proposalResource,
+    )
+    if (!proposalResourceValid) {
+      reasons.push(`generation ${generation} proposal resource receipt invalid`)
+      continue
+    }
     const children = join(actionRoot, 'children')
     const slots = await readdir(children).catch(() => [])
     if (slots.length !== 1) {

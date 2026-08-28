@@ -93,9 +93,17 @@
 - Resource receipts record full limits/digest, enforcement, peaks/events and termination cause. Build/admission and
   proposer evidence retain these receipts. Memory-bomb, fork-bomb, CPU throttle/time and disk-fill E2E tests exercise
   the kernel boundaries. Non-root CI commands enter an executor child through a minimal privileged launcher, then
-  drop back to the runner UID; resource domains are siblings under the delegated root. Format/docs/lint/typecheck/
-  integrity pass; unit is 111 files / 853 passed + 1 skipped and no-key E2E is 42 passed + 4 credential-gated skips.
-  Hosted CI and independent exact-head review remain required before merge/closure.
+  drop back to the runner UID; resource domains are siblings under the delegated root.
+- Independent review of commit `d3604d9` correctly blocked merge: packed-overlay admission had accepted a killed
+  `CONTROL_PROTOCOL_FAILURE` receipt, resume/audit only checked its digest, and proposer materialization did not bind
+  its resource receipt. The repaired probe now closes ACP input through a trusted one-shot zero-exit path so the
+  supervisor records peaks/control before teardown. A shared semantic validator requires exact policy/mounts,
+  complete bounded metrics, zero limit events and `COMPLETED`/exit 0/no signal at admission, resume and audit.
+  Proposer receipts are separately persisted and their digest is required by materialization/cache/audit.
+- Current local gates are green: format/docs/lint/typecheck/provenance/upstream/byte-equality/release; unit is 113 files /
+  859 passed + 1 skipped; no-key E2E is 17 files passed + 2 credential-gated skipped, 42 passed + 4 skipped. This
+  includes real Harbor ACP, three extract-elf outcomes, Loader/offline, V011 admission, resource attacks and
+  crash/replay. Hosted CI and a fresh independent exact-head approval remain required before merge/closure.
 - This is a denial-of-service containment repair only. It creates no benchmark, improvement, sealed, promotion or
   release evidence.
 

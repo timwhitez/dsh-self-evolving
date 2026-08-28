@@ -7,6 +7,7 @@ import {
   type ResourceDomainReceipt,
   type ResourcePolicyV1,
   type ResourceSandboxFile,
+  type WritableSandboxMount,
 } from '@dsh-self-evolving/candidate-sdk'
 
 export interface ProposalSandboxMounts {
@@ -60,6 +61,18 @@ export const PROPOSAL_RESOURCE_POLICY_V1: ResourcePolicyV1 = Object.freeze({
   writableStorageMaxBytes: 64 * MiB,
   writableStorageMaxFiles: 2048,
 })
+
+export const PROPOSAL_WRITABLE_MOUNTS_V1 = [
+  { path: '/tmp', maxBytes: 16 * MiB, maxFiles: 512, exportFiles: false },
+  { path: '/dev/shm', maxBytes: 8 * MiB, maxFiles: 256, exportFiles: false },
+  {
+    path: '/work/children',
+    maxBytes: 40 * MiB,
+    maxFiles: 1280,
+    exportFiles: true,
+    seedPath: '/input/children-seed',
+  },
+] satisfies WritableSandboxMount[]
 
 async function assertTreeHasNoSymlink(root: string, label: string): Promise<string> {
   const rootStat = await lstat(root)
@@ -292,17 +305,7 @@ export async function runProposalSandbox(
     sandboxNode: supervisorNode,
     targetCommand: sandboxCommand,
     targetArgs: input.args,
-    mounts: [
-      { path: '/tmp', maxBytes: 16 * MiB, maxFiles: 512, exportFiles: false },
-      { path: '/dev/shm', maxBytes: 8 * MiB, maxFiles: 256, exportFiles: false },
-      {
-        path: '/work/children',
-        maxBytes: 40 * MiB,
-        maxFiles: 1280,
-        exportFiles: true,
-        seedPath: '/input/children-seed',
-      },
-    ],
+    mounts: PROPOSAL_WRITABLE_MOUNTS_V1,
     policy: PROPOSAL_RESOURCE_POLICY_V1,
   })
   sandbox.child.stdin.destroy()

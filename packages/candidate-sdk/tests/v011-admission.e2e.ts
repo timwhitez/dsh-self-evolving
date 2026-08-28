@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { admitV011Candidate, digestV011, verifyV011PackedOverlayBytes } from '../src/index.js'
+import {
+  admitV011Candidate,
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+  CANDIDATE_TEST_RESOURCE_POLICY_V1,
+  digestV011,
+  resourcePolicyDigest,
+  verifyV011PackedOverlayBytes,
+} from '../src/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..', '..', '..')
@@ -217,6 +225,30 @@ describe('v0.1.1 generated-plugin admission', () => {
       )
       expect(result.receipt.stageReceipts.packedOverlayBoot).toBe(digestV011(result.packedOverlay))
       expect(result.receipt.stageReceipts.fixedReplay).toMatch(/^sha256:[0-9a-f]{64}$/)
+      const resourceStages = [
+        [result.resourceReceipt.candidateTests, CANDIDATE_TEST_RESOURCE_POLICY_V1],
+        [result.resourceReceipt.builds[0], CANDIDATE_BUILD_RESOURCE_POLICY_V1],
+        [result.resourceReceipt.builds[1], CANDIDATE_BUILD_RESOURCE_POLICY_V1],
+        [result.resourceReceipt.loaderSolve, CANDIDATE_RUNTIME_RESOURCE_POLICY_V1],
+        [result.resourceReceipt.loaderPropose, CANDIDATE_RUNTIME_RESOURCE_POLICY_V1],
+        [result.resourceReceipt.packedOverlayBoot, CANDIDATE_RUNTIME_RESOURCE_POLICY_V1],
+      ] as const
+      for (const [resource, policy] of resourceStages) {
+        expect(resource.policy).toEqual(policy)
+        expect(resource.policyDigest).toBe(resourcePolicyDigest(policy))
+        expect(resource.terminationCause).toBe('COMPLETED')
+        expect(resource.exitCode).toBe(0)
+        expect(resource.signal).toBeNull()
+        expect(resource.usage.writableStoragePeakBytes).not.toBeNull()
+        expect(resource.usage.writableStoragePeakFiles).not.toBeNull()
+        expect(resource.enforcement.sandbox).toEqual({
+          filesystemRoot: 'read-only',
+          writablePaths: 'bounded-tmpfs-only',
+          nestedUserNamespaces: 'disabled',
+          targetCapabilities: 'none',
+          noNewPrivileges: true,
+        })
+      }
       expect((await stat(join(outputRoot, 'runtime', 'node'))).isFile()).toBe(true)
       expect(await stat(join(child, 'lib')).catch(() => null)).toBeNull()
 

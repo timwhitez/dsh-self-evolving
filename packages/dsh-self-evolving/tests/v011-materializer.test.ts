@@ -244,9 +244,11 @@ describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
       capabilityCatalog: catalog,
       transcript: Buffer.from('assistant transcript'),
       toolTrace: Buffer.from('[{"tool":"read"}]'),
+      proposerResourceReceiptDigest: digestV011('proposal-resource'),
       proposerUsage: { inputTokens: 100, outputTokens: 20 },
     })
     expect(output.receipt.operations).toEqual(proposal.declaredOperations)
+    expect(output.receipt.proposerResourceReceiptDigest).toBe(digestV011('proposal-resource'))
     expect(output.resolvedCitations).toHaveLength(2)
     expect(output.receipt.retainedCapabilityRequests).toEqual([request])
 
@@ -266,6 +268,7 @@ describe('v0.1.1 materializer, citations, outcomes, and ledger', () => {
         capabilityCatalog: catalog,
         transcript: Buffer.from('assistant transcript'),
         toolTrace: Buffer.from('[{"tool":"read"}]'),
+        proposerResourceReceiptDigest: digestV011('proposal-resource'),
         proposerUsage: { inputTokens: 100, outputTokens: 20 },
         requiredParentEvidence: {
           schemaVersion: 1,

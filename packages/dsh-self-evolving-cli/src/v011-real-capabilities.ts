@@ -15,8 +15,11 @@ import {
 import { basename, dirname, join } from 'node:path'
 import {
   admitV011Candidate,
+  assertCompletedResourceDomainReceipt,
   assertV011,
   buildCandidate,
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+  CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
   canonicalizeV011Tree,
   canonicalV011,
   digestV011,
@@ -27,10 +30,13 @@ import {
   snapshotV011Tree,
   V011_PROTOCOL,
   type FrozenCapabilityCatalog,
+  type ResourceDomainReceipt,
 } from '@dsh-self-evolving/candidate-sdk'
 import {
   materializeProposerExport,
   materializeV011Proposal,
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
   publishBytes,
   readControllerStatus,
   recoverV011OutcomeDerivation,
@@ -88,6 +94,42 @@ const SCHEMAS = [
 
 function sha(bytes: string | Uint8Array): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}
+
+function assertProposalResourceReceipt(value: unknown): ResourceDomainReceipt {
+  return assertCompletedResourceDomainReceipt(value, {
+    policy: PROPOSAL_RESOURCE_POLICY_V1,
+    writableMounts: PROPOSAL_WRITABLE_MOUNTS_V1,
+    label: 'v0.1.1 proposal resource receipt',
+  })
+}
+
+async function readProposalResourceReceipt(action: string): Promise<ResourceDomainReceipt> {
+  const raw = await readFile(join(action, 'proposal-resource-receipt.json'), 'utf8').catch(() => {
+    throw new Error('v0.1.1 proposal: completed sandbox resource receipt is missing')
+  })
+  return assertProposalResourceReceipt(JSON.parse(raw))
+}
+
+function assertProposalRuntimeBuildReceipt(value: unknown): void {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(',') !== 'builds,schemaVersion' ||
+    (value as { schemaVersion?: unknown }).schemaVersion !== 1 ||
+    !Array.isArray((value as { builds?: unknown }).builds) ||
+    (value as { builds: unknown[] }).builds.length !== 2
+  ) {
+    throw new Error('v0.1.1 proposer runtime: invalid build resource envelope')
+  }
+  for (const [index, receipt] of (value as { builds: unknown[] }).builds.entries()) {
+    assertCompletedResourceDomainReceipt(receipt, {
+      policy: CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+      writableMounts: CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
+      label: `v0.1.1 proposer runtime build[${index}]`,
+    })
+  }
 }
 
 function diagnosticTail(message: string, maxBytes = 8192): string {
@@ -481,7 +523,11 @@ async function prepareProposalBaseRuntime(config: V011DemoConfig): Promise<strin
   const existingNode = (await stat(join(root, 'node')).catch(() => null))?.isFile() === true
   const existingReceipt =
     (await stat(join(root, 'build-resource.json')).catch(() => null))?.isFile() === true
-  if (existingNode && existingReceipt) return root
+  if (existingNode && existingReceipt) {
+    const receipt = JSON.parse(await readFile(join(root, 'build-resource.json'), 'utf8'))
+    assertProposalRuntimeBuildReceipt(receipt)
+    return root
+  }
   if (existingNode || existingReceipt) {
     throw new Error('v0.1.1 proposer runtime: incomplete resource-bound publication')
   }
@@ -520,11 +566,12 @@ async function prepareProposalBaseRuntime(config: V011DemoConfig): Promise<strin
     })
     const published = join(staging, 'published')
     await cp(join(capsule, 'runtime'), published, { recursive: true, errorOnExist: true })
-    await writeFile(
-      join(published, 'build-resource.json'),
-      canonicalV011({ schemaVersion: 1, builds: receipt.buildResources }) + '\n',
-      { flag: 'wx', mode: 0o600 },
-    )
+    const buildResource = { schemaVersion: 1, builds: receipt.buildResources }
+    assertProposalRuntimeBuildReceipt(buildResource)
+    await writeFile(join(published, 'build-resource.json'), canonicalV011(buildResource) + '\n', {
+      flag: 'wx',
+      mode: 0o600,
+    })
     await mkdir(dirname(root), { recursive: true, mode: 0o700 })
     await rename(published, root)
     return root
@@ -719,8 +766,18 @@ async function realV011Proposal(
   )
   const cache = join(action, 'materialization.json')
   const existing = await readFile(cache, 'utf8').catch(() => null)
-  if (existing !== null)
-    return (JSON.parse(existing) as { stableProposal: StableProposal }).stableProposal
+  if (existing !== null) {
+    const cached = JSON.parse(existing) as {
+      stableProposal: StableProposal
+      materialization: { proposerResourceReceiptDigest?: unknown }
+    }
+    await assertV011('materialization-receipt', cached.materialization)
+    const resource = await readProposalResourceReceipt(action)
+    if (cached.materialization.proposerResourceReceiptDigest !== digestV011(resource)) {
+      throw new Error('v0.1.1 proposal: cached materialization resource binding mismatch')
+    }
+    return cached.stableProposal
+  }
   const exported = await exportForProposal(config, input.generation, input.attempt)
   const requiredParentEvidence = await exactParentEvidenceBinding(config, input, exported.manifest)
   const exportDigest = digestV011(canonicalV011(exported.manifest))
@@ -910,6 +967,13 @@ async function realV011Proposal(
         stderr: result.stderr,
         resource: result.resource,
       }
+      try {
+        assertProposalResourceReceipt(result.resource)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'invalid proposal resource receipt'
+        await retainProposalRejection(action, 'PROPOSAL_SANDBOX_REJECT', message)
+        throw error
+      }
       if (result.exitCode !== 0) {
         const message = `v0.1.1 real proposer failed: ${result.stderr}`
         await retainProposalRejection(action, 'PROPOSAL_SANDBOX_REJECT', message)
@@ -927,6 +991,12 @@ async function realV011Proposal(
       await writeExclusive(join(action, 'gateway-receipts.json'), receiptsBytes).catch((error) =>
         cleanupErrors.push(error),
       )
+      if (sandboxResultRef.value !== undefined) {
+        await writeExclusive(
+          join(action, 'proposal-resource-receipt.json'),
+          canonicalV011(sandboxResultRef.value.resource) + '\n',
+        ).catch((error) => cleanupErrors.push(error))
+      }
       await writeExclusive(
         join(action, 'proposal-diagnostic.json'),
         JSON.stringify(
@@ -963,6 +1033,7 @@ async function realV011Proposal(
         : new Error(String(cleanupErrors[0]))
     }
   }
+  const proposalResource = await readProposalResourceReceipt(action)
   const worker = JSON.parse(await readFile(workerOutput, 'utf8')) as {
     transcript: { assistantText: string; toolTrace: unknown[]; eventCount: number }
     toolCallCount: number
@@ -996,6 +1067,7 @@ async function realV011Proposal(
       capabilityCatalog: catalog,
       transcript: Buffer.from(worker.transcript.assistantText),
       toolTrace: Buffer.from(JSON.stringify(worker.transcript.toolTrace)),
+      proposerResourceReceiptDigest: digestV011(proposalResource),
       proposerUsage: {
         gatewayReceipts: JSON.parse(await readFile(join(action, 'gateway-receipts.json'), 'utf8'))
           .length,

@@ -68,6 +68,7 @@ export interface V011MaterializationReceipt {
   proposalDigest: `sha256:${string}`
   transcriptDigest: `sha256:${string}`
   toolTraceDigest: `sha256:${string}`
+  proposerResourceReceiptDigest: `sha256:${string}`
   operations: TreeOperation[]
   capabilityCatalogDigest: `sha256:${string}`
   retainedCapabilityRequests: CapabilityRequest[]
@@ -269,6 +270,7 @@ export async function materializeV011Proposal(input: {
   capabilityCatalog: FrozenCapabilityCatalog
   transcript: Uint8Array
   toolTrace: Uint8Array
+  proposerResourceReceiptDigest: `sha256:${string}`
   proposerUsage: Record<string, unknown>
   ancestorClustersRequiringReconciliation?: string[]
   requiredParentEvidence?: V011ParentEvidenceBinding
@@ -336,6 +338,7 @@ export async function materializeV011Proposal(input: {
     proposalDigest: `sha256:${proposalRef.digest}`,
     transcriptDigest: digestV011(input.transcript),
     toolTraceDigest: digestV011(input.toolTrace),
+    proposerResourceReceiptDigest: input.proposerResourceReceiptDigest,
     operations: semantic.operations,
     capabilityCatalogDigest: input.capabilityCatalog.digest,
     retainedCapabilityRequests: proposal.capabilityRequests,

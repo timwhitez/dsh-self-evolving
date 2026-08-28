@@ -237,6 +237,183 @@ export function resourcePolicyDigest(policy: ResourcePolicyV1): `sha256:${string
   return `sha256:${createHash('sha256').update(JSON.stringify(validated)).digest('hex')}`
 }
 
+export interface CompletedResourceReceiptExpectation {
+  policy: ResourcePolicyV1
+  writableMounts: ReadonlyArray<{ path: string; maxBytes: number; maxFiles: number }>
+  label?: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
+}
+
+function canonicalData(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalData).join(',')}]`
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalData(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function nonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+/**
+ * Validate a successful sandbox resource receipt before it becomes admission,
+ * resume, or audit authority. A digest alone only proves byte stability; this
+ * verifies the frozen policy, actual enforcement, complete usage/event
+ * metrics, bounded storage peaks, and natural zero-exit completion (#51).
+ */
+export function assertCompletedResourceDomainReceipt(
+  value: unknown,
+  expectation: CompletedResourceReceiptExpectation,
+): ResourceDomainReceipt {
+  const label = expectation.label ?? 'resource receipt'
+  const fail = (detail: string): never => {
+    throw new Error(`${label}: ${detail}`)
+  }
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      'schemaVersion',
+      'policyDigest',
+      'policy',
+      'enforcement',
+      'usage',
+      'events',
+      'terminationCause',
+      'exitCode',
+      'signal',
+    ]) ||
+    value['schemaVersion'] !== 1
+  ) {
+    return fail('invalid envelope')
+  }
+  const expectedPolicy = validateResourcePolicy(expectation.policy)
+  if (
+    canonicalData(value['policy']) !== canonicalData(expectedPolicy) ||
+    value['policyDigest'] !== resourcePolicyDigest(expectedPolicy)
+  ) {
+    return fail('frozen policy/digest mismatch')
+  }
+
+  const enforcement = value['enforcement']
+  const expectedMounts = expectation.writableMounts.map(({ path, maxBytes, maxFiles }) => ({
+    path,
+    maxBytes,
+    maxFiles,
+  }))
+  if (
+    !isRecord(enforcement) ||
+    !exactKeys(enforcement, [
+      'cgroup',
+      'rlimits',
+      'ioDevices',
+      'writableStorage',
+      'writableStoragePeakSamplingMs',
+      'writableMounts',
+      'sandbox',
+    ]) ||
+    enforcement['cgroup'] !== 'v2-delegated' ||
+    enforcement['rlimits'] !== true ||
+    enforcement['writableStorage'] !== 'tmpfs-size-inode-hard-limit' ||
+    enforcement['writableStoragePeakSamplingMs'] !== 10 ||
+    canonicalData(enforcement['writableMounts']) !== canonicalData(expectedMounts) ||
+    canonicalData(enforcement['sandbox']) !==
+      canonicalData({
+        filesystemRoot: 'read-only',
+        writablePaths: 'bounded-tmpfs-only',
+        nestedUserNamespaces: 'disabled',
+        targetCapabilities: 'none',
+        noNewPrivileges: true,
+      })
+  ) {
+    return fail('enforcement/mount contract mismatch')
+  }
+  const ioDevices = enforcement['ioDevices']
+  if (
+    !Array.isArray(ioDevices) ||
+    ioDevices.length === 0 ||
+    ioDevices.some((device) => typeof device !== 'string' || !/^\d+:\d+$/.test(device)) ||
+    new Set(ioDevices).size !== ioDevices.length
+  ) {
+    return fail('I/O controller device evidence is invalid')
+  }
+
+  const usage = value['usage']
+  const usageKeys = [
+    'memoryPeakBytes',
+    'pidsPeak',
+    'cpuUsageUsec',
+    'cpuUserUsec',
+    'cpuSystemUsec',
+    'cpuThrottledUsec',
+    'cpuThrottledPeriods',
+    'ioReadBytes',
+    'ioWriteBytes',
+    'ioReadOps',
+    'ioWriteOps',
+    'writableStoragePeakBytes',
+    'writableStoragePeakFiles',
+  ] as const
+  if (
+    !isRecord(usage) ||
+    !exactKeys(usage, usageKeys) ||
+    usageKeys.some((key) => !nonNegativeSafeInteger(usage[key]))
+  ) {
+    return fail('usage metrics are incomplete or unsafe')
+  }
+  const mountByteLimit = expectedMounts.reduce((total, mount) => total + mount.maxBytes, 0)
+  const mountFileLimit = expectedMounts.reduce((total, mount) => total + mount.maxFiles, 0)
+  if (
+    (usage['memoryPeakBytes'] as number) > expectedPolicy.memoryMaxBytes ||
+    (usage['pidsPeak'] as number) > expectedPolicy.pidsMax ||
+    Math.abs(
+      (usage['cpuUsageUsec'] as number) -
+        ((usage['cpuUserUsec'] as number) + (usage['cpuSystemUsec'] as number)),
+    ) > 1 ||
+    (usage['writableStoragePeakBytes'] as number) >
+      Math.min(expectedPolicy.writableStorageMaxBytes, mountByteLimit) ||
+    (usage['writableStoragePeakFiles'] as number) >
+      Math.min(expectedPolicy.writableStorageMaxFiles, mountFileLimit)
+  ) {
+    return fail(`usage metrics exceed frozen limits or are inconsistent: ${JSON.stringify(usage)}`)
+  }
+
+  const events = value['events']
+  const eventKeys = [
+    'memoryMaxEvents',
+    'memoryOomEvents',
+    'memoryOomKills',
+    'pidsMaxEvents',
+  ] as const
+  if (
+    !isRecord(events) ||
+    !exactKeys(events, eventKeys) ||
+    eventKeys.some((key) => !nonNegativeSafeInteger(events[key]) || events[key] !== 0)
+  ) {
+    return fail('successful stage contains invalid or non-zero limit events')
+  }
+  if (
+    value['terminationCause'] !== 'COMPLETED' ||
+    value['exitCode'] !== 0 ||
+    value['signal'] !== null
+  ) {
+    return fail('stage did not complete with exit code zero')
+  }
+  return value as unknown as ResourceDomainReceipt
+}
+
 function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException).code
 }

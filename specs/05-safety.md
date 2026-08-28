@@ -78,10 +78,15 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
   创建 nested user namespace，target 不得通过新 user/mount namespace 重新获得 mount capability；
 - 缺少可委派 controller、配额设置失败、收据控制通道异常或资源超限一律 fail closed；不得退回只有
   wall timeout 的执行路径；
+- 成功不得通过 `cgroup.kill` 合成：target 必须零退出，trusted supervisor 必须先完成最终 storage sample
+  并写出完整 control receipt；admission/resume/audit 必须按冻结 policy、mount、peak、event、exit/signal
+  逐字段验证，不能只验证 receipt digest；
 - no host home、SSH agent、cloud metadata、Docker socket、controller IPC；
 - network 默认仅允许 fixed LLM gateway 和 approved package mirror；build phase no network；
 - trace 文件视为不可信数据，工具输出不能改变 system policy；
 - output exporter follow-no-symlink，并在 sandbox 外重新 canonicalize。
+- proposal resource receipt 必须独立持久化，其 digest 必须进入 materialization receipt；cache/audit 缺失
+  任一侧或语义不一致时不得采用既有 proposal。
 
 ### 5.3 Task sandbox
 

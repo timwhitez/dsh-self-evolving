@@ -14,11 +14,14 @@ import {
 } from '@agentclientprotocol/sdk'
 import {
   buildCandidateFromFrozenSource,
+  CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
   type BuildArtifactFile,
   type BuildReceipt,
 } from '../builder-sandbox.js'
 import { packCapsule, type CapsuleOutput, type RuntimeClosureInput } from '../capsule.js'
 import {
+  assertCompletedResourceDomainReceipt,
+  CANDIDATE_BUILD_RESOURCE_POLICY_V1,
   CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
   CANDIDATE_TEST_RESOURCE_POLICY_V1,
   type ResourceDomainReceipt,
@@ -105,6 +108,23 @@ export interface V011AdmissionOutput {
 export const V011_PACKED_OVERLAY_CONTROL_LIMIT_BYTES = 16 * 1024
 export const V011_PACKED_OVERLAY_ACP_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024
 
+const V011_CANDIDATE_TEST_WRITABLE_MOUNTS_V1 = [
+  { path: '/tmp', maxBytes: 96 * 1024 * 1024, maxFiles: 3072, exportFiles: false },
+  { path: '/dev/shm', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
+] satisfies WritableSandboxMount[]
+
+const V011_LOADER_WRITABLE_MOUNTS_V1 = [
+  { path: '/tmp', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
+  { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 512, exportFiles: false },
+] satisfies WritableSandboxMount[]
+
+const V011_PACKED_OVERLAY_WRITABLE_MOUNTS_V1 = [
+  { path: '/tmp', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
+  { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 512, exportFiles: false },
+  { path: '/workspace', maxBytes: 64 * 1024 * 1024, maxFiles: 2048, exportFiles: false },
+  { path: '/logs', maxBytes: 64 * 1024 * 1024, maxFiles: 2048, exportFiles: false },
+] satisfies WritableSandboxMount[]
+
 interface V011PackedOverlayReadyControl {
   schemaVersion: 1
   phase: 'ready'
@@ -122,6 +142,85 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   const actual = Object.keys(value).sort()
   const expected = [...keys].sort()
   return actual.length === expected.length && actual.every((key, index) => key === expected[index])
+}
+
+export function assertV011AdmissionResourceReceipt(
+  value: unknown,
+  expectedCandidateDigest: string,
+): V011AdmissionResourceReceipt {
+  if (
+    !/^sha256:[0-9a-f]{64}$/.test(expectedCandidateDigest) ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'candidateDigest',
+      'candidateTests',
+      'builds',
+      'loaderSolve',
+      'loaderPropose',
+      'packedOverlayBoot',
+    ]) ||
+    value['schemaVersion'] !== 1 ||
+    value['candidateDigest'] !== expectedCandidateDigest ||
+    !Array.isArray(value['builds']) ||
+    value['builds'].length !== 2
+  ) {
+    throw new Error('v0.1.1 admission resource receipt: invalid envelope/identity')
+  }
+  const verify = (
+    stage: string,
+    receipt: unknown,
+    policy: ResourcePolicyV1,
+    mounts: WritableSandboxMount[],
+  ) =>
+    assertCompletedResourceDomainReceipt(receipt, {
+      policy,
+      writableMounts: mounts,
+      label: `v0.1.1 admission resource ${stage}`,
+    })
+  const builds = value['builds']
+  return {
+    schemaVersion: 1,
+    candidateDigest: expectedCandidateDigest as `sha256:${string}`,
+    candidateTests: verify(
+      'candidateTests',
+      value['candidateTests'],
+      CANDIDATE_TEST_RESOURCE_POLICY_V1,
+      V011_CANDIDATE_TEST_WRITABLE_MOUNTS_V1,
+    ),
+    builds: [
+      verify(
+        'builds[0]',
+        builds[0],
+        CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+        CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
+      ),
+      verify(
+        'builds[1]',
+        builds[1],
+        CANDIDATE_BUILD_RESOURCE_POLICY_V1,
+        CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
+      ),
+    ],
+    loaderSolve: verify(
+      'loaderSolve',
+      value['loaderSolve'],
+      CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+      V011_LOADER_WRITABLE_MOUNTS_V1,
+    ),
+    loaderPropose: verify(
+      'loaderPropose',
+      value['loaderPropose'],
+      CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+      V011_LOADER_WRITABLE_MOUNTS_V1,
+    ),
+    packedOverlayBoot: verify(
+      'packedOverlayBoot',
+      value['packedOverlayBoot'],
+      CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
+      V011_PACKED_OVERLAY_WRITABLE_MOUNTS_V1,
+    ),
+  }
 }
 
 function decodeUtf8(bytes: Uint8Array, context: string): string {
@@ -452,10 +551,7 @@ async function runCandidateTests(
       '--no-file-parallelism',
       ...tests,
     ],
-    mounts: [
-      { path: '/tmp', maxBytes: 96 * 1024 * 1024, maxFiles: 3072, exportFiles: false },
-      { path: '/dev/shm', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
-    ],
+    mounts: V011_CANDIDATE_TEST_WRITABLE_MOUNTS_V1,
     policy: CANDIDATE_TEST_RESOURCE_POLICY_V1,
     timeoutMs: 120_000,
   })
@@ -597,10 +693,7 @@ async function runLoaderProbe(input: {
     sandboxNode: '/runtime/node',
     targetCommand: '/runtime/node',
     targetArgs: [worker, candidateEntry, input.candidateId, input.mode],
-    mounts: [
-      { path: '/tmp', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
-      { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 512, exportFiles: false },
-    ],
+    mounts: V011_LOADER_WRITABLE_MOUNTS_V1,
     policy: CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
     timeoutMs: 60_000,
   })
@@ -712,12 +805,7 @@ async function runPackedOverlayProbe(input: {
     sandboxNode: '/runtime/node',
     targetCommand: '/runtime/node',
     targetArgs: [worker, productionEntry, '/runtime/cordis.yml', input.candidateId],
-    mounts: [
-      { path: '/tmp', maxBytes: 32 * 1024 * 1024, maxFiles: 1024, exportFiles: false },
-      { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 512, exportFiles: false },
-      { path: '/workspace', maxBytes: 64 * 1024 * 1024, maxFiles: 2048, exportFiles: false },
-      { path: '/logs', maxBytes: 64 * 1024 * 1024, maxFiles: 2048, exportFiles: false },
-    ],
+    mounts: V011_PACKED_OVERLAY_WRITABLE_MOUNTS_V1,
     policy: CANDIDATE_RUNTIME_RESOURCE_POLICY_V1,
   })
   const child = sandbox.child
@@ -810,10 +898,11 @@ async function runPackedOverlayProbe(input: {
   let completed: Omit<V011PackedOverlayProbeReceipt, 'resource'> | undefined
   let failure: Error | undefined
   let resource: ResourceDomainReceipt | undefined
+  let acpStream: ReturnType<typeof ndJsonStream> | undefined
   try {
     await Promise.race([controlReady, prematureExit, timeout, stdoutFailure])
     stdoutGuard.beginHandshake()
-    const stream = ndJsonStream(
+    acpStream = ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(stdoutGuard) as ReadableStream<Uint8Array>,
     )
@@ -825,7 +914,7 @@ async function runPackedOverlayProbe(input: {
         return Promise.resolve({ outcome: { outcome: 'cancelled' } })
       },
     })
-    const client = new ClientSideConnection(makeClient, stream)
+    const client = new ClientSideConnection(makeClient, acpStream)
     const initialized = await Promise.race([
       client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} }),
       prematureExit,
@@ -867,11 +956,48 @@ async function runPackedOverlayProbe(input: {
     )
   } finally {
     if (timer !== undefined) clearTimeout(timer)
-    child.stdin.destroy()
+    if (completed !== undefined && acpStream !== undefined) {
+      try {
+        // End the ACP input stream after the successful handshake. The
+        // trusted one-shot probe wrapper treats EOF as a successful shutdown,
+        // allowing the namespace supervisor to sample storage and emit its
+        // completion control record. Killing the cgroup here used to destroy
+        // that record and nevertheless admit a CONTROL_PROTOCOL_FAILURE
+        // receipt (#51).
+        // `ndJsonStream().writable.close()` only closes the JSON wrapper; the
+        // SDK intentionally provides no close sink for the underlying byte
+        // stream. End the owned child pipe itself so the target observes EOF.
+        await new Promise<void>((done, reject) => {
+          child.stdin.once('error', reject)
+          child.stdin.end(done)
+        })
+        let shutdownTimer: NodeJS.Timeout | undefined
+        const exited = await Promise.race([
+          childSettled.then(() => true),
+          new Promise<false>((done) => {
+            shutdownTimer = setTimeout(() => done(false), 10_000)
+          }),
+        ])
+        if (shutdownTimer !== undefined) clearTimeout(shutdownTimer)
+        if (!exited) {
+          failure ??= new Error('v0.1.1 admission: packed overlay ACP did not exit after input EOF')
+          await sandbox.kill('CONTROL_PROTOCOL_FAILURE')
+          await childSettled
+        }
+      } catch (cause) {
+        failure ??= new Error('v0.1.1 admission: packed overlay graceful shutdown failed', {
+          cause,
+        })
+        await sandbox.kill('CONTROL_PROTOCOL_FAILURE')
+        await childSettled
+      }
+    } else {
+      child.stdin.destroy()
+      await sandbox.kill('CONTROL_PROTOCOL_FAILURE')
+      await childSettled
+    }
     child.stdout.unpipe(stdoutGuard)
     stdoutGuard.destroy()
-    await sandbox.kill(completed === undefined ? 'CONTROL_PROTOCOL_FAILURE' : 'COMPLETED')
-    await childSettled
     resource = (await sandbox.finish()).resource
   }
   if (failure !== undefined) {
@@ -1014,15 +1140,18 @@ export async function admitV011Candidate(input: {
       mode: 'propose',
     })
     const fixedReplay = digestV011({ solve: solve.replayDigest, propose: propose.replayDigest })
-    const resourceReceipt: V011AdmissionResourceReceipt = {
-      schemaVersion: 1,
+    const resourceReceipt = assertV011AdmissionResourceReceipt(
+      {
+        schemaVersion: 1,
+        candidateDigest,
+        candidateTests: candidateTests.resource,
+        builds: buildReceipt.buildResources,
+        loaderSolve: solve.resource,
+        loaderPropose: propose.resource,
+        packedOverlayBoot: packedOverlay.resource,
+      },
       candidateDigest,
-      candidateTests: candidateTests.resource,
-      builds: buildReceipt.buildResources,
-      loaderSolve: solve.resource,
-      loaderPropose: propose.resource,
-      packedOverlayBoot: packedOverlay.resource,
-    }
+    )
     const receipt: V011AdmissionReceipt = {
       schemaVersion: 1,
       protocol: V011_PROTOCOL,

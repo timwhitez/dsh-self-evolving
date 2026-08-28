@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { digestV011, isValidCandidateId, validateV011 } from '@dsh-self-evolving/candidate-sdk'
+import {
+  assertV011AdmissionResourceReceipt,
+  digestV011,
+  isValidCandidateId,
+  validateV011,
+} from '@dsh-self-evolving/candidate-sdk'
 import type { BuiltCandidate } from './engine.js'
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/
@@ -54,12 +59,22 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
     candidate?: { buildCandidateId?: unknown }
   }
   const admissionValidation = await validateV011('admission-receipt', admission)
+  let resourceValid = false
+  if (typeof built.candidateId === 'string' && DIGEST.test(built.candidateId)) {
+    try {
+      assertV011AdmissionResourceReceipt(resource, built.candidateId)
+      resourceValid = true
+    } catch {
+      resourceValid = false
+    }
+  }
 
   const expectedSourceRoot = resolve(root, 'tree')
   const expectedCapsuleRoot = resolve(root, 'capsule')
   const matches =
     typeof built.candidateId === 'string' &&
     DIGEST.test(built.candidateId) &&
+    resourceValid &&
     admissionValidation.valid &&
     typeof admission.resourceReceiptDigest === 'string' &&
     admission.resourceReceiptDigest === digestV011(resource) &&

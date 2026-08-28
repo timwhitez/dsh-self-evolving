@@ -338,6 +338,13 @@ read-only, and after mounting the supervisor freezes its private user namespace'
 the target cannot reacquire mount capability. Seed trees enter through a read-only mount, and output is
 inspected/exported only after namespace descendants are killed. Resource policies have versioned ids; every receipt
 carries the full policy and its digest, and build identity also binds the build policy digests.
+Successful stages additionally require a complete supervisor control record, exact frozen policy/mount enforcement,
+non-null bounded-storage peaks, zero resource-limit events and `COMPLETED` with exit code 0/no signal. A content digest
+alone is not authority. The packed-overlay probe closes its owned ACP input and lets a trusted one-shot wrapper exit
+zero so the namespace supervisor can publish that record; `cgroup.kill` is reserved for failure/teardown and can never
+be relabeled as success. Admission, stable-build resume and audit all replay the same semantic receipt validator.
+Proposal execution persists a separate receipt whose digest is a required top-level materialization field; cached
+materializations and the run audit reject a missing, rehashed-failure or policy-drifted receipt.
 
 **Why:** Bubblewrap namespaces, process-group cleanup and wall timeouts limit reach and eventually stop descendants,
 but they do not prevent pre-timeout host OOM, PID pressure, CPU starvation or writable-storage exhaustion, nor do they

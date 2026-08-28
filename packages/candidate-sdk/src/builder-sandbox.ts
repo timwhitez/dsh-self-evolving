@@ -32,7 +32,7 @@ import {
   CANDIDATE_BUILD_RESOURCE_POLICY_V1,
   type ResourceDomainReceipt,
 } from './resource-domain.js'
-import { spawnResourceBoundSandbox } from './resource-sandbox.js'
+import { spawnResourceBoundSandbox, type WritableSandboxMount } from './resource-sandbox.js'
 import { scanPaths, type ScanResult } from './scan/policy-scan.js'
 import { freezeDeclaredSource, type FrozenCandidateSource } from './source-snapshot.js'
 import { validateManifest, type ValidationResult } from './validate/index.js'
@@ -75,6 +75,12 @@ export interface BuildArtifactFile {
   path: string
   bytes: Uint8Array
 }
+
+export const CANDIDATE_BUILD_WRITABLE_MOUNTS_V1 = [
+  { path: '/tmp', maxBytes: 16 * 1024 * 1024, maxFiles: 128, exportFiles: false },
+  { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 128, exportFiles: false },
+  { path: '/output', maxBytes: 96 * 1024 * 1024, maxFiles: 256, exportFiles: true },
+] satisfies WritableSandboxMount[]
 
 /** sha256 of `relpath:hash\n` entries sorted by path. */
 function hashArtifacts(files: BuildArtifactFile[]): string {
@@ -257,11 +263,7 @@ async function execTrustedTsc(input: {
     sandboxNode,
     targetCommand: sandboxNode,
     targetArgs: ['/toolchain/typescript/bin/tsc', '--project', '/build/tsconfig.json'],
-    mounts: [
-      { path: '/tmp', maxBytes: 16 * 1024 * 1024, maxFiles: 128, exportFiles: false },
-      { path: '/dev/shm', maxBytes: 16 * 1024 * 1024, maxFiles: 128, exportFiles: false },
-      { path: '/output', maxBytes: 96 * 1024 * 1024, maxFiles: 256, exportFiles: true },
-    ],
+    mounts: CANDIDATE_BUILD_WRITABLE_MOUNTS_V1,
     policy: CANDIDATE_BUILD_RESOURCE_POLICY_V1,
   })
   sandbox.child.stdin.destroy()

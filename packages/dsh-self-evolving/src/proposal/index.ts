@@ -33,6 +33,8 @@ export {
   type ArchiveCatalog,
 } from './catalog.js'
 export {
+  PROPOSAL_RESOURCE_POLICY_V1,
+  PROPOSAL_WRITABLE_MOUNTS_V1,
   runProposalSandbox,
   normalizeSandboxPath,
   type ProposalSandboxMounts,
