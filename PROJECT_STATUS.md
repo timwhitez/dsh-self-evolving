@@ -30,10 +30,11 @@
   `sha256:` digest while `capsule.json` exposed the Candidate SDK `c_<base32>` build identity to Gate 5.
 - v0.1.1 now uses the admission digest as the single controller/overlay/capsule/evaluator identity. The SDK build ID
   remains explicit as `candidate.buildCandidateId` and is cross-bound in the admission receipt.
-- Engine failure-pool selection, trial accounting, outcome pairing and audit derive the baseline role from the actual
-  admitted baseline identity instead of the historical `baseline` alias. Resume and audit reject pre-repair stable
-  state whose record, receipt and capsule identity chain does not match; there is no silent state migration.
-- The repair passes format, lint, typecheck, 813 unit tests (+1 platform skip), and 36 no-key E2E tests (+4
+- Engine failure-pool selection and trial accounting derive the baseline role from the admitted root identity instead
+  of the historical `baseline` alias. Outcome pairing freezes that same root across every generation; audit binds each
+  disk record/receipt/capsule chain to its controller node, admission event and generated-child build receipt.
+- Resume and audit reject pre-repair or cross-domain state; there is no silent state migration. The repair passes
+  format, lint, typecheck, 816 unit tests (+1 platform skip), and 36 no-key E2E tests (+4
   credential-gated skips), including real Harbor ACP, extract-elf smoke, offline packed Loader and crash/replay paths.
 - This is an attribution/correctness repair only. It creates no new benchmark, improvement, promotion, sealed or
   release evidence.

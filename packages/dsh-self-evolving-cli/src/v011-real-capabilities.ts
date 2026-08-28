@@ -58,8 +58,8 @@ import { evaluationReserveUsd } from './engine.js'
 import { runDoctor } from './doctor.js'
 import { loadTrustedRoute } from './trusted-route.js'
 import {
+  createV011OutcomeObservationSelector,
   readV011StableBuild,
-  selectV011OutcomeObservations,
   v011BuiltIdentity,
 } from './v011-identity.js'
 import {
@@ -1139,6 +1139,7 @@ export async function createV011RealCapabilities(
   const route = await loadTrustedRoute()
   const catalog = await capabilityCatalog(config)
   const baseline = await prepareBaseline(config, catalog)
+  const selectOutcomeObservations = createV011OutcomeObservationSelector(baseline.candidateId)
   return {
     preflight: () => runDoctor(config as never),
     baseline,
@@ -1155,13 +1156,11 @@ export async function createV011RealCapabilities(
       ) {
         throw new Error('v0.1.1 outcome: child proposal binding missing')
       }
-      const { baseline: baselineObservation, child: childObservation } =
-        selectV011OutcomeObservations({
-          parentCandidateId: input.parent.candidateId,
-          childCandidateId: input.child.candidateId,
-          taskId: input.taskId,
-          observations: input.observations,
-        })
+      const { baseline: baselineObservation, child: childObservation } = selectOutcomeObservations({
+        childCandidateId: input.child.candidateId,
+        taskId: input.taskId,
+        observations: input.observations,
+      })
       const outcomePath = join(
         config.stateDir,
         'v011',

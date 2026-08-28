@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   assertExactParentEvidenceGrounding,
+  readAll,
   readControllerStatus,
   type V011Analysis,
   type V011ParentEvidenceBinding,
@@ -38,6 +39,69 @@ async function json(path: string): Promise<unknown | null> {
 
 function sha(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+interface AuditedStableBuildIdentity {
+  candidateId: string
+  sourceDigest: string
+  capsuleDigest: string
+  buildManifestDigest: string
+}
+
+interface AuditedIdentityEvent {
+  type: string
+  payload: unknown
+}
+
+function identityPayloadMatches(payload: unknown, built: AuditedStableBuildIdentity): boolean {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return false
+  const row = payload as Record<string, unknown>
+  return (
+    row['candidateId'] === built.candidateId &&
+    row['sourceDigest'] === built.sourceDigest &&
+    row['capsuleDigest'] === built.capsuleDigest &&
+    row['buildManifestDigest'] === built.buildManifestDigest
+  )
+}
+
+export function verifyV011ControllerIdentityBinding(input: {
+  label: string
+  built: AuditedStableBuildIdentity
+  expectedParent: string | null
+  requireBuildReceipt: boolean
+  candidates: Record<string, { candidateId: string; canonicalParent: string | null }>
+  events: AuditedIdentityEvent[]
+}): string[] {
+  const reasons: string[] = []
+  const node = input.candidates[input.built.candidateId]
+  if (
+    node === undefined ||
+    node.candidateId !== input.built.candidateId ||
+    node.canonicalParent !== input.expectedParent
+  ) {
+    reasons.push(`${input.label} disk identity does not bind the controller candidate/parent`)
+  }
+
+  const admissions = input.events.filter((event) => {
+    if (event.type !== 'candidate.admitted') return false
+    const payload = event.payload as { candidateId?: unknown } | null
+    return payload?.candidateId === input.built.candidateId
+  })
+  if (admissions.length !== 1 || !identityPayloadMatches(admissions[0]?.payload, input.built)) {
+    reasons.push(`${input.label} disk identity does not bind exactly one admission event`)
+  }
+
+  if (input.requireBuildReceipt) {
+    const builds = input.events.filter((event) => {
+      if (event.type !== 'build.completed') return false
+      const payload = event.payload as { candidateId?: unknown } | null
+      return payload?.candidateId === input.built.candidateId
+    })
+    if (builds.length !== 1 || !identityPayloadMatches(builds[0]?.payload, input.built)) {
+      reasons.push(`${input.label} disk identity does not bind exactly one journal build receipt`)
+    }
+  }
+  return reasons
 }
 
 async function files(root: string): Promise<string[]> {
@@ -245,10 +309,27 @@ export async function verifyCapabilityCatalog(
 export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditReport> {
   const predecessor = await auditStableRun(config)
   const controller = await readControllerStatus(config as never)
+  const events = await readAll({
+    journalDir: join(config.stateDir, 'journal'),
+    runId: config.runId,
+    segmentMaxBytes: 16 * 1024 * 1024,
+  })
   const reasons = [...predecessor.reasons]
   const baselineRoot = join(config.stateDir, 'candidates', 'v011-baseline')
   const baselineIdentity = await readV011StableBuild(baselineRoot).catch(() => null)
   if (baselineIdentity === null) reasons.push('v0.1.1 baseline identity chain is incomplete')
+  else {
+    reasons.push(
+      ...verifyV011ControllerIdentityBinding({
+        label: 'baseline',
+        built: baselineIdentity,
+        expectedParent: null,
+        requireBuildReceipt: false,
+        candidates: controller.state.candidates,
+        events,
+      }),
+    )
+  }
   reasons.push(...(await verifyInvalidReplacementFixture(config, await deriveFixtureCross(config))))
   const baselineMigration = (await json(
     join(config.stateDir, 'candidates', 'v011-baseline', 'migration-receipt.json'),
@@ -271,9 +352,25 @@ export async function auditV011Run(config: V011DemoConfig): Promise<V011AuditRep
     })),
   )
   const generated = []
+  let previousCandidateId = baselineIdentity?.candidateId
   for (let generation = 1; generation <= 3; generation += 1) {
     const candidateRoot = join(config.stateDir, 'candidates', `generation-${generation}`)
     const built = await readV011StableBuild(candidateRoot).catch(() => null)
+    if (built !== null) {
+      reasons.push(
+        ...verifyV011ControllerIdentityBinding({
+          label: `generation ${generation}`,
+          built,
+          expectedParent: previousCandidateId ?? '__missing_v011_parent__',
+          requireBuildReceipt: true,
+          candidates: controller.state.candidates,
+          events,
+        }),
+      )
+      previousCandidateId = built.candidateId
+    } else {
+      previousCandidateId = undefined
+    }
     const admission = (await json(join(candidateRoot, 'admission-receipt.json'))) as {
       admitted?: unknown
       stageReceipts?: unknown

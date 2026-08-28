@@ -4,14 +4,15 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { digestV011 } from '@dsh-self-evolving/candidate-sdk'
 import {
+  createV011OutcomeObservationSelector,
   readV011StableBuild,
-  selectV011OutcomeObservations,
   v011BuiltIdentity,
 } from '../src/v011-identity.js'
 
 const roots: string[] = []
 const PARENT = `sha256:${'1'.repeat(64)}`
 const CHILD = `sha256:${'2'.repeat(64)}`
+const GRANDCHILD = `sha256:${'4'.repeat(64)}`
 const BUILD_ID = `c_${'a'.repeat(26)}`
 
 afterEach(async () => {
@@ -88,7 +89,7 @@ describe('v0.1.1 canonical candidate identity (issue #198)', () => {
     await expect(readV011StableBuild(legacy)).rejects.toThrow(/identity chain mismatch/)
   })
 
-  it('selects the parent observation by its canonical digest, not a baseline alias', () => {
+  it('keeps the admitted root baseline across generation 2/3 and distinct target tasks', () => {
     const observations = [
       {
         candidateId: PARENT,
@@ -98,14 +99,42 @@ describe('v0.1.1 canonical candidate identity (issue #198)', () => {
         reward: 0,
       },
       { candidateId: CHILD, taskId: 'task-1', attemptIndex: 0, status: 'pass' as const, reward: 1 },
+      {
+        candidateId: PARENT,
+        taskId: 'task-2',
+        attemptIndex: 0,
+        status: 'fail' as const,
+        reward: 0,
+      },
+      {
+        candidateId: CHILD,
+        taskId: 'task-2',
+        attemptIndex: 0,
+        status: 'pass' as const,
+        reward: 1,
+      },
+      {
+        candidateId: GRANDCHILD,
+        taskId: 'task-2',
+        attemptIndex: 0,
+        status: 'pass' as const,
+        reward: 1,
+      },
     ]
+    const select = createV011OutcomeObservationSelector(PARENT)
     expect(
-      selectV011OutcomeObservations({
-        parentCandidateId: PARENT,
+      select({
         childCandidateId: CHILD,
         taskId: 'task-1',
         observations,
       }),
     ).toEqual({ baseline: observations[0], child: observations[1] })
+    expect(
+      select({
+        childCandidateId: GRANDCHILD,
+        taskId: 'task-2',
+        observations,
+      }),
+    ).toEqual({ baseline: observations[2], child: observations[4] })
   })
 })

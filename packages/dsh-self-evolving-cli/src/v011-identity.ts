@@ -78,20 +78,27 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
   return built as BuiltCandidate
 }
 
-export function selectV011OutcomeObservations(input: {
-  parentCandidateId: string
+export function createV011OutcomeObservationSelector(baselineCandidateId: string): (input: {
   childCandidateId: string
   taskId: string
   observations: V011Observation[]
-}): { baseline: V011Observation; child: V011Observation } {
-  const baseline = input.observations.find(
-    (row) => row.candidateId === input.parentCandidateId && row.taskId === input.taskId,
-  )
-  const child = input.observations.find(
-    (row) => row.candidateId === input.childCandidateId && row.taskId === input.taskId,
-  )
-  if (baseline === undefined || child === undefined) {
-    throw new Error('v0.1.1 outcome: target observation pair incomplete')
+}) => {
+  baseline: V011Observation
+  child: V011Observation
+} {
+  if (!DIGEST.test(baselineCandidateId)) {
+    throw new Error('v0.1.1 outcome: invalid admitted baseline identity')
   }
-  return { baseline, child }
+  return (input) => {
+    const baseline = input.observations.find(
+      (row) => row.candidateId === baselineCandidateId && row.taskId === input.taskId,
+    )
+    const child = input.observations.find(
+      (row) => row.candidateId === input.childCandidateId && row.taskId === input.taskId,
+    )
+    if (baseline === undefined || child === undefined) {
+      throw new Error('v0.1.1 outcome: target observation pair incomplete')
+    }
+    return { baseline, child }
+  }
 }
