@@ -42,6 +42,7 @@ import {
 } from '@dsh-self-evolving/proposer'
 import { claimStagingDir, clearBuildIntent, publishClaimedStagingDir } from './build-claim.js'
 import { projectProposalGatewayRoute, type V011DemoConfig } from './config.js'
+import { GATE5_BROKER_PROTOCOL, GATE5_MODEL_SOCKET_TARGET } from './gate5-security.js'
 import type {
   BuiltCandidate,
   StableBuildInput,
@@ -349,10 +350,11 @@ function solverOverlay(config: V011DemoConfig): string {
     '- id: deepseek-responses',
     "  name: '@dsh-self-evolving/llm-responses'",
     '  config:',
-    '    apiKeyEnv: DEEPSEEK_API_KEY',
+    `    gatewaySocketPath: ${GATE5_MODEL_SOCKET_TARGET}`,
     '    reasoningEffort: high',
     `    maxTokens: ${config.model.maxOutputTokens}`,
-    `    defaultContextWindow: ${config.model.contextWindow}`,
+    `    contextWindow: ${config.model.contextWindow}`,
+    '    requestDeadlineMs: 1500000',
     '- id: sandbox',
     "  name: '@deepseek-ai/dsh-sandbox-local'",
     '- id: sandbox-policy',
@@ -409,20 +411,6 @@ function solverRuntime(config: V011DemoConfig) {
     entryBin: 'lib/bin.js',
   }
 }
-
-const credentialLauncher = [
-  '#!/bin/sh',
-  'set -eu',
-  'runtime=${0%/*}',
-  'secret_file=${DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE:-/run/dsh-self-evolving/provider.secret}',
-  'test -f "$secret_file"',
-  'DEEPSEEK_API_KEY=$(cat -- "$secret_file")',
-  'test -n "$DEEPSEEK_API_KEY"',
-  'export DEEPSEEK_API_KEY',
-  'unset DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE',
-  'exec "$runtime/dsh-self-evolving-acp" "$@"',
-  '',
-].join('\n')
 
 async function copyBaselineTree(config: V011DemoConfig, destination: string): Promise<void> {
   const source = join(config.repoRoot, 'packages', 'candidate-v011-baseline')
@@ -484,8 +472,11 @@ async function prepareBaseline(
       capsuleOutDir: join(staging, 'capsule'),
       runtimeClosure: solverRuntime(config),
       runnerOverlay: solverOverlay(config),
-      runnerFiles: { 'credential-launcher.sh': credentialLauncher },
-      provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
+      provenanceJson: JSON.stringify({
+        protocol: V011_PROTOCOL,
+        evaluationProtocol: GATE5_BROKER_PROTOCOL,
+        model: config.model,
+      }),
       sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
     })
     if (admission.buildReceipt.runtimePackageName === undefined) {
@@ -898,6 +889,7 @@ async function realV011Proposal(
       join(contractsInput, 'request.json'),
       JSON.stringify({
         route: lockedRoute,
+        contextWindow: config.model.contextWindow,
         proposalId,
         llmDeadlineMs: Math.max(60_000, sandboxTimeoutMs - 120_000),
         parentDigest: input.parent.sourceDigest,
@@ -1185,8 +1177,11 @@ async function realV011BuildUnretained(
       capsuleOutDir: join(staging, 'capsule'),
       runtimeClosure: solverRuntime(config),
       runnerOverlay: solverOverlay(config),
-      runnerFiles: { 'credential-launcher.sh': credentialLauncher },
-      provenanceJson: JSON.stringify({ protocol: V011_PROTOCOL, model: config.model }),
+      provenanceJson: JSON.stringify({
+        protocol: V011_PROTOCOL,
+        evaluationProtocol: GATE5_BROKER_PROTOCOL,
+        model: config.model,
+      }),
       sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
     })
     if (admission.buildReceipt.runtimePackageName === undefined) {

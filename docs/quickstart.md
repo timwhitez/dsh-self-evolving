@@ -13,6 +13,10 @@ The stable demo uses `DEEPSEEK_API_KEY` only in the trusted host process and cal
 route. It does not read Codex credentials and does not default to CPA. Credentials are never copied into the
 repository, config, candidate, command line, or durable evidence.
 
+During Harbor evaluation, one host-side broker owns the key for each trial. The candidate container receives only
+`/run/dsh-self-evolving/model.sock`; its agent phase has no direct Internet access and has neither a credential env
+nor a secret-file mount. Use a fresh run ID: pre-broker Gate 5 state is deliberately not resumed or migrated.
+
 ## Install the controller bundle from npm
 
 The controller bundle is published as `@dsh-self-evolving/core`. Provide an explicit state root and run id before

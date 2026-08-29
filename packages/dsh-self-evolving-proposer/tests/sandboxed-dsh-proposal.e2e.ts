@@ -116,6 +116,7 @@ async function prepareTopology(selectedRoute: ProposalGatewayRoute): Promise<{
     join(mounts.contracts, 'request.json'),
     JSON.stringify({
       route: selectedRoute,
+      contextWindow: 1_048_576,
       parentDigest,
       candidateId: receipt.candidateId,
       width: 3,

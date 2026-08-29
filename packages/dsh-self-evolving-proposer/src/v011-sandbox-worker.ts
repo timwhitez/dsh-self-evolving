@@ -14,6 +14,7 @@ import type { V011ParentEvidenceBinding } from '@dsh-self-evolving/core'
 
 interface WorkerRequest {
   route: ProposalGatewayRoute
+  contextWindow: number
   proposalId: string
   parentDigest: string
   parentEntryDigest: string
@@ -58,6 +59,8 @@ const modeContractValid =
     ))
 if (
   request === null ||
+  !Number.isSafeInteger(request.contextWindow) ||
+  request.contextWindow <= 0 ||
   !/^p_[0-9a-f]{32}$/.test(request.proposalId) ||
   !/^sha256:[0-9a-f]{64}$/.test(request.parentDigest) ||
   !/^sha256:[0-9a-f]{64}$/.test(request.parentEntryDigest) ||
@@ -135,6 +138,7 @@ try {
     new ProposalGatewayAdapter({
       socketPath: '/run/proposer-gateway.sock',
       route: request.route,
+      contextWindow: request.contextWindow,
       ...(request.llmDeadlineMs === undefined ? {} : { defaultDeadlineMs: request.llmDeadlineMs }),
     }),
   )

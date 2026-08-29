@@ -48,6 +48,7 @@ import type {
 import { evaluationReserveUsd } from './engine.js'
 import { claimStagingDir, clearBuildIntent, publishClaimedStagingDir } from './build-claim.js'
 import { loadTrustedRoute } from './trusted-route.js'
+import { GATE5_BROKER_PROTOCOL } from './gate5-security.js'
 
 const SOURCE_FILES = [
   'src/index.ts',
@@ -383,6 +384,7 @@ async function realProposal(
       join(mounts.contracts, 'request.json'),
       JSON.stringify({
         route: lockedRoute,
+        contextWindow: config.model.contextWindow,
         llmDeadlineMs: Math.max(60_000, sandboxTimeoutMs - 120_000),
         parentDigest: input.parent.sourceDigest,
         candidateId: input.parent.candidateId,
@@ -625,11 +627,38 @@ export async function applyCandidateSourceDiff(
 }
 
 function evaluatorRunId(config: StableDemoConfig, spec: StableEvaluationSpec): string {
-  return `stable-${createHash('sha256').update(spec.idempotencyKey).digest('hex').slice(0, 24)}`
+  return `stable-g5v2-${createHash('sha256')
+    .update(`${GATE5_BROKER_PROTOCOL}\0${spec.idempotencyKey}`)
+    .digest('hex')
+    .slice(0, 24)}`
 }
 
 function summaryPath(config: StableDemoConfig, runId: string): string {
   return join(config.stateDir, 'external-evaluator', runId, 'summary.json')
+}
+
+export function buildGate5EvaluatorEnvironment(
+  config: StableDemoConfig,
+  spec: StableEvaluationSpec,
+  runId: string,
+  reserveUsdMicros: number,
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GATE5_RUN_ID: runId,
+    GATE5_TASK_IDS: spec.taskId,
+    GATE5_ATTEMPTS: '1',
+    GATE5_CONCURRENCY: '1',
+    GATE5_TRIAL_RESERVE_USD_MICROS: String(reserveUsdMicros),
+    GATE5_EXPECTED_CANDIDATE_ID: spec.candidate.candidateId,
+    GATE5_EXPECTED_CAPSULE_DIGEST: spec.candidate.capsuleDigest,
+    DSH_SELF_EVOLVING_CANDIDATE_ROOT: spec.candidate.sourceRoot,
+    ...(spec.candidate.capsuleRoot === undefined
+      ? {}
+      : { DSH_SELF_EVOLVING_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
+    DSH_SELF_EVOLVING_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
+    TB21_DIR: config.terminalBenchRoot,
+  }
 }
 
 export function mapNormalizedStatus(status: unknown): 'pass' | 'fail' | 'invalid' {
@@ -701,18 +730,28 @@ export function selectFailureSeekingObservedTasks(
 
 export function createRealEvaluationProvider(config: StableDemoConfig, spec: StableEvaluationSpec) {
   const runId = evaluatorRunId(config, spec)
+  const reserveUsd = evaluationReserveUsd(config.limits.budgetUsd, config.limits.solverTrialsMax)
+  const reserveUsdMicros = Math.round(reserveUsd * 1_000_000)
+  const runEvaluator = () =>
+    exec(
+      join(config.repoRoot, 'node_modules', '.bin', 'tsx'),
+      [join(config.repoRoot, 'scripts', 'run-gate5-real-calibration.ts')],
+      {
+        cwd: config.repoRoot,
+        env: buildGate5EvaluatorEnvironment(config, spec, runId, reserveUsdMicros),
+      },
+    )
   return {
     async inspect() {
-      const summary = await stat(summaryPath(config, runId)).catch(() => null)
-      if (summary?.isFile()) return { status: 'terminal' as const, externalJobId: runId }
       const directory = await stat(join(config.stateDir, 'external-evaluator', runId)).catch(
         () => null,
       )
       if (directory !== null) {
         const rawTerminal = await stat(
-          join(config.stateDir, 'external-evaluator', runId, 'jobs', runId, 'result.json'),
+          join(config.stateDir, 'external-evaluator', runId, 'execution-terminal.json'),
         ).catch(() => null)
         if (rawTerminal?.isFile() === true) {
+          await runEvaluator()
           return { status: 'terminal' as const, externalJobId: runId }
         }
         throw new Error(`real evaluator: ambiguous incomplete prior external job ${runId}`)
@@ -721,55 +760,25 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
     },
     async launch() {
       await mkdir(join(config.stateDir, 'external-evaluator'), { recursive: true, mode: 0o700 })
-      await exec(
-        join(config.repoRoot, 'node_modules', '.bin', 'tsx'),
-        [join(config.repoRoot, 'scripts', 'run-gate5-real-calibration.ts')],
-        {
-          cwd: config.repoRoot,
-          env: {
-            ...process.env,
-            GATE5_RUN_ID: runId,
-            GATE5_TASK_IDS: spec.taskId,
-            GATE5_ATTEMPTS: '1',
-            GATE5_CONCURRENCY: '1',
-            DSH_SELF_EVOLVING_CANDIDATE_ROOT: spec.candidate.sourceRoot,
-            ...(spec.candidate.capsuleRoot === undefined
-              ? {}
-              : { DSH_SELF_EVOLVING_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
-            DSH_SELF_EVOLVING_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
-            TB21_DIR: config.terminalBenchRoot,
-          },
-        },
-      )
+      await runEvaluator()
       return { externalJobId: runId }
     },
     async collect(externalJobId: string): Promise<EvaluationObservation> {
       if (externalJobId !== runId) throw new Error('real evaluator: external job identity changed')
-      if ((await stat(summaryPath(config, runId)).catch(() => null)) === null) {
-        await exec(
-          join(config.repoRoot, 'node_modules', '.bin', 'tsx'),
-          [join(config.repoRoot, 'scripts', 'run-gate5-real-calibration.ts')],
-          {
-            cwd: config.repoRoot,
-            env: {
-              ...process.env,
-              GATE5_RUN_ID: runId,
-              GATE5_TASK_IDS: spec.taskId,
-              GATE5_ATTEMPTS: '1',
-              GATE5_CONCURRENCY: '1',
-              DSH_SELF_EVOLVING_CANDIDATE_ROOT: spec.candidate.sourceRoot,
-              ...(spec.candidate.capsuleRoot === undefined
-                ? {}
-                : { DSH_SELF_EVOLVING_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
-              DSH_SELF_EVOLVING_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
-              TB21_DIR: config.terminalBenchRoot,
-            },
-          },
-        )
+      const terminal = await stat(
+        join(config.stateDir, 'external-evaluator', runId, 'execution-terminal.json'),
+      ).catch(() => null)
+      if (terminal?.isFile() !== true) {
+        throw new Error('real evaluator: broker-v2 run has no terminal authority')
       }
+      await runEvaluator()
       const bytes = await readFile(summaryPath(config, runId), 'utf8')
       const summary = JSON.parse(bytes) as {
+        schemaVersion?: unknown
+        protocol?: unknown
+        runId?: unknown
         candidateId?: unknown
+        candidateCapsuleDigest?: unknown
         normalized: Array<{
           candidateId?: unknown
           taskId?: unknown
@@ -777,7 +786,6 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
           reward: number | null
           costUsd: number
           priced?: boolean
-          pricingReason?: string
         }>
       }
       const row = summary.normalized[0]
@@ -789,9 +797,16 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
       // Stamping caller-supplied identity onto unverified evidence would let
       // one candidate inherit another's result (issue #105).
       if (
+        summary.schemaVersion !== 2 ||
+        summary.protocol !== GATE5_BROKER_PROTOCOL ||
+        summary.runId !== runId ||
         summary.candidateId !== spec.candidate.candidateId ||
+        summary.candidateCapsuleDigest !== spec.candidate.capsuleDigest ||
         row.candidateId !== spec.candidate.candidateId ||
-        row.taskId !== spec.taskId
+        row.taskId !== spec.taskId ||
+        row.priced !== true ||
+        !Number.isFinite(row.costUsd) ||
+        row.costUsd < 0
       ) {
         throw new Error(
           'real evaluator: existing evaluator summary does not bind this candidate/task request',
@@ -804,20 +819,9 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
         status: mapNormalizedStatus(row.status),
         reward: row.reward,
         costUsd: row.costUsd,
-        // A summary written without the priced flag (or with it false) means
-        // the DSH usage evidence was missing, unreadable, or eventless: keep
-        // that state structured instead of collapsing to a measured zero
-        // (issue #108).
-        pricing:
-          row.priced === true && Number.isFinite(row.costUsd) && row.costUsd >= 0
-            ? { state: 'priced' }
-            : {
-                state: 'unknown',
-                reason:
-                  typeof row.pricingReason === 'string' && row.pricingReason.length > 0
-                    ? row.pricingReason
-                    : 'DSH usage evidence missing, unreadable, or without usage events',
-              },
+        // Broker-v2 collection has already rejected missing/unmatched usage;
+        // only a signed, reconstructed micro-USD settlement reaches here.
+        pricing: { state: 'priced' },
         rawEvidenceDigests: [sha256(bytes)],
       } as EvaluationObservation
     },
@@ -836,7 +840,7 @@ export async function createRealCapabilities(
   return {
     preflight: () => runDoctor(config),
     baseline: {
-      candidateId: 'baseline',
+      candidateId: `sha256:${receipt.sourceHash}`,
       sourceDigest: `sha256:${receipt.sourceHash}`,
       capsuleDigest: `sha256:${receipt.capsuleHash}`,
       buildManifestDigest: sha256(

@@ -1,7 +1,98 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_V1_CAPSULE_INTEGRITY_INVALID`; `GATE_1_TREE_V2_IMPLEMENTED_REVALIDATION_PENDING`; `GATE_2`–`GATE_7` / `V011_A`–`V011_E` 为 predecessor evidence；`V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`（不证明 tree-v2 capsule identity）；`GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_V1_CAPSULE_INTEGRITY_INVALID`; `GATE_1_TREE_V2_ACCEPTED`; `GATE_2`–`GATE_4` 为 predecessor evidence；`GATE_5_V1_SECURITY_INVALID`; `GATE_5_BROKER_V2_IMPLEMENTED_OFFICIAL_REVALIDATION_PENDING`; `GATE_6`/`GATE_7`/`V011_A`–`V011_E` 为 predecessor evidence；`V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`（不证明 tree-v2 lineage 或 Gate 5 task credential isolation）; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-29（Asia/Tokyo）**
+
+## 2026-08-29 Gate 5 per-trial credential broker successor
+
+- Issue #116 is confirmed: the retired Gate 5 runner mounted `provider.secret`, exported `DEEPSEEK_API_KEY`, and
+  loaded evolving candidate JavaScript in that same process. File permissions and static scanning did not form a
+  secret boundary. All evidence from that credential-launcher lineage remains immutable but is security-invalid for
+  a current Gate 5, official-score, sealed or release claim.
+- `gate5-credential-broker-v2` removes the launcher, secret mount and agent credential env. The candidate Responses
+  bundle is now a fixed Unix-socket client. Each `(task, attempt)` gets one Harbor job and one host broker with a
+  locked official route, durable idempotency store, connection/request/byte/deadline limits and Ed25519-signed
+  identity/receipt/usage evidence. The socket source is contained by a host-private temporary directory; provider
+  retry/continuation parameters are frozen into exact worst-case output reservations; temporary artifact TLS private
+  keys never enter run evidence. The durable saga trial reservation, conservative input/output pricing, pre-dispatch
+  worst-case micro-USD and actual settlement are signed; the default `$0.333333` trial permits two worst-case calls
+  (`$0.311952`), not the retired unbounded 64-call ceiling.
+- Run intent schema 2 freezes candidate/capsule, ordered trials, original/overlay task hashes, broker policy and public
+  signing key before launch. Development task overlays force every agent phase to `no-network`; conflicting policies
+  reject and are revalidated after all jobs. Only a complete signed broker matrix, exact DSH usage reconciliation,
+  overlay revalidation and credential-byte scan can publish `execution-terminal.json`. Intent without that marker is
+  ambiguous and never redispatched. Marker publication now performs those checks before creating marker bytes.
+  Evaluator inspect/collect always replays broker-v2 and raw normalization; schema-1 summaries, forged markers, or
+  status/reward/cost drift reject rather than enter the journal.
+- The stable evaluator now passes the plan's exact candidate capsule digest to the runner. Source builds must
+  reproduce it; prebuilt capsules must match their complete live `dsh-capsule-tree-v2`, full schema-2 manifest and
+  planned digest, are copied into a host-private one-shot snapshot, and are checked again before and after packaging.
+  Intent and reconstructed summary bind that candidate capsule digest separately from the generated ACP archive
+  SHA-256, preventing mutable capsule paths from executing changed bytes under an admitted candidate identity.
+- A real Harbor/Docker adversarial E2E proves candidate initialization sees neither the env key nor retired secret
+  file, cannot complete direct external HTTPS, and successfully calls the fake trusted Responses adapter through the
+  mounted Unix socket. The signed usage receipt verifies and matches the model call. After the capsule-snapshot
+  repair, format, docs, lint, typecheck, provenance, upstream-clean, byte-equality and release-readiness pass; unit is
+  120 files / 940 passed + 1 platform skip. No-key E2E is 18 files passed + 2 credential-gated files skipped, 45
+  passed + 4 skipped, including the real Harbor adversarial test. The previous head's provider-configurable
+  continuation E2E passed against the user-authorized Responses endpoint. The changed head still requires a commit,
+  hosted CI, independent exact-head review and merge.
+- Independent review of predecessor head `c6ade11` correctly blocked merge because schema-1 summaries could bypass
+  raw replay, the terminal marker preceded broker/session validation, and the 64-call worst case exceeded the durable
+  trial reservation. Current code rejects old/tampered summaries and forged markers, validates before marker creation,
+  derives broker calls from the signed micro-USD reservation, and uses the standard SHA-256 baseline identity. These
+  changes still require fresh exact-head CI and independent approval.
+- Independent review of successor head `3aff63c` confirmed those three repairs, then correctly blocked merge after a
+  bounded repro changed prebuilt `runtime/cordis.yml` without changing its stale checksums: the generated archive
+  changed while attribution retained the planned candidate ID. The current private-snapshot/capsule-digest repair and
+  all local gates pass, but it still requires a new commit, exact-head hosted CI and a fresh independent approval.
+- Independent review of head `9473bd2` confirmed the snapshot repair but proved predecessor checksums omitted empty
+  directories and evaluated modes. Issue #42 was reopened and closed through PR #248; current Gate 5 prebuilt
+  authority now rejects schema-1 and digest-self-consistent invalid schema-2 capsules and consumes only the merged
+  tree-v2 verifier. The integrated head still requires commit, exact-head hosted CI and fresh independent approval.
+- Integrated head `620bac7` passed exact-head hosted CI run `33240164516`, but fresh independent review correctly
+  blocked merge after reproducing a two-byte torn final `summary.json` that stranded an otherwise terminal run on
+  every resume. The repair publishes derived summaries only from a same-directory `0600` staging inode after full
+  write and file fsync, uses a no-clobber hard-link commit point plus parent-directory fsync, and cleans a linked
+  staging inode on replay. After revalidating terminal/raw evidence, only an exact byte prefix of the deterministic
+  reconstruction is retained as content-addressed crash residue and rebuilt; every other malformed or valid-JSON
+  mismatch remains an integrity failure. Terminal-derived attribution creation now also uses the existing atomic
+  fsync/rename protocol. Process-level SIGKILL fault injection covers partial/full write, file-fsync, final-link and
+  directory-fsync boundaries, exact-prefix recovery, repeated resume, linked-staging cleanup, tamper rejection and
+  concurrent no-clobber publication. Focused Gate 5 coverage is 19/19 and full unit is 121 files / 945 passed + 1
+  platform skip. This repair still requires a commit, exact-head hosted CI and a new independent approval before merge.
+- First repair head `9e3aaa6` correctly failed hosted CI run `33243205947`: during concurrent torn-summary recovery,
+  one reconciler could remove the final path while the other still held and verified that inode, making the latter's
+  post-read `lstat` fail with `ENOENT`. The retry protocol now treats only that missing pathname as a concurrent
+  completed removal and returns to reconciliation; replacement with a different inode still fails closed. Three
+  parallel focused processes, each including 12 fresh-publication and 12 torn-recovery races, pass; final full unit
+  is again 121 files / 945 passed + 1 platform skip. A new commit, exact-head hosted CI and fresh review remain
+  mandatory.
+- Head `06418e0` passed hosted CI run `33243814763`, but fresh independent review correctly blocked merge because a
+  final pathname disappearing after its inode was opened/read was collapsed into the same state as initially absent.
+  With an unknown external hard link, that could republish without retaining the torn inode as controlled evidence.
+  The corrected reader now returns validated held bytes/metadata plus a distinct `pathPresent=false` state. Recovery
+  accepts that state only when the expected content-addressed residue has the same inode and bytes and exactly one
+  remaining link; no-residue unlink, extra links, forged same-byte residue, different-inode replacement and parent
+  directory replacement fail closed. The residue file and directory are fsynced before deterministic republish.
+  A permanent empty single-link `0600` lock inode plus kernel `flock` serializes reconciliation across processes;
+  process death releases ownership without deleting/replacing the lock identity. Deterministic tests cover
+  uncontrolled read-after-open disappearance, legitimate residue-backed recovery, process-level lock contention,
+  lock-owner SIGKILL, forged locks and parent-directory replacement. A new commit, exact-head CI and fresh independent
+  approval remain required.
+- Head `f65b063` passed exact-head hosted CI run `33246662491`, but fresh independent review correctly blocked merge:
+  after the named lock inode was flocked, replacing its pathname split a second reconciler onto a different lock inode;
+  adding a hard link also invalidated the promised single-link authority without being detected before success. The
+  corrected design flocks the already-open original authority-directory inode itself, which has no replaceable lock
+  pathname and cannot be hard-linked. Every summary, staging and residue access resolves through that pinned directory
+  file descriptor, while the named directory is revalidated against the held dev/inode before and after mutations and
+  before success. A replacement of the obsolete lock filename therefore cannot split the kernel lock domain, and a
+  conflicting real child process remains blocked until it observes and rejects the first publication. Directory-lock
+  owner SIGKILL still releases ownership. Four parallel focused Gate 5 runs pass at 20/20 each; full unit is 121 files,
+  946 passed + 1 platform skip; full no-key E2E is 18 files passed + 2 credential-gated skipped and 45 passed + 4
+  skipped. A new commit, exact-head CI and another fresh independent approval remain mandatory.
+- No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
+  improvement, promotion, sealed or release claim is made.
 
 ## 2026-08-29 Issue #42 complete-tree successor
 
@@ -11,8 +102,8 @@
   state without changing the planned capsule digest.
 - Capsule manifest schema 2 now freezes checksum format `dsh-capsule-tree-v2`. Its exact typed entry set records every
   directory as normalized `0755`, every regular file as evaluated `0644` or `0755` plus content hash, and every
-  symlink as archive-normalized `0755` plus literal-target hash. Non-UTF-8/control/Unicode-line-separator names, missing, extra,
-  mode/type/path/content/target drift, replacement-decoded checksum/target aliases, duplicates, hard-linked
+  symlink as archive-normalized `0755` plus literal-target hash. Non-UTF-8/control/Unicode-line-separator names,
+  missing, extra, mode/type/path/content/target drift, replacement-decoded checksum/target aliases, duplicates, hard-linked
   files/symlinks and special entries fail closed. Control files must be single-link, non-executable regular files;
   their ordinary host permission variants normalize to evaluated `0644`, matching other non-executable files.
   Shebang runner files receive their executable mode before checksumming; no post-admission chmod mutates the tree.
@@ -25,8 +116,8 @@
   schema-v1 predecessor and resume negative controls. Unit is 119 files / 925 passed + 1 platform skip. No-key E2E
   is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped, including real Harbor ACP, extract-elf
   smoke, offline Loader, V011 admission and crash recovery. Format, docs, lint, typecheck, provenance,
-  upstream-clean, byte-equality and release-readiness are rerun before the replacement head; hosted CI, a fresh
-  independent exact-head review and merge are still required.
+  upstream-clean, byte-equality and release-readiness passed. Exact head `4966bc4` passed hosted CI run
+  `33237607164`, received independent PR/Issue approval, and merged via PR #248 as `e886d1e`; Issue #42 is closed.
 
 ## 2026-08-28 current-main gate repair
 
@@ -716,9 +807,9 @@ main 且带回归测试的修复（各 PR 见对应 squash commit）；未列出
 - #40 / #119：quiescence 门从构造器名成员比较改为每类型计数 delta，可检同型泄漏；
   afterEach 不再吞 dispose 失败。
 - #41：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed。
-- #42（2026-08-29 重开）：predecessor SHA256SUMS 已覆盖 symlink target 及 file entry 集，但遗漏 empty
-  directory 与 executable mode；首轮独立审查又发现非 UTF-8 path alias、hard-linked symlink、symlink tar-mode
-  与 resume authority 缺口，均已加入 tree-v2 successor；当前仍在 CI/重新 review/merge 门。
+- #42（2026-08-29 重开后关闭）：predecessor SHA256SUMS 遗漏 empty directory 与 executable mode；后续独立
+  审查又发现非 UTF-8 path alias、hard-linked symlink、symlink tar-mode、Unicode line separator 与 resume
+  authority 缺口。tree-v2 successor 经 exact-head CI 与独立批准后由 PR #248 合并为 `e886d1e`。
 - #54：changed-line 预算改用 LCS 顺序感知编辑距离，重排不再零成本；超界文件 fail closed。
 - #55：proposal+gateway-receipts 以 manifest 提交点原子成束发布；resume 仅经 manifest 加载，
   未提交目录视为未完成 publication；每次加载重新校验 sha256 绑定。（#45 的崩溃窗口部分

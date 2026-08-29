@@ -405,9 +405,9 @@ contains every directory, regular file and symlink. Directory and symlink modes 
 (`0755` and `0755`); regular files record `0644` or `0755` according to whether any executable bit is present, matching
 the deterministic Harbor tar normalization. File entries hash bytes, symlink entries hash literal target bytes, and
 directory entries hash their typed path. Non-UTF-8 checksum text, non-UTF-8/control/Unicode-line-separator names,
-hard-linked files/symlinks and special
-permission bits reject. The exact entry set is checked against the live tree. Fresh admission and stable-build resume
-also require v2, bind the verified sums digest, and recompute `H(capsule.json || SHA256SUMS)`.
+hard-linked files/symlinks and special permission bits reject. The exact entry set is checked against the live tree.
+Fresh admission and stable-build resume also require v2, bind the verified sums digest, and recompute
+`H(capsule.json || SHA256SUMS)`.
 
 **Why:** the predecessor file/symlink list did not represent empty directories or executable mode. Both could change
 the evaluated archive and Loader-visible state without changing the planned capsule digest. A private snapshot can
@@ -416,3 +416,74 @@ remove packing races but cannot repair an identity that never committed those di
 **Compatibility:** schema-1 manifests remain readable only as explicitly labelled predecessor evidence. They are not
 upgraded or accepted as current complete-tree authority. New identities intentionally change and require a fresh
 admission/evaluation lineage; historical bytes remain immutable.
+
+## ADR-027 — Isolate evaluation credentials behind one host broker per trial
+
+**Decision:** `gate5-credential-broker-v2` replaces the Gate 5 secret-file launcher. The candidate-facing
+`@dsh-self-evolving/llm-responses` bundle is now only a `ProposalGatewayAdapter` for the fixed
+`/run/dsh-self-evolving/model.sock` path. Candidate capsules contain no credential launcher; the Harbor registry runs
+`dsh-self-evolving-acp` directly. The controller removes credential-shaped variables from the Harbor subprocess,
+creates one Harbor job and one durable host broker for every `(task, attempt)`, and mounts only that broker's Unix
+socket. Each broker locks the official Responses provider, endpoint, model, reasoning and maximum output, applies
+connection/request/byte/deadline bounds, and rejects candidate-supplied transport fields. Its capability socket lives
+under a short, host-private `0700` temporary directory; the `0666` socket inode is never placed directly in a
+host-traversable `/run` or `/tmp` directory. Transport retry and reasoning continuation are frozen in policy and every
+allowed provider attempt is included in the worst-case output reservation. The evaluator's durable per-trial
+reservation is converted to integer micro-USD and frozen with conservative context-sized input plus output pricing;
+the broker derives its request ceiling from that amount and reserves worst-case USD before each provider dispatch.
+
+The controller copies each development task to a content-addressed overlay, records both tree hashes and forces every
+agent phase to `no-network`; a conflicting explicit agent policy rejects before launch. Task setup may still build the
+image and download the hash-pinned capsule. A real Harbor adversarial E2E proves that candidate initialization cannot
+see `DEEPSEEK_API_KEY` or the retired secret path, cannot complete direct external HTTPS, and can complete the DSH
+model call through the mounted Unix socket.
+
+Before launch, run intent schema 2 freezes the ordered per-trial plan, overlay hashes, broker policy and an ephemeral
+Ed25519 public key. After each job the host signs trial identity, policy, gateway receipts and usage. Collection
+requires the signed broker usage to equal the DSH session usage. Only after every job and broker has terminated, all
+signed evidence is durable and an exact credential-byte scan passes may the controller publish
+`execution-terminal.json`. An intent without that marker is an ambiguous paid outcome and is never redispatched.
+Existing summaries are revalidated against intent, marker, raw trial config/result, broker signature and session
+usage before replay. Original and overlay digests plus `no-network` semantics are revalidated both before launch and
+after all jobs. The artifact server's TLS private key remains only in the temporary runtime directory and is deleted;
+it is never part of persisted run evidence.
+
+The evaluation plan's candidate capsule digest is also an execution authority, not descriptive metadata. A source
+candidate must reproduce its planned build capsule digest. A prebuilt V0.1.1 capsule is checked against its complete
+live `dsh-capsule-tree-v2`, full schema-2 manifest identity and planned capsule digest, copied into a host-private
+one-shot snapshot, checked again on both sides, and packed only from that snapshot. The snapshot is rechecked after
+packing. Run intent and the reconstructed summary bind both the planned capsule digest and the resulting Harbor
+artifact SHA-256; drift at the
+admission path therefore fails closed instead of inheriting the candidate's score identity.
+
+Terminal publication itself consumes the signed evidence and exact DSH session usage, so policy-violation,
+incomplete, missing-usage or mismatched-usage trials fail before any marker bytes are created. Collection always
+re-executes broker-v2 validation and the raw normalizer, then canonical-compares the complete reconstructed schema-2
+summary. A summary file alone, a schema-1 predecessor, or a forged marker can never become external score authority.
+The derived summary is published from a same-directory exclusive `0600` staging inode only after the complete write
+and file fsync. A no-clobber hard link is the commit point; the run directory is fsynced before staging is removed.
+Resume first revalidates the terminal and raw evidence. It reuses exact canonical summary bytes, finishes cleanup of
+a linked staging inode, or retains an exact-prefix torn final as content-addressed crash residue before deterministic
+reconstruction. Any non-prefix malformed bytes or semantically/bytewise different valid JSON fail closed as evidence
+tampering. This recovery path never loads the provider credential or redispatches a paid trial. Terminal-derived
+attribution creation uses the same staged, fsynced atomic-write discipline. The reader distinguishes a path that was
+absent before open from one that disappeared after its inode was opened and validated. The latter may retry only when
+the expected content-addressed residue has the same inode and bytes with no extra hard link; no residue, a forged
+same-byte residue, an unknown hard link or a different-inode replacement fails closed. Reconciliation holds and
+rechecks the original parent-directory inode across quarantine and republish. Kernel `flock` is held directly on that
+already-open directory inode rather than on a replaceable named lock file. Summary, staging and residue paths resolve
+through the pinned directory file descriptor, and the named directory is checked against the held dev/inode before
+and after every authority mutation and before success. A sibling filename therefore cannot split the lock domain, a
+directory hard link is kernel-forbidden, and process death releases ownership without a stale-owner takeover protocol.
+
+**Why:** the retired runner mounted `provider.secret`, exported it as `DEEPSEEK_API_KEY`, and loaded evolving candidate
+JavaScript in the same process and network namespace. Read-only file mode and static scanning cannot isolate a secret
+from code running as the same user. A host broker removes the reusable credential and unrestricted provider transport
+from the untrusted process while retaining real DSH Loader/ACP execution and attributable accounting.
+
+**Trust and compatibility:** the run-local signing key establishes controller-over-candidate evidence authority; it
+does not replace the out-of-band signer registry required for formal releases. Historical credential-launcher runs
+remain immutable but are security-invalid for this property and cannot be reinterpreted or migrated. They may not
+support a current Gate 5 credential-isolation, sealed, official-score or release claim. Revalidation requires a fresh
+broker-v2 run ID; the task overlay makes this an engineering protocol unless the official benchmark accepts the same
+network semantics.

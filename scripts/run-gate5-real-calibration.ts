@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-/** Gate 5 real Harbor/ACP runner. Defaults to one observed-task smoke. */
+/** Gate 5 real Harbor/ACP runner with per-trial host credential brokers. */
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:https'
@@ -28,6 +28,34 @@ import {
   normalizeTrial,
   packAcpBinaryArchive,
 } from '../benchmark-adapters/terminal-bench/src/index.js'
+import {
+  TrustedResponsesAdapter,
+  type ProposalGatewayRoute,
+} from '../packages/dsh-self-evolving-proposer/src/index.js'
+import {
+  GATE5_BROKER_PROTOCOL,
+  GATE5_MODEL_SOCKET_TARGET,
+  assertCompleteGate5BrokerEvidence,
+  assertExactGate5ReconstructedSummary,
+  assertGate5TaskOverlay,
+  createGate5BrokerSigningAuthority,
+  gate5UsageUsdMicros,
+  gate5WorstCaseUsdMicrosPerRequest,
+  prepareGate5TaskOverlay,
+  sanitizeGate5HarborEnvironment,
+  startGate5CredentialBroker,
+  writeGate5ExecutionTerminal,
+  type Gate5BrokerEvidence,
+  type Gate5BrokerPolicy,
+  type Gate5TaskOverlayReceipt,
+  type Gate5TrialIdentity,
+  type Gate5UsageTotal,
+} from '../packages/dsh-self-evolving-cli/src/gate5-security.js'
+import {
+  assertGate5PrebuiltCapsule,
+  snapshotGate5PrebuiltCapsule,
+} from '../packages/dsh-self-evolving-cli/src/gate5-capsule.js'
+import { reconcileGate5Summary } from '../packages/dsh-self-evolving-cli/src/gate5-summary.js'
 import { combinePemTrustBundle } from './artifact-trust.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -52,6 +80,13 @@ const targetModel = 'deepseek-v4-flash'
 const effectiveModel = 'deepseek-v4-flash'
 const contextWindow = 1_048_576
 const maxTokens = 32_768
+const route: ProposalGatewayRoute = {
+  provider: 'deepseek-official',
+  endpoint: 'https://api.deepseek.com/v1',
+  model: effectiveModel,
+  reasoningEffort: 'high',
+  maxTokens,
+}
 const officialPricing = {
   currency: 'USD' as const,
   unitTokens: 1_000_000,
@@ -59,7 +94,43 @@ const officialPricing = {
   cacheMissInputUsd: 0.14,
   outputUsd: 0.28,
   source: 'https://api-docs.deepseek.com/quick_start/pricing/',
-  model: 'deepseek-v4-flash',
+  model: effectiveModel,
+}
+
+export function brokerPolicyForReservation(trialReservationUsdMicros: number): Gate5BrokerPolicy {
+  const seed: Gate5BrokerPolicy = {
+    schemaVersion: 1,
+    route,
+    contextWindow,
+    socketTarget: GATE5_MODEL_SOCKET_TARGET,
+    maxTransportRetries: 0,
+    reasoningContinuationMaxTurns: 0,
+    trialReservationUsdMicros,
+    pricingUnitTokens: officialPricing.unitTokens,
+    cacheHitInputUsdMicrosPerUnit: Math.round(officialPricing.cacheHitInputUsd * 1_000_000),
+    cacheMissInputUsdMicrosPerUnit: Math.round(officialPricing.cacheMissInputUsd * 1_000_000),
+    outputUsdMicrosPerUnit: Math.round(officialPricing.outputUsd * 1_000_000),
+    maxInputTokensPerRequest: contextWindow,
+    maxRequests: 1,
+    maxRequestBytes: 4 * 1024 * 1024,
+    maxPayloadBytesTotal: 4 * 1024 * 1024,
+    maxReservedOutputTokens: maxTokens,
+    maxResponseBytes: 32 * 1024 * 1024,
+    maxConnections: 8,
+    idleTimeoutMs: 60_000,
+    requestTimeoutMs: 25 * 60_000,
+  }
+  const worstCasePerRequest = gate5WorstCaseUsdMicrosPerRequest(seed)
+  const maxRequests = Math.min(64, Math.floor(trialReservationUsdMicros / worstCasePerRequest))
+  if (maxRequests < 1) {
+    throw new Error('gate5 runner: trial reservation cannot fund one worst-case provider request')
+  }
+  return {
+    ...seed,
+    maxRequests,
+    maxPayloadBytesTotal: maxRequests * seed.maxRequestBytes,
+    maxReservedOutputTokens: maxRequests * maxTokens,
+  }
 }
 const sourceFiles = [
   'src/index.ts',
@@ -68,69 +139,57 @@ const sourceFiles = [
   'cordis.patch.yml',
   'tsconfig.json',
 ]
+const candidateIdPattern = /^(?:c_[a-z2-7]{26}|sha256:[0-9a-f]{64})$/
+const digestPattern = /^sha256:[0-9a-f]{64}$/
 
 interface InventoryTask {
   taskId: string
   agentTimeoutSec: number
 }
 
-interface DshUsageTotal {
-  inputTokens: number
-  cacheReadTokens: number
-  outputTokens: number
-  reasoningTokens: number
-  events: number
+type DshUsageTotal = Gate5UsageTotal
+
+interface PlannedTrial extends Gate5TrialIdentity, Gate5TaskOverlayReceipt {
+  jobName: string
 }
 
-async function findNamedFiles(root: string, name: string): Promise<string[]> {
-  const found: string[] = []
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    const path = join(root, entry.name)
-    if (entry.isDirectory()) found.push(...(await findNamedFiles(path, name)))
-    else if (entry.name === name) found.push(path)
+interface RunIntent {
+  schemaVersion: 2
+  protocol: typeof GATE5_BROKER_PROTOCOL
+  runId: string
+  candidateId: string
+  candidateCapsuleDigest: `sha256:${string}`
+  capsuleSha256: string
+  plannedTrials: number
+  broker: {
+    publicKeySpki: string
+    keyId: `sha256:${string}`
+    policy: Gate5BrokerPolicy
   }
-  return found.sort()
+  trials: PlannedTrial[]
 }
 
-async function readDshUsage(trialDir: string): Promise<DshUsageTotal> {
-  const sessions = await findNamedFiles(join(trialDir, 'agent', 'dsh-sessions'), 'session.jsonl')
-  if (sessions.length !== 1) throw new Error(`expected one DSH session log; got ${sessions.length}`)
-  const rows = (await readFile(sessions[0]!, 'utf8'))
-    .split('\n')
-    .filter(Boolean)
-    .map(
-      (line) =>
-        JSON.parse(line) as {
-          data?: { chunk?: { type?: string; usage?: Partial<DshUsageTotal> } }
-        },
-    )
-  const total: DshUsageTotal = {
-    inputTokens: 0,
-    cacheReadTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    events: 0,
-  }
-  for (const row of rows) {
-    if (row.data?.chunk?.type !== 'usage') continue
-    const usage = row.data.chunk.usage ?? {}
-    total.inputTokens += usage.inputTokens ?? 0
-    total.cacheReadTokens += usage.cacheReadTokens ?? 0
-    total.outputTokens += usage.outputTokens ?? 0
-    total.reasoningTokens += usage.reasoningTokens ?? 0
-    total.events++
-  }
-  if (total.events === 0) throw new Error('DSH session has no usage events')
-  return total
+interface ExecutionTerminal {
+  schemaVersion: 1
+  protocol: typeof GATE5_BROKER_PROTOCOL
+  runId: string
+  wallSec: number
+  trials: Array<{ trialId: string; brokerEvidenceSha256: `sha256:${string}` }>
 }
 
-function priceUsage(usage: DshUsageTotal): number {
-  return (
-    (usage.inputTokens * officialPricing.cacheMissInputUsd +
-      usage.cacheReadTokens * officialPricing.cacheHitInputUsd +
-      usage.outputTokens * officialPricing.outputUsd) /
-    officialPricing.unitTokens
-  )
+function sha256(bytes: string | Uint8Array): `sha256:${string}` {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 function execResult(
@@ -153,10 +212,81 @@ function execResult(
   })
 }
 
-async function loadTrustedRoute(): Promise<{ apiKey: string }> {
-  const apiKey = process.env['DEEPSEEK_API_KEY'] ?? ''
+async function writeAtomicJson(path: string, value: unknown): Promise<string> {
+  const bytes = JSON.stringify(value, null, 2) + '\n'
+  const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`
+  const handle = await open(temporary, 'wx', 0o600)
+  try {
+    await handle.writeFile(bytes)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await rename(temporary, path)
+  const directory = await open(dirname(path), 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
+  }
+  return bytes
+}
+
+async function findNamedFiles(root: string, name: string): Promise<string[]> {
+  const found: string[] = []
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) found.push(...(await findNamedFiles(path, name)))
+    else if (entry.isFile() && entry.name === name) found.push(path)
+  }
+  return found.sort()
+}
+
+async function readDshUsage(trialDir: string): Promise<DshUsageTotal> {
+  const sessions = await findNamedFiles(join(trialDir, 'agent', 'dsh-sessions'), 'session.jsonl')
+  if (sessions.length !== 1) throw new Error(`expected one DSH session log; got ${sessions.length}`)
+  const rows = (await readFile(sessions[0]!, 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          data?: { chunk?: { type?: string; usage?: Partial<DshUsageTotal> } }
+        },
+    )
+  const total: DshUsageTotal = {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    events: 0,
+  }
+  for (const row of rows) {
+    if (row.data?.chunk?.type !== 'usage') continue
+    const usage = row.data.chunk.usage ?? {}
+    total.inputTokens += usage.inputTokens ?? 0
+    total.cacheReadTokens += usage.cacheReadTokens ?? 0
+    total.cacheWriteTokens += usage.cacheWriteTokens ?? 0
+    total.outputTokens += usage.outputTokens ?? 0
+    total.reasoningTokens += usage.reasoningTokens ?? 0
+    total.events += 1
+  }
+  if (total.events === 0) throw new Error('DSH session has no usage events')
+  if (Object.values(total).some((value) => !Number.isSafeInteger(value) || value < 0)) {
+    throw new Error('DSH session has invalid usage totals')
+  }
+  return total
+}
+
+function priceUsage(usage: DshUsageTotal, policy: Gate5BrokerPolicy): number {
+  return gate5UsageUsdMicros(policy, usage) / 1_000_000
+}
+
+async function loadProviderCredential(): Promise<string> {
+  const apiKey = process.env['DEEPSEEK_API_KEY']?.trim() ?? ''
   if (apiKey.length === 0) throw new Error('gate5 runner: DEEPSEEK_API_KEY unavailable')
-  return { apiKey }
+  return apiKey
 }
 
 async function startArtifactServer(
@@ -231,84 +361,102 @@ async function startArtifactServer(
   }
 }
 
-async function buildBaselineRuntime(workDir: string) {
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((done, reject) =>
+    server.close((error) => (error ? reject(error) : done())),
+  )
+}
+
+function brokeredRunnerOverlay(candidateId: string): string {
+  return [
+    '- id: deepseek-responses',
+    "  name: '@dsh-self-evolving/llm-responses'",
+    '  config:',
+    `    gatewaySocketPath: ${GATE5_MODEL_SOCKET_TARGET}`,
+    '    reasoningEffort: high',
+    `    maxTokens: ${maxTokens}`,
+    `    contextWindow: ${contextWindow}`,
+    '    requestDeadlineMs: 1500000',
+    '- id: sandbox',
+    "  name: '@deepseek-ai/dsh-sandbox-local'",
+    '- id: sandbox-policy',
+    "  name: '@deepseek-ai/dsh-sandbox-policy'",
+    '  config:',
+    '    mode: danger-full-access',
+    '    workspaceRoot: !!js process.cwd()',
+    '- id: subprocess',
+    "  name: '@deepseek-ai/dsh-subprocess-local'",
+    '- id: bash',
+    "  name: '@deepseek-ai/dsh-bash-sandbox'",
+    '  config:',
+    '    timeoutMs: 60000',
+    '- id: approval',
+    "  name: '@deepseek-ai/dsh-user-approval'",
+    '  config:',
+    '    policy: never',
+    '- id: acp-agent',
+    "  name: '@deepseek-ai/dsh-acp-demo'",
+    '  config:',
+    `    provider: ${route.provider}`,
+    `    model: ${targetModel}`,
+    '    persistenceRoot: /logs/agent/dsh-sessions',
+    '    persistenceCompression: none',
+    '    workspaceContext: false',
+    '    skills:',
+    '      enabled: false',
+    '    toolJobs: false',
+    '    goals: false',
+    "    persona: 'dsh-self-evolving Terminal-Bench baseline. Use bash to inspect and modify the task environment, solve autonomously, and verify the result.'",
+    '- id: self-evolving-candidate',
+    "  name: '@dsh-self-evolving/candidate-baseline'",
+    '  config:',
+    `    candidateId: ${candidateId}`,
+    '    mode: solve',
+    '',
+  ].join('\n')
+}
+
+async function buildBaselineRuntime(
+  workDir: string,
+  expectedCandidateId: string,
+  expectedCapsuleDigest: `sha256:${string}`,
+) {
   if (prebuiltCapsuleRoot !== undefined) {
-    const [manifestInfo, sumsInfo, launcherInfo] = await Promise.all([
-      stat(join(prebuiltCapsuleRoot, 'capsule.json')).catch(() => null),
-      stat(join(prebuiltCapsuleRoot, 'SHA256SUMS')).catch(() => null),
-      stat(join(prebuiltCapsuleRoot, 'runtime', 'credential-launcher.sh')).catch(() => null),
-    ])
-    if (
-      manifestInfo?.isFile() !== true ||
-      sumsInfo?.isFile() !== true ||
-      launcherInfo?.isFile() !== true ||
-      (launcherInfo.mode & 0o111) === 0
-    ) {
-      throw new Error('gate5 runner: prebuilt v0.1.1 capsule is incomplete')
-    }
-    const manifest = JSON.parse(
-      await readFile(join(prebuiltCapsuleRoot, 'capsule.json'), 'utf8'),
-    ) as { candidateId?: unknown }
-    if (typeof manifest.candidateId !== 'string' || manifest.candidateId.length === 0) {
-      throw new Error('gate5 runner: prebuilt capsule candidate identity missing')
-    }
+    const snapshot = await snapshotGate5PrebuiltCapsule({
+      sourceRoot: prebuiltCapsuleRoot,
+      snapshotRoot: join(workDir, 'prebuilt-capsule'),
+      expectedCandidateId,
+      expectedCapsuleDigest,
+    })
     const packed = await packAcpBinaryArchive(
-      join(prebuiltCapsuleRoot, 'runtime'),
+      join(snapshot.snapshotRoot, 'runtime'),
       join(workDir, 'dsh-self-evolving-acp.tar.gz'),
     )
-    return { receipt: { candidateId: manifest.candidateId }, packed }
+    await assertGate5PrebuiltCapsule({
+      capsuleRoot: snapshot.snapshotRoot,
+      expectedCandidateId,
+      expectedCapsuleDigest,
+    })
+    return {
+      receipt: { candidateId: expectedCandidateId, capsuleDigest: expectedCapsuleDigest },
+      packed,
+    }
   }
   const receipt = await buildCandidate({ sourceRoot: candidateRoot, sourceFiles, tscBin })
+  if (expectedCandidateId !== `sha256:${receipt.sourceHash}`) {
+    throw new Error('gate5 runner: source candidate identity differs from the evaluation plan')
+  }
+  if (expectedCapsuleDigest !== `sha256:${receipt.capsuleHash}`) {
+    throw new Error('gate5 runner: source capsule identity differs from the evaluation plan')
+  }
   const capsuleDir = join(workDir, 'capsule')
   await packCapsule({
     outDir: capsuleDir,
     receipt,
-    runnerOverlay: [
-      '- id: deepseek-responses',
-      "  name: '@dsh-self-evolving/llm-responses'",
-      '  config:',
-      '    apiKeyEnv: DEEPSEEK_API_KEY',
-      '    reasoningEffort: high',
-      `    maxTokens: ${maxTokens}`,
-      `    contextWindow: ${contextWindow}`,
-      '- id: sandbox',
-      "  name: '@deepseek-ai/dsh-sandbox-local'",
-      '- id: sandbox-policy',
-      "  name: '@deepseek-ai/dsh-sandbox-policy'",
-      '  config:',
-      '    mode: danger-full-access',
-      '    workspaceRoot: !!js process.cwd()',
-      '- id: subprocess',
-      "  name: '@deepseek-ai/dsh-subprocess-local'",
-      '- id: bash',
-      "  name: '@deepseek-ai/dsh-bash-sandbox'",
-      '  config:',
-      '    timeoutMs: 60000',
-      '- id: approval',
-      "  name: '@deepseek-ai/dsh-user-approval'",
-      '  config:',
-      '    policy: never',
-      '- id: acp-agent',
-      "  name: '@deepseek-ai/dsh-acp-demo'",
-      '  config:',
-      '    provider: deepseek-official',
-      `    model: ${targetModel}`,
-      '    persistenceRoot: /logs/agent/dsh-sessions',
-      '    persistenceCompression: none',
-      '    workspaceContext: false',
-      '    skills:',
-      '      enabled: false',
-      '    toolJobs: false',
-      '    goals: false',
-      "    persona: 'dsh-self-evolving Terminal-Bench baseline. Use bash to inspect and modify the task environment, solve autonomously, and verify the result.'",
-      '- id: self-evolving-candidate',
-      "  name: '@dsh-self-evolving/candidate-baseline'",
-      '  config:',
-      `    candidateId: ${receipt.candidateId}`,
-      '    mode: solve',
-      '',
-    ].join('\n'),
+    canonicalCandidateId: expectedCandidateId,
+    runnerOverlay: brokeredRunnerOverlay(expectedCandidateId),
     provenanceJson: JSON.stringify({
+      protocol: GATE5_BROKER_PROTOCOL,
       dshCommit: '47f943859bef60e4160492346772ded9b24f765a',
       model: targetModel,
       effectiveModel,
@@ -317,21 +465,6 @@ async function buildBaselineRuntime(workDir: string) {
       maxTokens,
     }),
     sbomJson: JSON.stringify({ spdxVersion: 'SPDX-2.3' }),
-    runnerFiles: {
-      'credential-launcher.sh': [
-        '#!/bin/sh',
-        'set -eu',
-        'runtime=${0%/*}',
-        'secret_file=${DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE:-/run/dsh-self-evolving/provider.secret}',
-        'test -f "$secret_file"',
-        'DEEPSEEK_API_KEY=$(cat -- "$secret_file")',
-        'test -n "$DEEPSEEK_API_KEY"',
-        'export DEEPSEEK_API_KEY',
-        'unset DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE',
-        'exec "$runtime/dsh-self-evolving-acp" "$@"',
-        '',
-      ].join('\n'),
-    },
     runtimeClosure: {
       catalogRoots: [
         join(repoRoot, 'packages'),
@@ -355,170 +488,247 @@ async function buildBaselineRuntime(workDir: string) {
     join(capsuleDir, 'runtime'),
     join(workDir, 'dsh-self-evolving-acp.tar.gz'),
   )
-  return { receipt, packed }
+  return {
+    receipt: { candidateId: expectedCandidateId, capsuleDigest: expectedCapsuleDigest },
+    packed,
+  }
 }
 
-interface RunIntent {
-  schemaVersion: 1
+function trialId(runId: string, taskId: string, attemptIndex: number, index: number): string {
+  const suffix = createHash('sha256')
+    .update(`${runId}\0${taskId}\0${attemptIndex}`)
+    .digest('hex')
+    .slice(0, 12)
+  return `trial-${String(index).padStart(4, '0')}-${suffix}`
+}
+
+function jobName(runId: string, trial: string): string {
+  return `g5-${createHash('sha256').update(runId).digest('hex').slice(0, 12)}-${trial}`
+}
+
+async function materializeTrialPlan(input: {
+  stagingRunDir: string
   runId: string
   candidateId: string
-  capsuleSha256: string
-  plannedTrials: number
-}
-
-async function writeRunIntent(runDir: string, intent: RunIntent): Promise<void> {
-  const target = join(runDir, 'run-intent.json')
-  const temporary = join(runDir, '.run-intent.json.tmp')
-  const handle = await open(temporary, 'wx', 0o600)
-  try {
-    await handle.writeFile(JSON.stringify(intent, null, 2) + '\n')
-    await handle.sync()
-  } finally {
-    await handle.close()
+  tasks: InventoryTask[]
+  attempts: number
+}): Promise<PlannedTrial[]> {
+  const trials: PlannedTrial[] = []
+  let index = 0
+  for (const task of input.tasks) {
+    for (let attemptIndex = 0; attemptIndex < input.attempts; attemptIndex += 1) {
+      const id = trialId(input.runId, task.taskId, attemptIndex, index)
+      const receipt = await prepareGate5TaskOverlay({
+        sourceDir: join(tb21Dir, task.taskId),
+        destinationDir: join(input.stagingRunDir, 'task-overlays', id),
+      })
+      trials.push({
+        runId: input.runId,
+        candidateId: input.candidateId,
+        trialId: id,
+        taskId: task.taskId,
+        attemptIndex,
+        jobName: jobName(input.runId, id),
+        ...receipt,
+      })
+      index += 1
+    }
   }
-  await rename(temporary, target)
-  const directory = await open(runDir, 'r')
-  try {
-    await directory.sync()
-  } finally {
-    await directory.close()
-  }
+  return trials
 }
 
 async function readRunIntent(
   runDir: string,
   expectedRunId: string,
-  expectedPlannedTrials: number,
+  expectedCandidateId: string,
+  expectedCapsuleDigest: `sha256:${string}`,
+  taskIds: string[],
+  attempts: number,
+  expectedBrokerPolicy: Gate5BrokerPolicy,
 ): Promise<RunIntent> {
-  const parsed = JSON.parse(await readFile(join(runDir, 'run-intent.json'), 'utf8')) as unknown
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('reconcile: trusted run intent is not an object')
-  }
-  const record = parsed as Record<string, unknown>
-  const expectedKeys = ['candidateId', 'capsuleSha256', 'plannedTrials', 'runId', 'schemaVersion']
-  if (JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys)) {
-    throw new Error('reconcile: trusted run intent schema mismatch')
-  }
+  const parsed = JSON.parse(await readFile(join(runDir, 'run-intent.json'), 'utf8')) as RunIntent
   if (
-    record['schemaVersion'] !== 1 ||
-    record['runId'] !== expectedRunId ||
-    typeof record['candidateId'] !== 'string' ||
-    record['candidateId'].length === 0 ||
-    typeof record['capsuleSha256'] !== 'string' ||
-    !/^[0-9a-f]{64}$/.test(record['capsuleSha256']) ||
-    record['plannedTrials'] !== expectedPlannedTrials
+    parsed?.schemaVersion !== 2 ||
+    parsed.protocol !== GATE5_BROKER_PROTOCOL ||
+    parsed.runId !== expectedRunId ||
+    parsed.candidateId !== expectedCandidateId ||
+    !candidateIdPattern.test(parsed.candidateId) ||
+    parsed.candidateCapsuleDigest !== expectedCapsuleDigest ||
+    !digestPattern.test(parsed.candidateCapsuleDigest) ||
+    !/^[0-9a-f]{64}$/.test(parsed.capsuleSha256) ||
+    parsed.plannedTrials !== taskIds.length * attempts ||
+    !Array.isArray(parsed.trials) ||
+    parsed.trials.length !== parsed.plannedTrials ||
+    parsed.broker?.policy?.socketTarget !== GATE5_MODEL_SOCKET_TARGET ||
+    stableJson(parsed.broker.policy) !== stableJson(expectedBrokerPolicy) ||
+    typeof parsed.broker.publicKeySpki !== 'string' ||
+    !/^sha256:[0-9a-f]{64}$/.test(parsed.broker.keyId) ||
+    sha256(Buffer.from(parsed.broker.publicKeySpki, 'base64')) !== parsed.broker.keyId
   ) {
-    throw new Error('reconcile: trusted run intent identity mismatch')
+    throw new Error('reconcile: trusted broker run intent is invalid or obsolete')
   }
-  return record as unknown as RunIntent
+  const expectedTrials = taskIds.flatMap((taskId) =>
+    Array.from({ length: attempts }, (_, attemptIndex) => `${taskId}\0${attemptIndex}`),
+  )
+  const actualTrials = parsed.trials.map((trial) => `${trial.taskId}\0${trial.attemptIndex}`)
+  if (stableJson(actualTrials) !== stableJson(expectedTrials)) {
+    throw new Error('reconcile: trusted run intent trial matrix differs from the request')
+  }
+  const seen = new Set<string>()
+  for (const [index, trial] of parsed.trials.entries()) {
+    if (
+      trial.schemaVersion !== 1 ||
+      trial.runId !== parsed.runId ||
+      trial.candidateId !== parsed.candidateId ||
+      trial.trialId !== trialId(parsed.runId, trial.taskId, trial.attemptIndex, index) ||
+      trial.jobName !== jobName(parsed.runId, trial.trialId) ||
+      !/^sha256:[0-9a-f]{64}$/.test(trial.originalSha256) ||
+      !/^sha256:[0-9a-f]{64}$/.test(trial.overlaySha256) ||
+      trial.agentNetworkMode !== 'no-network' ||
+      seen.has(trial.trialId)
+    ) {
+      throw new Error('reconcile: trusted run intent contains an invalid trial')
+    }
+    seen.add(trial.trialId)
+    await assertGate5TaskOverlay({
+      sourceDir: join(tb21Dir, trial.taskId),
+      destinationDir: join(runDir, 'task-overlays', trial.trialId),
+      receipt: trial,
+    })
+  }
+  return parsed
+}
+
+async function readTerminal(runDir: string, intent: RunIntent): Promise<ExecutionTerminal> {
+  const parsed = JSON.parse(
+    await readFile(join(runDir, 'execution-terminal.json'), 'utf8'),
+  ) as ExecutionTerminal
+  if (
+    parsed?.schemaVersion !== 1 ||
+    parsed.protocol !== GATE5_BROKER_PROTOCOL ||
+    parsed.runId !== intent.runId ||
+    typeof parsed.wallSec !== 'number' ||
+    !Number.isFinite(parsed.wallSec) ||
+    parsed.wallSec < 0 ||
+    !Array.isArray(parsed.trials) ||
+    parsed.trials.length !== intent.trials.length
+  ) {
+    throw new Error('reconcile: execution terminal marker is invalid')
+  }
+  for (const [index, row] of parsed.trials.entries()) {
+    if (
+      row.trialId !== intent.trials[index]?.trialId ||
+      !/^sha256:[0-9a-f]{64}$/.test(row.brokerEvidenceSha256)
+    ) {
+      throw new Error('reconcile: execution terminal broker matrix is invalid')
+    }
+  }
+  return parsed
+}
+
+async function trialDirectory(runDir: string, trial: PlannedTrial): Promise<string> {
+  const jobDir = join(runDir, 'jobs', trial.jobName)
+  const entries = await readdir(jobDir, { withFileTypes: true })
+  const candidates = entries
+    .filter((entry) => entry.isDirectory() && entry.name.includes('__'))
+    .map((entry) => join(jobDir, entry.name))
+  if (candidates.length !== 1) {
+    throw new Error(
+      `reconcile: expected one Harbor trial for ${trial.trialId}; got ${candidates.length}`,
+    )
+  }
+  return candidates[0]!
 }
 
 async function collectRun(input: {
   runDir: string
-  runId: string
-  plannedTrials: number
-  candidateIdHint: string
-  capsuleSha256: string
-  wallSec: number | null
-  reconciledFromTerminalRaw: boolean
+  intent: RunIntent
+  terminal: ExecutionTerminal
 }) {
-  const jobDir = join(input.runDir, 'jobs', input.runId)
-  const entries = await readdir(jobDir, { withFileTypes: true })
-  const trialDirs = entries
-    .filter((entry) => entry.isDirectory() && entry.name.includes('__'))
-    .map((entry) => join(jobDir, entry.name))
-    .sort()
-  if (trialDirs.length !== input.plannedTrials) {
-    throw new Error(`reconcile: trial matrix incomplete ${trialDirs.length}/${input.plannedTrials}`)
-  }
   const normalized = []
-  const attemptsByTask = new Map<string, number>()
-  // One (task, attempt) pair exactly once: a duplicate means the trial matrix
-  // was reordered, duplicated or partially rebuilt (issue #107).
-  const seenTrialKeys = new Set<string>()
-  for (const trialDir of trialDirs) {
-    // Harbor names each trial directory `<task>__<id>`; a fully numeric
-    // suffix IS the planned attempt index, which additionally binds the
-    // directory itself to its configured task instead of trusting lexical
-    // order alone.
-    const directoryName = trialDir.split('/').pop()!
-    const nameSeparator = directoryName.lastIndexOf('__')
-    const directoryTask = directoryName.slice(0, nameSeparator)
-    const directorySuffix = directoryName.slice(nameSeparator + 2)
+  for (const [index, trial] of input.intent.trials.entries()) {
+    const trialDir = await trialDirectory(input.runDir, trial)
     const result = await stat(join(trialDir, 'result.json')).catch(() => null)
-    if (result?.isFile() !== true)
-      throw new Error(`reconcile: terminal result missing: ${trialDir}`)
+    if (result?.isFile() !== true) {
+      throw new Error(`reconcile: terminal result missing: ${trial.trialId}`)
+    }
     const configRaw = JSON.parse(await readFile(join(trialDir, 'config.json'), 'utf8')) as {
-      task: { path: string }
+      task?: { path?: unknown }
     }
-    const taskId = configRaw.task.path.split('/').at(-1) ?? configRaw.task.path
-    if (/^[0-9]+$/.test(directorySuffix) && directoryTask !== taskId) {
-      throw new Error(
-        `reconcile: trial directory task ${directoryTask} does not match its config ${taskId}`,
-      )
+    const expectedTaskPath = resolve(join(input.runDir, 'task-overlays', trial.trialId))
+    if (
+      typeof configRaw.task?.path !== 'string' ||
+      resolve(configRaw.task.path) !== expectedTaskPath
+    ) {
+      throw new Error(`reconcile: Harbor task path differs from plan: ${trial.trialId}`)
     }
-    const attemptIndex = /^[0-9]+$/.test(directorySuffix)
-      ? Number(directorySuffix)
-      : (attemptsByTask.get(taskId) ?? 0)
-    const trialKey = `${taskId}/${attemptIndex}`
-    if (seenTrialKeys.has(trialKey)) {
-      throw new Error(`reconcile: duplicate attempt identity ${trialKey}`)
+    const evidencePath = join(input.runDir, 'broker-evidence', `${trial.trialId}.json`)
+    const evidenceBytes = await readFile(evidencePath)
+    if (sha256(evidenceBytes) !== input.terminal.trials[index]?.brokerEvidenceSha256) {
+      throw new Error(`reconcile: broker evidence digest mismatch: ${trial.trialId}`)
     }
-    seenTrialKeys.add(trialKey)
-    attemptsByTask.set(taskId, attemptIndex + 1)
+    const broker = assertCompleteGate5BrokerEvidence(JSON.parse(evidenceBytes.toString('utf8')), {
+      identity: {
+        runId: trial.runId,
+        candidateId: trial.candidateId,
+        trialId: trial.trialId,
+        taskId: trial.taskId,
+        attemptIndex: trial.attemptIndex,
+      },
+      policy: input.intent.broker.policy,
+      publicKeySpki: input.intent.broker.publicKeySpki,
+    })
+    const usage = await readDshUsage(trialDir)
+    if (stableJson(usage) !== stableJson(broker.usage)) {
+      throw new Error(`reconcile: broker/session usage mismatch: ${trial.trialId}`)
+    }
     const attributionPath = join(trialDir, 'attribution.json')
-    let attribution = await readFile(attributionPath, 'utf8').catch(() => null)
-    if (attribution === null) {
-      attribution =
-        JSON.stringify({
-          candidate_id: input.candidateIdHint,
-          task_id: taskId,
-          attempt_index: attemptIndex,
-        }) + '\n'
-      await writeFile(attributionPath, attribution, { flag: 'wx' })
-    } else {
-      // An existing sidecar is evidence of a prior collection pass: its
-      // claim must already agree with this run's planned identity, never
-      // define it (issue #107).
-      const recorded = JSON.parse(attribution) as Record<string, unknown>
-      if (
-        recorded['candidate_id'] !== input.candidateIdHint ||
-        recorded['task_id'] !== taskId ||
-        recorded['attempt_index'] !== attemptIndex
-      ) {
-        throw new Error(
-          `reconcile: pre-existing attribution conflicts with the planned trial identity: ${trialDir}`,
-        )
-      }
+    const expectedAttribution = {
+      candidate_id: trial.candidateId,
+      task_id: trial.taskId,
+      attempt_index: trial.attemptIndex,
+    }
+    const existingAttribution = await readFile(attributionPath, 'utf8').catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      },
+    )
+    if (existingAttribution === null) {
+      await writeAtomicJson(attributionPath, expectedAttribution)
+    } else if (stableJson(JSON.parse(existingAttribution)) !== stableJson(expectedAttribution)) {
+      throw new Error(`reconcile: attribution conflicts with plan: ${trial.trialId}`)
     }
     const record = await normalizeTrial({
       trialDir,
-      expectedCandidateId: input.candidateIdHint,
-      taskId,
-      expectedAttemptIndex: attemptIndex,
+      expectedCandidateId: trial.candidateId,
+      taskId: trial.taskId,
+      expectedAttemptIndex: trial.attemptIndex,
       requireAcpEvidence: true,
     })
-    const usage = await readDshUsage(trialDir).catch((error: unknown) => error as Error | null)
-    const usageError = usage instanceof Error ? usage : null
-    const usageTotal = usageError === null ? (usage as never) : null
     normalized.push({
       ...record,
-      usage: usageTotal,
-      costUsd: usageTotal === null ? 0 : priceUsage(usageTotal),
-      priced: usageTotal !== null,
-      // The specific failure mode (0 sessions / >1 session / parse error /
-      // 0 events) survives into the summary so downstream pricing state can
-      // name the cause instead of a generic reason (issue #223).
-      ...(usageError === null ? {} : { pricingReason: String(usageError.message) }),
+      usage,
+      costUsd: priceUsage(usage, input.intent.broker.policy),
+      priced: true,
+      brokerEvidence: {
+        protocol: GATE5_BROKER_PROTOCOL,
+        digest: input.terminal.trials[index]!.brokerEvidenceSha256,
+        keyId: input.intent.broker.keyId,
+        requests: broker.dispatchedRequests,
+        reservedWorstCaseUsdMicros: broker.reservedWorstCaseUsdMicros,
+        settledUsageUsdMicros: broker.settledUsageUsdMicros,
+      },
     })
   }
-  const candidateId = input.candidateIdHint
   const summary = {
-    schemaVersion: 1,
-    runId: input.runId,
-    capabilityMode: 'real-official-responses-harbor-acp',
-    candidateId,
-    capsuleSha256: input.capsuleSha256,
+    schemaVersion: 2,
+    protocol: GATE5_BROKER_PROTOCOL,
+    runId: input.intent.runId,
+    capabilityMode: 'real-official-responses-harbor-acp-host-broker',
+    candidateId: input.intent.candidateId,
+    candidateCapsuleDigest: input.intent.candidateCapsuleDigest,
+    capsuleSha256: input.intent.capsuleSha256,
     route: {
       requestedModel: targetModel,
       effectiveModel,
@@ -526,29 +736,343 @@ async function collectRun(input: {
       contextWindow,
       maxTokens,
       wireApi: 'responses',
+      brokerSocketTarget: GATE5_MODEL_SOCKET_TARGET,
     },
+    brokerPolicy: input.intent.broker.policy,
+    brokerKeyId: input.intent.broker.keyId,
     officialPricing,
-    plannedTrials: input.plannedTrials,
+    plannedTrials: input.intent.plannedTrials,
     collectedTrials: normalized.length,
-    wallSec: input.wallSec,
-    reconciledFromTerminalRaw: input.reconciledFromTerminalRaw,
+    wallSec: input.terminal.wallSec,
+    reconciledFromTerminalRaw: true,
     normalized,
   }
   const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
-  await writeFile(join(input.runDir, 'summary.json'), summaryBytes, { mode: 0o600, flag: 'wx' })
-  const output = {
-    runId: input.runId,
-    candidateId,
-    capsuleSha256: summary.capsuleSha256,
-    plannedTrials: summary.plannedTrials,
-    collectedTrials: summary.collectedTrials,
-    statuses: normalized.map((row) => row.status),
-    wallSec: input.wallSec,
-    summaryHash: `sha256:${createHash('sha256').update(summaryBytes).digest('hex')}`,
-    runDir: input.runDir,
-  }
-  process.stdout.write(JSON.stringify(output) + '\n')
+  await reconcileGate5Summary({
+    path: join(input.runDir, 'summary.json'),
+    bytes: summaryBytes,
+  })
+  process.stdout.write(
+    JSON.stringify({
+      runId: input.intent.runId,
+      candidateId: input.intent.candidateId,
+      candidateCapsuleDigest: input.intent.candidateCapsuleDigest,
+      capsuleSha256: input.intent.capsuleSha256,
+      plannedTrials: input.intent.plannedTrials,
+      collectedTrials: normalized.length,
+      statuses: normalized.map((row) => row.status),
+      wallSec: input.terminal.wallSec,
+      summaryHash: sha256(summaryBytes),
+      runDir: input.runDir,
+    }) + '\n',
+  )
   return summary
+}
+
+async function validateExistingSummary(
+  runDir: string,
+  intent: RunIntent,
+  terminal: ExecutionTerminal,
+  bytes: string,
+): Promise<string> {
+  const summary = JSON.parse(bytes) as {
+    schemaVersion?: unknown
+    protocol?: unknown
+    runId?: unknown
+    candidateId?: unknown
+    candidateCapsuleDigest?: unknown
+    capsuleSha256?: unknown
+    plannedTrials?: unknown
+    collectedTrials?: unknown
+    brokerKeyId?: unknown
+    wallSec?: unknown
+    reconciledFromTerminalRaw?: unknown
+    normalized?: Array<Record<string, unknown>>
+  }
+  if (
+    summary.schemaVersion !== 2 ||
+    summary.protocol !== GATE5_BROKER_PROTOCOL ||
+    summary.runId !== intent.runId ||
+    summary.candidateId !== intent.candidateId ||
+    summary.candidateCapsuleDigest !== intent.candidateCapsuleDigest ||
+    summary.capsuleSha256 !== intent.capsuleSha256 ||
+    summary.plannedTrials !== intent.plannedTrials ||
+    summary.collectedTrials !== intent.plannedTrials ||
+    summary.brokerKeyId !== intent.broker.keyId ||
+    summary.wallSec !== terminal.wallSec ||
+    summary.reconciledFromTerminalRaw !== true ||
+    !Array.isArray(summary.normalized) ||
+    summary.normalized.length !== intent.plannedTrials
+  ) {
+    throw new Error('gate5 runner: existing summary does not bind the broker run intent')
+  }
+  const expectedRows: Array<Record<string, unknown>> = []
+  for (const [index, trial] of intent.trials.entries()) {
+    const row = summary.normalized[index]!
+    const trialDir = await trialDirectory(runDir, trial)
+    if ((await stat(join(trialDir, 'result.json')).catch(() => null))?.isFile() !== true) {
+      throw new Error(`gate5 runner: replayed trial result is missing: ${trial.trialId}`)
+    }
+    const config = JSON.parse(await readFile(join(trialDir, 'config.json'), 'utf8')) as {
+      task?: { path?: unknown }
+    }
+    if (
+      typeof config.task?.path !== 'string' ||
+      resolve(config.task.path) !== resolve(join(runDir, 'task-overlays', trial.trialId))
+    ) {
+      throw new Error(`gate5 runner: replayed task path differs from plan: ${trial.trialId}`)
+    }
+    const evidenceBytes = await readFile(join(runDir, 'broker-evidence', `${trial.trialId}.json`))
+    if (sha256(evidenceBytes) !== terminal.trials[index]?.brokerEvidenceSha256) {
+      throw new Error(`gate5 runner: replayed broker digest mismatch: ${trial.trialId}`)
+    }
+    const broker = assertCompleteGate5BrokerEvidence(JSON.parse(evidenceBytes.toString('utf8')), {
+      identity: {
+        runId: trial.runId,
+        candidateId: trial.candidateId,
+        trialId: trial.trialId,
+        taskId: trial.taskId,
+        attemptIndex: trial.attemptIndex,
+      },
+      policy: intent.broker.policy,
+      publicKeySpki: intent.broker.publicKeySpki,
+    })
+    const usage = await readDshUsage(trialDir)
+    if (stableJson(usage) !== stableJson(broker.usage)) {
+      throw new Error(`gate5 runner: existing summary trial binding is invalid: ${trial.trialId}`)
+    }
+    const record = await normalizeTrial({
+      trialDir,
+      expectedCandidateId: trial.candidateId,
+      taskId: trial.taskId,
+      expectedAttemptIndex: trial.attemptIndex,
+      requireAcpEvidence: true,
+    })
+    const expectedRow = {
+      ...record,
+      usage,
+      costUsd: priceUsage(usage, intent.broker.policy),
+      priced: true,
+      brokerEvidence: {
+        protocol: GATE5_BROKER_PROTOCOL,
+        digest: terminal.trials[index]!.brokerEvidenceSha256,
+        keyId: intent.broker.keyId,
+        requests: broker.dispatchedRequests,
+        reservedWorstCaseUsdMicros: broker.reservedWorstCaseUsdMicros,
+        settledUsageUsdMicros: broker.settledUsageUsdMicros,
+      },
+    }
+    if (stableJson(row) !== stableJson(expectedRow)) {
+      throw new Error(`gate5 runner: existing summary trial binding is invalid: ${trial.trialId}`)
+    }
+    expectedRows.push(expectedRow)
+  }
+  const expectedSummary = {
+    schemaVersion: 2,
+    protocol: GATE5_BROKER_PROTOCOL,
+    runId: intent.runId,
+    capabilityMode: 'real-official-responses-harbor-acp-host-broker',
+    candidateId: intent.candidateId,
+    candidateCapsuleDigest: intent.candidateCapsuleDigest,
+    capsuleSha256: intent.capsuleSha256,
+    route: {
+      requestedModel: targetModel,
+      effectiveModel,
+      reasoningEffort: 'high',
+      contextWindow,
+      maxTokens,
+      wireApi: 'responses',
+      brokerSocketTarget: GATE5_MODEL_SOCKET_TARGET,
+    },
+    brokerPolicy: intent.broker.policy,
+    brokerKeyId: intent.broker.keyId,
+    officialPricing,
+    plannedTrials: intent.plannedTrials,
+    collectedTrials: expectedRows.length,
+    wallSec: terminal.wallSec,
+    reconciledFromTerminalRaw: true,
+    normalized: expectedRows,
+  }
+  assertExactGate5ReconstructedSummary(summary, expectedSummary)
+  return JSON.stringify(expectedSummary, null, 2) + '\n'
+}
+
+async function scanFileForSecret(path: string, secret: Buffer): Promise<boolean> {
+  const handle = await open(path, 'r')
+  try {
+    const chunkSize = 64 * 1024
+    const buffer = Buffer.alloc(chunkSize)
+    let overlap = Buffer.alloc(0)
+    let position = 0
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
+      if (bytesRead === 0) return false
+      position += bytesRead
+      const candidate = Buffer.concat([overlap, buffer.subarray(0, bytesRead)])
+      if (candidate.includes(secret)) return true
+      const overlapSize = Math.max(0, secret.byteLength - 1)
+      overlap = Buffer.from(candidate.subarray(Math.max(0, candidate.byteLength - overlapSize)))
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+async function assertSecretAbsent(root: string, apiKey: string): Promise<void> {
+  const secret = Buffer.from(apiKey)
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(path)
+      else if (entry.isFile() && (await scanFileForSecret(path, secret))) {
+        throw new Error('gate5 runner: provider credential appeared in persisted run evidence')
+      }
+    }
+  }
+  await visit(root)
+}
+
+async function runTrial(input: {
+  runDir: string
+  trial: PlannedTrial
+  task: InventoryTask
+  archiveUrl: string
+  archiveSha256: string
+  caBundlePath: string
+  socketRoot: string
+  brokerPolicy: Gate5BrokerPolicy
+  authority: ReturnType<typeof createGate5BrokerSigningAuthority>
+}): Promise<{ trialId: string; evidenceBytes: string }> {
+  const socketPath = join(
+    input.socketRoot,
+    `${createHash('sha256')
+      .update(`${input.trial.runId}\0${input.trial.candidateId}\0${input.trial.trialId}`)
+      .digest('hex')
+      .slice(0, 24)}.sock`,
+  )
+  const adapter = new TrustedResponsesAdapter({
+    route,
+    expectedResponseModel: effectiveModel,
+    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    contextWindow,
+    requestMaxRetries: input.brokerPolicy.maxTransportRetries,
+    reasoningContinuationMaxTurns: input.brokerPolicy.reasoningContinuationMaxTurns,
+  })
+  const broker = await startGate5CredentialBroker({
+    socketPath,
+    stateDir: join(input.runDir, 'broker-state', input.trial.trialId),
+    identity: {
+      runId: input.trial.runId,
+      candidateId: input.trial.candidateId,
+      trialId: input.trial.trialId,
+      taskId: input.trial.taskId,
+      attemptIndex: input.trial.attemptIndex,
+    },
+    policy: input.brokerPolicy,
+    adapter,
+    authority: input.authority,
+  })
+  let jobError: unknown
+  let evidence: Gate5BrokerEvidence
+  try {
+    const registry = buildRegistryEntry({
+      candidateId: input.trial.candidateId,
+      agentName: 'dsh-self-evolving-gate5-brokered',
+      version: input.trial.candidateId,
+      archiveUrl: input.archiveUrl,
+      archiveSha256: input.archiveSha256,
+      cmd: './dsh-self-evolving-acp',
+    })
+    const config = buildJobConfig({
+      jobName: input.trial.jobName,
+      registryEntry: registry,
+      modelName: '',
+      tasks: [
+        {
+          taskId: input.trial.taskId,
+          path: join(input.runDir, 'task-overlays', input.trial.trialId),
+        },
+      ],
+      nAttempts: 1,
+      nConcurrentTrials: 1,
+      verifier: {
+        timeoutSec: input.task.agentTimeoutSec,
+        agentTimeoutSec: input.task.agentTimeoutSec,
+      },
+      idempotencyKey: `gate5/${input.trial.runId}/${input.trial.candidateId}/${input.trial.trialId}`,
+      jobsDir: join(input.runDir, 'jobs'),
+      environment: {
+        env: { CURL_CA_BUNDLE: '/run/dsh-self-evolving/artifact-ca-bundle.crt' },
+        mounts: [
+          {
+            type: 'bind',
+            source: input.caBundlePath,
+            target: '/run/dsh-self-evolving/artifact-ca-bundle.crt',
+            read_only: true,
+          },
+          {
+            type: 'bind',
+            source: broker.socketPath,
+            target: GATE5_MODEL_SOCKET_TARGET,
+            read_only: true,
+          },
+        ],
+      },
+    })
+    const configPath = join(input.runDir, 'job-configs', `${input.trial.trialId}.yaml`)
+    await writeFile(configPath, jobConfigToYaml(config), { mode: 0o600, flag: 'wx' })
+    await execResult(harborBin, ['job', 'start', '-c', configPath], {
+      cwd: harborDir,
+      env: sanitizeGate5HarborEnvironment(process.env),
+    })
+  } catch (error) {
+    jobError = error
+  } finally {
+    evidence = await broker.complete()
+  }
+  const evidencePath = join(input.runDir, 'broker-evidence', `${input.trial.trialId}.json`)
+  const evidenceBytes = await writeAtomicJson(evidencePath, evidence)
+  if (jobError !== undefined) throw jobError
+  assertCompleteGate5BrokerEvidence(evidence, {
+    identity: {
+      runId: input.trial.runId,
+      candidateId: input.trial.candidateId,
+      trialId: input.trial.trialId,
+      taskId: input.trial.taskId,
+      attemptIndex: input.trial.attemptIndex,
+    },
+    policy: input.brokerPolicy,
+    publicKeySpki: input.authority.publicKeySpki,
+  })
+  return { trialId: input.trial.trialId, evidenceBytes }
+}
+
+async function runTrialsWithLimit<T>(
+  trials: PlannedTrial[],
+  concurrency: number,
+  run: (trial: PlannedTrial) => Promise<T>,
+): Promise<T[]> {
+  const results: T[] = new Array(trials.length)
+  let cursor = 0
+  let firstError: unknown
+  const workers = Array.from({ length: Math.min(concurrency, trials.length) }, async () => {
+    for (;;) {
+      if (firstError !== undefined) return
+      const index = cursor
+      cursor += 1
+      const trial = trials[index]
+      if (trial === undefined) return
+      try {
+        results[index] = await run(trial)
+      } catch (error) {
+        firstError ??= error
+        return
+      }
+    }
+  })
+  await Promise.all(workers)
+  if (firstError !== undefined) throw firstError
+  return results
 }
 
 async function main(): Promise<void> {
@@ -558,14 +1082,30 @@ async function main(): Promise<void> {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
+  if (taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+    throw new Error('task list must be non-empty and unique')
+  }
   const attempts = Number(process.env['GATE5_ATTEMPTS'] ?? '1')
   const concurrency = Number(process.env['GATE5_CONCURRENCY'] ?? '1')
+  const trialReservationUsdMicros = Number(process.env['GATE5_TRIAL_RESERVE_USD_MICROS'] ?? '')
+  const expectedCandidateId = process.env['GATE5_EXPECTED_CANDIDATE_ID'] ?? ''
+  const expectedCapsuleDigest = process.env['GATE5_EXPECTED_CAPSULE_DIGEST'] ?? ''
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 10) {
     throw new Error('attempts must be 1 through 10')
   }
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) {
     throw new Error('concurrency must be 1 through 16')
   }
+  if (!Number.isSafeInteger(trialReservationUsdMicros) || trialReservationUsdMicros < 1) {
+    throw new Error('gate5 runner: GATE5_TRIAL_RESERVE_USD_MICROS must be a positive integer')
+  }
+  if (!candidateIdPattern.test(expectedCandidateId)) {
+    throw new Error('gate5 runner: GATE5_EXPECTED_CANDIDATE_ID is invalid')
+  }
+  if (!digestPattern.test(expectedCapsuleDigest)) {
+    throw new Error('gate5 runner: GATE5_EXPECTED_CAPSULE_DIGEST is invalid')
+  }
+  const brokerPolicy = brokerPolicyForReservation(trialReservationUsdMicros)
   const split = JSON.parse(
     await readFile(join(repoRoot, 'evidence', 'gate5', 'split-commitment.json'), 'utf8'),
   ) as { observedTaskIds: string[] }
@@ -598,155 +1138,188 @@ async function main(): Promise<void> {
     if (!existingRunDir.isDirectory() || existingRunDir.isSymbolicLink()) {
       throw new Error('gate5 runner: existing run path is not a real directory')
     }
+    const intent = await readRunIntent(
+      runDir,
+      runId,
+      expectedCandidateId,
+      expectedCapsuleDigest as `sha256:${string}`,
+      taskIds,
+      attempts,
+      brokerPolicy,
+    )
+    const terminal = await readTerminal(runDir, intent).catch(() => null)
     const summaryPath = join(runDir, 'summary.json')
-    const existing = await readFile(summaryPath, 'utf8').catch(() => null)
+    const existing = await readFile(summaryPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
     if (existing !== null) {
-      // An idempotent replay may reuse the existing summary ONLY after
-      // verifying it was produced from this exact planned request: the
-      // durable run-intent manifest binds runId/candidate/capsule/trial count,
-      // and the summary's own trial matrix must equal the requested task set
-      // (issue #105).
-      const plannedTrials = taskIds.length * attempts
-      const intent = await readRunIntent(runDir, runId, plannedTrials)
-      const replayed = JSON.parse(existing) as {
-        schemaVersion?: unknown
-        runId?: unknown
-        candidateId?: unknown
-        capsuleSha256?: unknown
-        collectedTrials?: unknown
-        normalized?: Array<{ taskId?: unknown }>
+      if (terminal === null) throw new Error('gate5 runner: summary has no terminal authority')
+      const existingText = existing.toString('utf8')
+      try {
+        JSON.parse(existingText)
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await collectRun({ runDir, intent, terminal })
+        return
       }
-      if (
-        replayed.schemaVersion !== 1 ||
-        replayed.runId !== runId ||
-        replayed.candidateId !== intent.candidateId ||
-        replayed.capsuleSha256 !== intent.capsuleSha256 ||
-        replayed.collectedTrials !== intent.plannedTrials ||
-        !Array.isArray(replayed.normalized)
-      ) {
-        throw new Error('gate5 runner: existing summary does not bind the trusted run intent')
-      }
-      const summaryTasks = [...new Set(replayed.normalized.map((row) => String(row.taskId)))].sort()
-      if (
-        summaryTasks.length !== taskIds.length ||
-        JSON.stringify(summaryTasks) !== JSON.stringify([...taskIds].sort())
-      ) {
-        throw new Error(
-          'gate5 runner: existing summary trial matrix does not match the requested task set',
-        )
-      }
-      process.stdout.write(existing)
+      const reconstructed = await validateExistingSummary(runDir, intent, terminal, existingText)
+      await reconcileGate5Summary({ path: summaryPath, bytes: reconstructed })
+      process.stdout.write(reconstructed)
       return
     }
-    const plannedTrials = taskIds.length * attempts
-    const intent = await readRunIntent(runDir, runId, plannedTrials)
-    await collectRun({
-      runDir,
-      runId,
-      plannedTrials,
-      candidateIdHint: intent.candidateId,
-      capsuleSha256: intent.capsuleSha256,
-      wallSec: null,
-      reconciledFromTerminalRaw: true,
-    })
+    if (terminal === null) {
+      throw new Error('gate5 runner: ambiguous incomplete broker run; paid calls will not replay')
+    }
+    await collectRun({ runDir, intent, terminal })
     return
   }
-  const route = await loadTrustedRoute()
+
+  const providerCredential = await loadProviderCredential()
+  const originalCredential = process.env['DEEPSEEK_API_KEY']
+  delete process.env['DEEPSEEK_API_KEY']
   const workDir = await mkdtemp(join(tmpdir(), `${runId}-`))
-  const { receipt, packed } = await buildBaselineRuntime(workDir)
-  const stagingRunDir = `${runDir}.staging-${process.pid}-${randomUUID()}`
-  await mkdir(stagingRunDir, { recursive: false, mode: 0o700 })
+  let socketRoot: string | undefined
+  let artifact: Awaited<ReturnType<typeof startArtifactServer>> | undefined
   try {
-    await writeRunIntent(stagingRunDir, {
-      schemaVersion: 1,
-      runId,
-      candidateId: receipt.candidateId,
-      capsuleSha256: packed.sha256,
-      plannedTrials: taskIds.length * attempts,
-    })
-    await rename(stagingRunDir, runDir)
-    const controllerDirectory = await open(controllerRoot, 'r')
+    socketRoot = await mkdtemp(join(tmpdir(), 'dsh-g5-sockets-'))
+    await chmod(socketRoot, 0o700)
+    const { receipt, packed } = await buildBaselineRuntime(
+      workDir,
+      expectedCandidateId,
+      expectedCapsuleDigest as `sha256:${string}`,
+    )
+    const authority = createGate5BrokerSigningAuthority()
+    const stagingRunDir = `${runDir}.staging-${process.pid}-${randomUUID()}`
+    await mkdir(stagingRunDir, { recursive: false, mode: 0o700 })
     try {
-      await controllerDirectory.sync()
-    } finally {
-      await controllerDirectory.close()
+      const trials = await materializeTrialPlan({
+        stagingRunDir,
+        runId,
+        candidateId: receipt.candidateId,
+        tasks,
+        attempts,
+      })
+      await writeAtomicJson(join(stagingRunDir, 'run-intent.json'), {
+        schemaVersion: 2,
+        protocol: GATE5_BROKER_PROTOCOL,
+        runId,
+        candidateId: receipt.candidateId,
+        candidateCapsuleDigest: receipt.capsuleDigest,
+        capsuleSha256: packed.sha256,
+        plannedTrials: trials.length,
+        broker: {
+          publicKeySpki: authority.publicKeySpki,
+          keyId: authority.keyId,
+          policy: brokerPolicy,
+        },
+        trials,
+      } satisfies RunIntent)
+      await mkdir(join(stagingRunDir, 'job-configs'), { mode: 0o700 })
+      await mkdir(join(stagingRunDir, 'broker-evidence'), { mode: 0o700 })
+      await mkdir(join(stagingRunDir, 'broker-state'), { mode: 0o700 })
+      await mkdir(join(stagingRunDir, 'jobs'), { mode: 0o700 })
+      await rename(stagingRunDir, runDir)
+      const controllerDirectory = await open(controllerRoot, 'r')
+      try {
+        await controllerDirectory.sync()
+      } finally {
+        await controllerDirectory.close()
+      }
+    } catch (error) {
+      await rm(stagingRunDir, { recursive: true, force: true })
+      throw error
     }
-  } catch (error) {
-    await rm(stagingRunDir, { recursive: true, force: true })
-    throw error
-  }
-  const artifact = await startArtifactServer(packed.archivePath, runDir)
-  const secretDir = await mkdtemp('/run/dsh-self-evolving-gate5-secret-')
-  await chmod(secretDir, 0o700)
-  const secretPath = join(secretDir, 'provider.secret')
-  await writeFile(secretPath, route.apiKey, { mode: 0o600, flag: 'wx' })
-  try {
-    const registry = buildRegistryEntry({
-      candidateId: receipt.candidateId,
-      agentName: 'dsh-self-evolving-gate5-baseline',
-      version: receipt.candidateId,
-      archiveUrl: artifact.url,
-      archiveSha256: packed.sha256,
-      cmd: './credential-launcher.sh',
-      env: { DSH_SELF_EVOLVING_PROVIDER_SECRET_FILE: '/run/dsh-self-evolving/provider.secret' },
-    })
-    const maxAgentTimeout = Math.max(...tasks.map((task) => task.agentTimeoutSec))
-    const config = buildJobConfig({
-      jobName: runId,
-      registryEntry: registry,
-      modelName: '',
-      tasks: tasks.map((task) => ({
-        taskId: task.taskId,
-        path: join(tb21Dir, task.taskId),
-      })),
-      nAttempts: attempts,
-      nConcurrentTrials: concurrency,
-      verifier: { timeoutSec: maxAgentTimeout, agentTimeoutSec: maxAgentTimeout },
-      idempotencyKey: `gate5/${runId}/${receipt.candidateId}`,
-      jobsDir: join(runDir, 'jobs'),
-      environment: {
-        env: { CURL_CA_BUNDLE: '/run/dsh-self-evolving/artifact-ca-bundle.crt' },
-        mounts: [
-          {
-            type: 'bind',
-            source: artifact.caBundlePath,
-            target: '/run/dsh-self-evolving/artifact-ca-bundle.crt',
-            read_only: true,
-          },
-          {
-            type: 'bind',
-            source: secretPath,
-            target: '/run/dsh-self-evolving/provider.secret',
-            read_only: true,
-          },
-        ],
-      },
-    })
-    const configPath = join(runDir, 'job.yaml')
-    const yaml = jobConfigToYaml(config)
-    if (yaml.includes(route.apiKey)) throw new Error('credential leaked into persisted config')
-    await writeFile(configPath, yaml, { mode: 0o600, flag: 'wx' })
-    const startedAt = Date.now()
-    await execResult(harborBin, ['job', 'start', '-c', configPath], {
-      cwd: harborDir,
-      env: process.env,
-    })
-    const wallSec = (Date.now() - startedAt) / 1000
-    await collectRun({
+    const intent = await readRunIntent(
       runDir,
       runId,
-      plannedTrials: taskIds.length * attempts,
-      candidateIdHint: receipt.candidateId,
-      capsuleSha256: packed.sha256,
-      wallSec,
-      reconciledFromTerminalRaw: false,
-    })
-  } finally {
-    await new Promise<void>((done, reject) =>
-      artifact.server.close((error) => (error ? reject(error) : done())),
+      expectedCandidateId,
+      expectedCapsuleDigest as `sha256:${string}`,
+      taskIds,
+      attempts,
+      brokerPolicy,
     )
-    await rm(secretDir, { recursive: true })
+    artifact = await startArtifactServer(packed.archivePath, workDir)
+    process.env['DEEPSEEK_API_KEY'] = providerCredential
+    const startedAt = Date.now()
+    const taskById = new Map(tasks.map((task) => [task.taskId, task]))
+    const results = await runTrialsWithLimit(intent.trials, concurrency, async (trial) => {
+      const task = taskById.get(trial.taskId)
+      if (task === undefined) {
+        throw new Error(`gate5 runner: planned task disappeared: ${trial.taskId}`)
+      }
+      return runTrial({
+        runDir,
+        trial,
+        task,
+        archiveUrl: artifact!.url,
+        archiveSha256: packed.sha256,
+        caBundlePath: artifact!.caBundlePath,
+        socketRoot: socketRoot!,
+        brokerPolicy,
+        authority,
+      })
+    })
+    delete process.env['DEEPSEEK_API_KEY']
+    const finalIntent = await readRunIntent(
+      runDir,
+      runId,
+      expectedCandidateId,
+      expectedCapsuleDigest as `sha256:${string}`,
+      taskIds,
+      attempts,
+      brokerPolicy,
+    )
+    if (stableJson(finalIntent) !== stableJson(intent)) {
+      throw new Error('gate5 runner: run intent changed during execution')
+    }
+    await assertSecretAbsent(runDir, providerCredential)
+    const terminal: ExecutionTerminal = {
+      schemaVersion: 1,
+      protocol: GATE5_BROKER_PROTOCOL,
+      runId,
+      wallSec: (Date.now() - startedAt) / 1000,
+      trials: results.map((result) => ({
+        trialId: result.trialId,
+        brokerEvidenceSha256: sha256(result.evidenceBytes),
+      })),
+    }
+    const terminalTrials = await Promise.all(
+      results.map(async (result, index) => {
+        const trial = intent.trials[index]
+        if (trial === undefined || result.trialId !== trial.trialId) {
+          throw new Error('gate5 runner: terminal result order differs from run intent')
+        }
+        return {
+          evidence: JSON.parse(result.evidenceBytes) as unknown,
+          identity: {
+            runId: trial.runId,
+            candidateId: trial.candidateId,
+            trialId: trial.trialId,
+            taskId: trial.taskId,
+            attemptIndex: trial.attemptIndex,
+          },
+          policy: brokerPolicy,
+          publicKeySpki: intent.broker.publicKeySpki,
+          sessionUsage: await readDshUsage(await trialDirectory(runDir, trial)),
+        }
+      }),
+    )
+    await writeGate5ExecutionTerminal({
+      path: join(runDir, 'execution-terminal.json'),
+      value: terminal,
+      trials: terminalTrials,
+    })
+    await collectRun({ runDir, intent, terminal })
+  } finally {
+    delete process.env['DEEPSEEK_API_KEY']
+    if (originalCredential !== undefined) process.env['DEEPSEEK_API_KEY'] = originalCredential
+    if (artifact !== undefined) await closeServer(artifact.server).catch(() => undefined)
+    if (socketRoot !== undefined) await rm(socketRoot, { recursive: true, force: true })
+    await rm(workDir, { recursive: true, force: true })
   }
 }
 
-await main()
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main()
+}

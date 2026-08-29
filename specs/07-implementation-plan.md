@@ -127,7 +127,9 @@
 - connect the accepted proposer, candidate builder, Harbor provider, durable controller and Archive behind one CLI;
 - add versioned config plus `init`, `run`, `resume`, `status`, `audit` and `doctor` commands;
 - default to the stable demo profile (`K=3`, no sealed access, at most 15 solver trials);
-- keep credentials in root-readable external files and preserve the compatible Zen/high/1M/32k route;
+- keep the provider credential only in the trusted host broker; never pass it through Harbor env/config/mount/capsule;
+- use one job and one fixed-route Unix broker per `(task, attempt)`, with signed usage receipts and a content-addressed
+  `no-network` agent overlay;
 - retain CMP/Thompson/UCB-Air, split/sealed and statistics modules as optional benchmark capabilities.
 
 ### Accept
@@ -137,6 +139,17 @@
 - repeat submit/resume does not duplicate proposal, model trial, score or cost;
 - CLI status comes entirely from durable evidence and works after process restart;
 - selector/proposer still cannot access guard/sealed material.
+- a real Harbor adversarial candidate sees no provider env or legacy secret file, cannot complete direct HTTPS, can
+  call the fixed Unix broker, and produces signature-valid receipts whose usage equals the DSH session;
+- the host socket parent is private, the artifact TLS private key is absent from run evidence, the task overlay is
+  revalidated after execution, and the frozen provider-attempt policy cannot exceed its output reservation;
+- schema-1/tampered summaries and forged terminal markers reject; terminal publication precedes no broker-signature/
+  session-usage check; signed worst-case and settled micro-USD stay within the durable saga reservation before spend;
+- the evaluator passes the planned candidate capsule digest into the runner; source builds reproduce that digest, while
+  prebuilt capsules must pass complete tree-v2/full-schema-2/digest verification before and after a host-private
+  snapshot is packed, so mutable admission paths cannot execute drifted bytes under a frozen candidate identity;
+- an intent without `execution-terminal.json` never redispatches ambiguous paid calls. Credential-colocation evidence
+  from the retired schema 1 protocol cannot satisfy this gate and requires a fresh broker-v2 revalidation run.
 
 ## 8. Gate 6 — Stable K=3 iteration proof
 

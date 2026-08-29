@@ -153,7 +153,14 @@ describe('Gate 4 — brokered proposal model gateway', () => {
       },
     })
     try {
-      const adapter = new ProposalGatewayAdapter({ socketPath, route })
+      const adapter = new ProposalGatewayAdapter({ socketPath, route, contextWindow: 131_072 })
+      await expect(adapter.resolveModel(route.provider, route.model)).resolves.toMatchObject({
+        provider: route.provider,
+        id: route.model,
+        context: { contextWindow: 131_072 },
+        defaultMaxTokens: route.maxTokens,
+      })
+      await expect(adapter.resolveModel(route.provider, 'override')).rejects.toThrow(/locked route/)
       const options = {
         provider: route.provider,
         model: route.model,

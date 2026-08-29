@@ -152,6 +152,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: link:../../deepseek-harness/vendor/cordis
         version: link:../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-llm':
+        specifier: link:../../deepseek-harness/packages/llm/llm
+        version: link:../../deepseek-harness/packages/llm/llm
       '@dsh-self-evolving/candidate-sdk':
         specifier: workspace:*
         version: link:../candidate-sdk
@@ -161,6 +164,9 @@ importers:
       '@dsh-self-evolving/proposer':
         specifier: workspace:*
         version: link:../dsh-self-evolving-proposer
+      smol-toml:
+        specifier: ^1.7.0
+        version: 1.7.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

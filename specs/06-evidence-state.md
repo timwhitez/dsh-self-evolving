@@ -223,6 +223,29 @@ build manifest、compiled bundle、capsule、SBOM、scan/unit/Loader/unload/mock
 每个 evaluation ref 至少指向：request/Harbor config、external job ID、逐 trial config/result、ACP events/
 summary、ATIF、DSH session log、verifier logs、resource/process/network audit、usage/cost、normalizer receipt。
 
+Gate 5 broker lineage 还必须包含：
+
+- launch 前原子发布的 `run-intent.json` schema 2，绑定 candidate/capsule、ordered trial inventory、每个 task
+  original/overlay digest、固定 broker policy、Ed25519 public key/key id；
+- 每 trial 独立 Harbor job、controller-owned `(task, attempt)` attribution、durable gateway request store 与
+  signed broker evidence；Harbor 随机 trial directory name 不能成为 attribution authority；
+- capability socket 位于短路径、host-private `0700` 临时目录；artifact TLS private key 只存在于临时运行目录，
+  二者均不得进入持久 run evidence。冻结 policy 明示 transport retry 与 reasoning continuation，output reservation
+  覆盖 policy 允许的全部 provider attempts；
+- signed evidence 精确绑定 run/candidate/trial/task/attempt、route、request receipts 和 usage；collector 将
+  broker usage 与 DSH session usage 逐字段对账，并保存 pre-dispatch worst-case USD reservation 与按 usage
+  计算的 conservative micro-USD settlement；
+- 所有 job 已终止、broker 已关闭、签名 evidence 已 fsync 且 run tree 通过 exact credential-byte scan 后，
+  controller 还必须重新验证每条 broker signature/status/receipt、broker 与 DSH usage 精确相等、original/
+  overlay digest 与 `no-network` 语义，才能原子发布 `execution-terminal.json`；summary 不是 terminal
+  authority；验证失败发生在 marker 临时文件创建之前；
+- crash 后只有存在且通过验证的 terminal marker 才允许 collect。intent 已存在但 terminal 缺失属于
+  paid-outcome ambiguous，禁止自动重发；已存在 summary 的 replay 仍重验 intent、terminal、trial config/
+  result、broker digest/signature 和 session usage，并从 raw Harbor artifacts 重跑 normalizer 后与整个 schema-2
+  summary canonical exact-compare。schema-1、未知 protocol、伪 marker 或 status/reward/cost 漂移一律拒绝；
+- schema 1 credential-colocation runs 是 immutable historical evidence，但不能迁移、重解释或用于 broker-v2
+  安全/benchmark claim。
+
 每个本地 untrusted execution 的 resource receipt 至少绑定版本化 policy id 与 digest、完整 limits、
 cgroup/rlimit/writable-mount enforcement、memory/PID/CPU/I/O/storage peak 与 event counters、exit/signal 以及
 唯一 termination cause。receipt 缺失或控制通道损坏不能解释为正常完成；成功 publication 必须把 receipt

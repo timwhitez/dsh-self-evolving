@@ -130,6 +130,11 @@
 
 ## Phase 5 — 产品化迭代闭环（Gate 5，1–3 天）
 
+> **2026-08-29 security successor:** 原 credential-launcher 验收已因 Issue #116 失效。broker-v2 已实现并以
+> 真实 Harbor 对抗 E2E 验证，但尚无 fresh official-provider run，因此下列历史功能完成项不能单独恢复
+> `GATE_5_ACCEPTED`。恢复验收必须使用 fresh run ID、schema 2 intent、per-trial Unix broker、signed usage 和
+> `execution-terminal.json`。
+
 - [x] 搜索、split/sealed、bootstrap、durable controller 的核心模块与测试已存在
 - [x] 将真实 proposer → candidate builder → Loader → Harbor evaluator → Archive 接到统一 CLI
 - [x] 实现 `init/run/resume/status/audit/doctor` 和 versioned config
@@ -176,5 +181,5 @@
 
 - [x] 每个已验收 Phase 更新 `PROJECT_STATUS.md`，只报告有 artifact 支持的状态
 - [ ] 任何 TCB/协议/split/metric 变更走 ADR + protocol version bump（spec 07 §13）
-- [ ] 凭据永不进入 candidate/config/log/evidence；每次 export 附 canary absence receipt
+- [x] Gate 5 凭据不进入 candidate/Harbor config/log/evidence；per-trial broker evidence 经签名和 usage 对账
 - [ ] CI 全绿是合入条件；nightly Harbor smoke、weekly provenance refresh report 不自动改 pin
