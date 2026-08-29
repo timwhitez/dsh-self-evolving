@@ -68,6 +68,18 @@
   parallel focused processes, each including 12 fresh-publication and 12 torn-recovery races, pass; final full unit
   is again 121 files / 945 passed + 1 platform skip. A new commit, exact-head hosted CI and fresh review remain
   mandatory.
+- Head `06418e0` passed hosted CI run `33243814763`, but fresh independent review correctly blocked merge because a
+  final pathname disappearing after its inode was opened/read was collapsed into the same state as initially absent.
+  With an unknown external hard link, that could republish without retaining the torn inode as controlled evidence.
+  The corrected reader now returns validated held bytes/metadata plus a distinct `pathPresent=false` state. Recovery
+  accepts that state only when the expected content-addressed residue has the same inode and bytes and exactly one
+  remaining link; no-residue unlink, extra links, forged same-byte residue, different-inode replacement and parent
+  directory replacement fail closed. The residue file and directory are fsynced before deterministic republish.
+  A permanent empty single-link `0600` lock inode plus kernel `flock` serializes reconciliation across processes;
+  process death releases ownership without deleting/replacing the lock identity. Deterministic tests cover
+  uncontrolled read-after-open disappearance, legitimate residue-backed recovery, process-level lock contention,
+  lock-owner SIGKILL, forged locks and parent-directory replacement. A new commit, exact-head CI and fresh independent
+  approval remain required.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
 

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   link,
   lstat,
@@ -6,8 +7,10 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -85,6 +88,76 @@ async function crashPublication(
   expect(result).toEqual({ code: null, signal: 'SIGKILL' })
 }
 
+async function reconcileInChild(path: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(process.execPath, [worker], {
+      env: {
+        ...process.env,
+        DSH_GATE5_SUMMARY_MODE: 'reconcile',
+        DSH_GATE5_SUMMARY_PATH: path,
+        DSH_GATE5_SUMMARY_BYTES: summaryBytes,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('close', (code, signal) => {
+      if (code !== 0 || signal !== null) {
+        reject(
+          new Error(
+            `reconcile worker failed: code=${String(code)} signal=${String(signal)}\n${stderr}`,
+          ),
+        )
+        return
+      }
+      resolve(stdout.trim())
+    })
+  })
+}
+
+async function crashReconciliationLock(path: string): Promise<void> {
+  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve, reject) => {
+      const child = spawn(process.execPath, [worker], {
+        env: {
+          ...process.env,
+          DSH_GATE5_SUMMARY_MODE: 'crash-reconcile-lock',
+          DSH_GATE5_SUMMARY_PATH: path,
+          DSH_GATE5_SUMMARY_BYTES: summaryBytes,
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      })
+      let stderr = ''
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk
+      })
+      child.once('error', reject)
+      child.once('close', (code, signal) => {
+        if (code !== null || signal !== 'SIGKILL') {
+          reject(
+            new Error(
+              `lock worker did not stop: code=${String(code)} signal=${String(signal)}\n${stderr}`,
+            ),
+          )
+          return
+        }
+        resolve({ code, signal })
+      })
+    },
+  )
+  expect(result).toEqual({ code: null, signal: 'SIGKILL' })
+}
+
 describe('Gate 5 summary crash/replay publication', () => {
   it('exposes either no final summary or all bytes at every publication checkpoint', async () => {
     const checkpoints: Gate5SummaryPublishCheckpoint[] = [
@@ -126,6 +199,17 @@ describe('Gate 5 summary crash/replay publication', () => {
         expect((await lstat(join(directory, staging[0]!))).ino).not.toBe((await lstat(path)).ino)
       }
     }
+
+    const lockDirectory = join(root!, 'reconciliation-lock-crash')
+    const lockSummary = join(lockDirectory, 'summary.json')
+    const lockPath = join(lockDirectory, '.summary.json.reconcile.lock')
+    await mkdir(lockDirectory, { mode: 0o700 })
+    await crashReconciliationLock(lockSummary)
+    await expect(reconcileGate5Summary({ path: lockSummary, bytes: summaryBytes })).resolves.toBe(
+      'published',
+    )
+    expect((await lstat(lockPath)).nlink).toBe(1)
+    expect((await stat(lockPath)).mode & 0o777).toBe(0o600)
   })
 
   it('recovers exact-prefix torn final summaries and converges on repeated resume', async () => {
@@ -148,6 +232,31 @@ describe('Gate 5 summary crash/replay publication', () => {
       expect(residue).toHaveLength(1)
       expect(await readFile(join(directory, residue[0]!))).toEqual(prefix)
     }
+
+    const controlledDirectory = join(root!, 'controlled-read-disappearance')
+    const controlledPath = join(controlledDirectory, 'summary.json')
+    const controlledPrefix = expected.subarray(0, 41)
+    const controlledResidue = join(
+      controlledDirectory,
+      `.summary.json.crash-residue-sha256-${createHash('sha256')
+        .update(controlledPrefix)
+        .digest('hex')}`,
+    )
+    await mkdir(controlledDirectory, { mode: 0o700 })
+    await writeFile(controlledPath, controlledPrefix, { mode: 0o600, flag: 'wx' })
+    await expect(
+      reconcileGate5Summary({
+        path: controlledPath,
+        bytes: summaryBytes,
+        async afterFinalRead() {
+          await link(controlledPath, controlledResidue)
+          await unlink(controlledPath)
+        },
+      }),
+    ).resolves.toBe('recovered')
+    expect(await readFile(controlledPath, 'utf8')).toBe(summaryBytes)
+    expect(await readFile(controlledResidue)).toEqual(controlledPrefix)
+    expect((await lstat(controlledResidue)).nlink).toBe(1)
   })
 
   it('finishes cleanup after a crash between no-clobber link and staging unlink', async () => {
@@ -165,7 +274,7 @@ describe('Gate 5 summary crash/replay publication', () => {
     expect((await lstat(path)).nlink).toBe(1)
   })
 
-  it('rejects malformed or valid-JSON tampering that is not an exact expected prefix', async () => {
+  it('rejects content tampering and uncontrolled read-after-open disappearance', async () => {
     for (const [name, bytes] of [
       ['malformed', Buffer.from('not-json\n')],
       ['valid-json', Buffer.from('{"schemaVersion":2,"tampered":true}\n')],
@@ -178,6 +287,115 @@ describe('Gate 5 summary crash/replay publication', () => {
         /does not match the reconstructed terminal evidence/,
       )
       expect(await readFile(path)).toEqual(bytes)
+    }
+
+    for (const withUnknownHardlink of [false, true]) {
+      const directory = join(root!, `uncontrolled-disappearance-${withUnknownHardlink}`)
+      const path = join(directory, 'summary.json')
+      const alias = join(directory, 'unknown-hardlink')
+      const prefix = Buffer.from(summaryBytes).subarray(0, 41)
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(path, prefix, { mode: 0o600, flag: 'wx' })
+      if (withUnknownHardlink) await link(path, alias)
+      await expect(
+        reconcileGate5Summary({
+          path,
+          bytes: summaryBytes,
+          async afterFinalRead() {
+            await unlink(path)
+          },
+        }),
+      ).rejects.toThrow(/disappeared without a controlled crash residue/)
+      expect(await stat(path).catch(() => null)).toBeNull()
+      expect(
+        (await readdir(directory)).filter((name) =>
+          name.startsWith('.summary.json.crash-residue-sha256-'),
+        ),
+      ).toEqual([])
+      if (withUnknownHardlink) {
+        expect(await readFile(alias)).toEqual(prefix)
+        expect((await lstat(alias)).nlink).toBe(1)
+      }
+    }
+
+    const replacementDirectory = join(root!, 'read-replacement')
+    const replacementPath = join(replacementDirectory, 'summary.json')
+    const replacementPrefix = Buffer.from(summaryBytes).subarray(0, 41)
+    await mkdir(replacementDirectory, { mode: 0o700 })
+    await writeFile(replacementPath, replacementPrefix, { mode: 0o600, flag: 'wx' })
+    await expect(
+      reconcileGate5Summary({
+        path: replacementPath,
+        bytes: summaryBytes,
+        async afterFinalRead() {
+          await unlink(replacementPath)
+          await writeFile(replacementPath, replacementPrefix, { mode: 0o600, flag: 'wx' })
+        },
+      }),
+    ).rejects.toThrow(/identity changed during read/)
+
+    const linkedDirectory = join(root!, 'unknown-hardlink-before-recovery')
+    const linkedPath = join(linkedDirectory, 'summary.json')
+    const linkedAlias = join(linkedDirectory, 'unknown-hardlink')
+    await mkdir(linkedDirectory, { mode: 0o700 })
+    await writeFile(linkedPath, replacementPrefix, { mode: 0o600, flag: 'wx' })
+    await link(linkedPath, linkedAlias)
+    await expect(reconcileGate5Summary({ path: linkedPath, bytes: summaryBytes })).rejects.toThrow(
+      /unknown hard link/,
+    )
+    expect((await lstat(linkedPath)).nlink).toBe(2)
+
+    const forgedDirectory = join(root!, 'forged-residue')
+    const forgedPath = join(forgedDirectory, 'summary.json')
+    const forgedResidue = join(
+      forgedDirectory,
+      `.summary.json.crash-residue-sha256-${createHash('sha256')
+        .update(replacementPrefix)
+        .digest('hex')}`,
+    )
+    await mkdir(forgedDirectory, { mode: 0o700 })
+    await writeFile(forgedPath, replacementPrefix, { mode: 0o600, flag: 'wx' })
+    await writeFile(forgedResidue, replacementPrefix, { mode: 0o600, flag: 'wx' })
+    await expect(reconcileGate5Summary({ path: forgedPath, bytes: summaryBytes })).rejects.toThrow(
+      /does not match the observed torn inode/,
+    )
+
+    const authorityDirectory = join(root!, 'authority-directory')
+    const movedAuthority = join(root!, 'authority-directory-moved')
+    const authorityPath = join(authorityDirectory, 'summary.json')
+    await mkdir(authorityDirectory, { mode: 0o700 })
+    await writeFile(authorityPath, replacementPrefix, { mode: 0o600, flag: 'wx' })
+    await expect(
+      reconcileGate5Summary({
+        path: authorityPath,
+        bytes: summaryBytes,
+        async afterTornQuarantined() {
+          await rename(authorityDirectory, movedAuthority)
+          await mkdir(authorityDirectory, { mode: 0o700 })
+        },
+      }),
+    ).rejects.toThrow(/authority directory changed/)
+    expect(await readdir(authorityDirectory)).toEqual([])
+    expect(
+      (await readdir(movedAuthority)).some((name) =>
+        name.startsWith('.summary.json.crash-residue-sha256-'),
+      ),
+    ).toBe(true)
+
+    for (const kind of ['nonempty', 'hardlinked'] as const) {
+      const lockDirectory = join(root!, `invalid-lock-${kind}`)
+      const lockSummary = join(lockDirectory, 'summary.json')
+      const lockPath = join(lockDirectory, '.summary.json.reconcile.lock')
+      await mkdir(lockDirectory, { mode: 0o700 })
+      await writeFile(lockPath, kind === 'nonempty' ? 'forged\n' : '', {
+        mode: 0o600,
+        flag: 'wx',
+      })
+      if (kind === 'hardlinked') await link(lockPath, join(lockDirectory, 'unknown-lock-link'))
+      await expect(
+        reconcileGate5Summary({ path: lockSummary, bytes: summaryBytes }),
+      ).rejects.toThrow(/reconciliation lock identity changed/)
+      expect(await stat(lockSummary).catch(() => null)).toBeNull()
     }
   })
 
@@ -209,5 +427,25 @@ describe('Gate 5 summary crash/replay publication', () => {
       expect(await readFile(tornPath, 'utf8')).toBe(summaryBytes)
       expect((await lstat(tornPath)).nlink).toBe(1)
     }
+
+    const processDirectory = join(root!, 'concurrent-processes')
+    const processPath = join(processDirectory, 'summary.json')
+    await mkdir(processDirectory, { mode: 0o700 })
+    expect(
+      (await Promise.all([reconcileInChild(processPath), reconcileInChild(processPath)])).sort(),
+    ).toEqual(['published', 'reused'])
+
+    const tornProcessDirectory = join(root!, 'concurrent-torn-processes')
+    const tornProcessPath = join(tornProcessDirectory, 'summary.json')
+    await mkdir(tornProcessDirectory, { mode: 0o700 })
+    await writeFile(tornProcessPath, Buffer.from(summaryBytes).subarray(0, 41), {
+      mode: 0o600,
+      flag: 'wx',
+    })
+    expect(
+      (
+        await Promise.all([reconcileInChild(tornProcessPath), reconcileInChild(tornProcessPath)])
+      ).sort(),
+    ).toEqual(['recovered', 'reused'])
   })
 })

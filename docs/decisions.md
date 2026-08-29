@@ -466,8 +466,13 @@ Resume first revalidates the terminal and raw evidence. It reuses exact canonica
 a linked staging inode, or retains an exact-prefix torn final as content-addressed crash residue before deterministic
 reconstruction. Any non-prefix malformed bytes or semantically/bytewise different valid JSON fail closed as evidence
 tampering. This recovery path never loads the provider credential or redispatches a paid trial. Terminal-derived
-attribution creation uses the same staged, fsynced atomic-write discipline. Concurrent recovery may retry when another
-reconciler removes the same opened torn-final pathname; replacement by a different inode remains an integrity error.
+attribution creation uses the same staged, fsynced atomic-write discipline. The reader distinguishes a path that was
+absent before open from one that disappeared after its inode was opened and validated. The latter may retry only when
+the expected content-addressed residue has the same inode and bytes with no extra hard link; no residue, a forged
+same-byte residue, an unknown hard link or a different-inode replacement fails closed. Reconciliation holds and
+rechecks the original parent-directory inode across quarantine and republish. A permanent empty single-link `0600`
+lock inode is protected by kernel `flock` so multiple processes cannot turn a legitimate successor publication into
+an indistinguishable replacement race; process death releases the lock without a stale-owner takeover protocol.
 
 **Why:** the retired runner mounted `provider.secret`, exported it as `DEEPSEEK_API_KEY`, and loaded evolving candidate
 JavaScript in the same process and network namespace. Read-only file mode and static scanning cannot isolate a secret
