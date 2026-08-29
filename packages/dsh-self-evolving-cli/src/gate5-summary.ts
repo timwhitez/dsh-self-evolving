@@ -55,7 +55,8 @@ async function readStableFile(path: string, label: string): Promise<StableFile |
     }
     const bytes = await handle.readFile()
     const heldAfter = await handle.stat()
-    const pathAfter = await lstat(path)
+    const pathAfter = await lstatOrNull(path)
+    if (pathAfter === null) return null
     assertRegularSummaryFile(heldAfter, label)
     assertRegularSummaryFile(pathAfter, label)
     if (

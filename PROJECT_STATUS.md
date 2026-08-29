@@ -61,6 +61,13 @@
   directory-fsync boundaries, exact-prefix recovery, repeated resume, linked-staging cleanup, tamper rejection and
   concurrent no-clobber publication. Focused Gate 5 coverage is 19/19 and full unit is 121 files / 945 passed + 1
   platform skip. This repair still requires a commit, exact-head hosted CI and a new independent approval before merge.
+- First repair head `9e3aaa6` correctly failed hosted CI run `33243205947`: during concurrent torn-summary recovery,
+  one reconciler could remove the final path while the other still held and verified that inode, making the latter's
+  post-read `lstat` fail with `ENOENT`. The retry protocol now treats only that missing pathname as a concurrent
+  completed removal and returns to reconciliation; replacement with a different inode still fails closed. Three
+  parallel focused processes, each including 12 fresh-publication and 12 torn-recovery races, pass; final full unit
+  is again 121 files / 945 passed + 1 platform skip. A new commit, exact-head hosted CI and fresh review remain
+  mandatory.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
 
