@@ -1,16 +1,5 @@
 import { createHash } from 'node:crypto'
-import {
-  chmod,
-  cp,
-  mkdir,
-  mkdtemp,
-  open,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import {
   admitV011Candidate,
@@ -502,7 +491,6 @@ async function prepareBaseline(
     if (admission.buildReceipt.runtimePackageName === undefined) {
       throw new Error('v0.1.1 baseline: runtime package identity missing')
     }
-    await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
     const built: BuiltCandidate = {
       ...v011BuiltIdentity(admission.receipt),
       capsuleDigest: admission.receipt.capsuleDigest,
@@ -1204,7 +1192,6 @@ async function realV011BuildUnretained(
     if (admission.buildReceipt.runtimePackageName === undefined) {
       throw new Error('v0.1.1 builder: runtime package identity missing')
     }
-    await chmod(join(staging, 'capsule', 'runtime', 'credential-launcher.sh'), 0o755)
     const actionRoot = join(
       config.stateDir,
       'v011',

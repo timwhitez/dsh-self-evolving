@@ -11,16 +11,21 @@
   state without changing the planned capsule digest.
 - Capsule manifest schema 2 now freezes checksum format `dsh-capsule-tree-v2`. Its exact typed entry set records every
   directory as normalized `0755`, every regular file as evaluated `0644` or `0755` plus content hash, and every
-  symlink as normalized `0777` plus literal-target hash. Missing, extra, mode/type/path/content/target drift,
-  duplicates, hard links and special entries fail closed. `capsuleHash` still jointly binds manifest and sums bytes.
+  symlink as archive-normalized `0755` plus literal-target hash. Non-UTF-8/control-character names, missing, extra,
+  mode/type/path/content/target drift, replacement-decoded checksum/target aliases, duplicates, hard-linked
+  files/symlinks and special entries fail closed. Control-file modes are fixed outside the checksum cycle.
+  Shebang runner files receive their executable mode before checksumming; no post-admission chmod mutates the tree.
+  `capsuleHash` still jointly binds manifest and sums bytes.
 - Schema-1 manifests remain readable only as explicitly labelled `dsh-capsule-files-v1` predecessor evidence; they
-  are never upgraded to current complete-tree authority. New identities require a fresh admission/evaluation lineage.
-- Focused tree/manifest contract coverage passes 23/23, including added-empty-directory, executable/special-mode
-  negative controls, schema-v1 predecessor labelling and deterministic double packing. Format, docs, lint, typecheck,
-  provenance, upstream-clean, byte-equality and release-readiness pass; unit is 119 files / 918 passed + 1 platform
-  skip. No-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped, including real Harbor ACP,
-  extract-elf smoke, offline Loader, V011 admission and crash recovery. Hosted CI, independent exact-head review and
-  merge are still required.
+  are never upgraded to current complete-tree authority. Fresh admission and stable-build resume require v2; resume
+  rechecks the live tree, offline-sums receipt and capsule hash. New identities require a fresh admission/evaluation lineage.
+- Focused capsule-integrity + stable-identity coverage passes 22/22, including added-empty-directory,
+  executable/special/control-mode, hard-linked symlink, invalid UTF-8 path/checksum, literal symlink-target,
+  schema-v1 predecessor and resume negative controls. Unit is 119 files / 925 passed + 1 platform skip. No-key E2E
+  is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped, including real Harbor ACP, extract-elf
+  smoke, offline Loader, V011 admission and crash recovery. Format, docs, lint, typecheck, provenance,
+  upstream-clean, byte-equality and release-readiness are rerun before the replacement head; hosted CI, a fresh
+  independent exact-head review and merge are still required.
 
 ## 2026-08-28 current-main gate repair
 
@@ -711,7 +716,8 @@ main 且带回归测试的修复（各 PR 见对应 squash commit）；未列出
   afterEach 不再吞 dispose 失败。
 - #41：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed。
 - #42（2026-08-29 重开）：predecessor SHA256SUMS 已覆盖 symlink target 及 file entry 集，但遗漏 empty
-  directory 与 executable mode；当前 tree-v2 successor 仍在 CI/review/merge 门。
+  directory 与 executable mode；首轮独立审查又发现非 UTF-8 path alias、hard-linked symlink、symlink tar-mode
+  与 resume authority 缺口，均已加入 tree-v2 successor；当前仍在 CI/重新 review/merge 门。
 - #54：changed-line 预算改用 LCS 顺序感知编辑距离，重排不再零成本；超界文件 fail closed。
 - #55：proposal+gateway-receipts 以 manifest 提交点原子成束发布；resume 仅经 manifest 加载，
   未提交目录视为未完成 publication；每次加载重新校验 sha256 绑定。（#45 的崩溃窗口部分

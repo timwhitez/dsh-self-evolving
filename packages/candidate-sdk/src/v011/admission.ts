@@ -19,7 +19,7 @@ import {
   type BuildReceipt,
 } from '../builder-sandbox.js'
 import { packCapsule, type CapsuleOutput, type RuntimeClosureInput } from '../capsule.js'
-import { verifyCapsuleTreeManifest } from '../capsule-tree.js'
+import { CAPSULE_TREE_FORMAT, verifyCapsuleTreeManifest } from '../capsule-tree.js'
 import {
   assertCompletedResourceDomainReceipt,
   CANDIDATE_BUILD_RESOURCE_POLICY_V1,
@@ -580,7 +580,11 @@ async function runCandidateTests(
  * `SHA256SUMS` and `capsule.json` are jointly covered by capsuleHash.
  */
 async function verifySums(capsuleRoot: string): Promise<`sha256:${string}`> {
-  return (await verifyCapsuleTreeManifest(capsuleRoot)).digest
+  const verified = await verifyCapsuleTreeManifest(capsuleRoot)
+  if (verified.format !== CAPSULE_TREE_FORMAT) {
+    throw new Error(`v0.1.1 admission: current admission requires ${CAPSULE_TREE_FORMAT}`)
+  }
+  return verified.digest
 }
 
 export { verifySums as verifyV011CapsuleSums }

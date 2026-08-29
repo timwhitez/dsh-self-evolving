@@ -58,7 +58,11 @@ export interface CapsuleInput {
   canonicalCandidateId?: string
   /** Runner overlay content (the stable runner's final row restatement). */
   runnerOverlay: string
-  /** Additional immutable runner-local modules referenced by the overlay. */
+  /**
+   * Additional immutable runner-local modules referenced by the overlay.
+   * Text beginning with a shebang is materialized as normalized executable
+   * mode 0755; all other files use 0644 before the tree manifest is written.
+   */
   runnerFiles?: Record<string, string>
   /** Provenance slice (JSON string) to embed. */
   provenanceJson: string
@@ -480,7 +484,9 @@ async function writeRunnerFiles(root: string, files: Record<string, string>): Pr
     }
     const destination = join(root, ...segments)
     await mkdir(dirname(destination), { recursive: true })
-    await writeFile(destination, content)
+    const mode = content.startsWith('#!') ? 0o755 : 0o644
+    await writeFile(destination, content, { mode })
+    await chmod(destination, mode)
   }
 }
 

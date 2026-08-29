@@ -402,10 +402,12 @@ remain the authority for benchmark trials and are not changed by this ADR.
 
 **Decision:** current capsules use manifest schema 2 and checksum format `dsh-capsule-tree-v2`. The checksum set
 contains every directory, regular file and symlink. Directory and symlink modes are their evaluated canonical values
-(`0755` and `0777`); regular files record `0644` or `0755` according to whether any executable bit is present, matching
-the deterministic Harbor tar normalization. File entries hash bytes, symlink entries hash the literal target, and
-directory entries hash their typed path. Special permission bits reject. The exact entry set is checked against the live tree. `capsule.json` records
-the format and sums hash, while capsule identity remains `H(capsule.json || SHA256SUMS)`.
+(`0755` and `0755`); regular files record `0644` or `0755` according to whether any executable bit is present, matching
+the deterministic Harbor tar normalization. File entries hash bytes, symlink entries hash literal target bytes, and
+directory entries hash their typed path. Non-UTF-8 checksum text, non-UTF-8/control-character names,
+hard-linked files/symlinks and special
+permission bits reject. The exact entry set is checked against the live tree. Fresh admission and stable-build resume
+also require v2, bind the verified sums digest, and recompute `H(capsule.json || SHA256SUMS)`.
 
 **Why:** the predecessor file/symlink list did not represent empty directories or executable mode. Both could change
 the evaluated archive and Loader-visible state without changing the planned capsule digest. A private snapshot can
