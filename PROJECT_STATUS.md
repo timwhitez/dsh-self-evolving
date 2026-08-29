@@ -1,7 +1,26 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
-**更新时间：2026-08-28（Asia/Tokyo）**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_V1_CAPSULE_INTEGRITY_INVALID`; `GATE_1_TREE_V2_IMPLEMENTED_REVALIDATION_PENDING`; `GATE_2`–`GATE_7` / `V011_A`–`V011_E` 为 predecessor evidence；`V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`（不证明 tree-v2 capsule identity）；`GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**更新时间：2026-08-29（Asia/Tokyo）**
+
+## 2026-08-29 Issue #42 complete-tree successor
+
+- Issue #42 was correctly reopened after independent PR #247 review showed that its original path/type/mode contract
+  was only partially closed. The schema-1 checksum set bound file bytes and symlink targets but omitted empty
+  directories and regular-file executable mode. Either changed the deterministic Harbor archive and Loader-visible
+  state without changing the planned capsule digest.
+- Capsule manifest schema 2 now freezes checksum format `dsh-capsule-tree-v2`. Its exact typed entry set records every
+  directory as normalized `0755`, every regular file as evaluated `0644` or `0755` plus content hash, and every
+  symlink as normalized `0777` plus literal-target hash. Missing, extra, mode/type/path/content/target drift,
+  duplicates, hard links and special entries fail closed. `capsuleHash` still jointly binds manifest and sums bytes.
+- Schema-1 manifests remain readable only as explicitly labelled `dsh-capsule-files-v1` predecessor evidence; they
+  are never upgraded to current complete-tree authority. New identities require a fresh admission/evaluation lineage.
+- Focused tree/manifest contract coverage passes 23/23, including added-empty-directory, executable/special-mode
+  negative controls, schema-v1 predecessor labelling and deterministic double packing. Format, docs, lint, typecheck,
+  provenance, upstream-clean, byte-equality and release-readiness pass; unit is 119 files / 918 passed + 1 platform
+  skip. No-key E2E is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped, including real Harbor ACP,
+  extract-elf smoke, offline Loader, V011 admission and crash recovery. Hosted CI, independent exact-head review and
+  merge are still required.
 
 ## 2026-08-28 current-main gate repair
 
@@ -690,8 +709,9 @@ main 且带回归测试的修复（各 PR 见对应 squash commit）；未列出
   builder 锁原子发布并可安全回收空锁。
 - #40 / #119：quiescence 门从构造器名成员比较改为每类型计数 delta，可检同型泄漏；
   afterEach 不再吞 dispose 失败。
-- #41 / #42：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed；
-  SHA256SUMS 覆盖 symlink 目标并要求条目集严格相等（缺失/多余/硬链接/特殊文件全拒）。
+- #41：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed。
+- #42（2026-08-29 重开）：predecessor SHA256SUMS 已覆盖 symlink target 及 file entry 集，但遗漏 empty
+  directory 与 executable mode；当前 tree-v2 successor 仍在 CI/review/merge 门。
 - #54：changed-line 预算改用 LCS 顺序感知编辑距离，重排不再零成本；超界文件 fail closed。
 - #55：proposal+gateway-receipts 以 manifest 提交点原子成束发布；resume 仅经 manifest 加载，
   未提交目录视为未完成 publication；每次加载重新校验 sha256 绑定。（#45 的崩溃窗口部分

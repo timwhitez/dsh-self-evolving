@@ -120,3 +120,34 @@ describe('build manifest validation', () => {
     expect(res.valid).toBe(false)
   })
 })
+
+describe('capsule manifest validation', () => {
+  const capsule = {
+    schemaVersion: 2,
+    candidateId: `sha256:${'a'.repeat(64)}`,
+    runtime: { kind: 'pinned-closure', ref: 'runtime/package-closure.json', hash: 'b'.repeat(64) },
+    candidate: { bundleHash: 'c'.repeat(64) },
+    runner: { overlay: 'runner/cordis.patch.yml', hash: 'd'.repeat(64) },
+    provenance: { ref: 'provenance.json', hash: 'e'.repeat(64) },
+    sbom: { ref: 'sbom.spdx.json', hash: 'f'.repeat(64) },
+    sha256sums: {
+      ref: 'SHA256SUMS',
+      hash: '1'.repeat(64),
+      format: 'dsh-capsule-tree-v2',
+    },
+  }
+
+  it('accepts only the current typed complete-tree manifest', async () => {
+    const result = await validateManifest('capsule', capsule)
+    expect(result.valid, result.errors.join('\n')).toBe(true)
+  })
+
+  it('does not upgrade a schema-1 checksum manifest to current authority', async () => {
+    const result = await validateManifest('capsule', {
+      ...capsule,
+      schemaVersion: 1,
+      sha256sums: { ref: 'SHA256SUMS', hash: '1'.repeat(64) },
+    })
+    expect(result.valid).toBe(false)
+  })
+})

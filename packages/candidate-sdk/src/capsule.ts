@@ -9,7 +9,7 @@
  *   ├── provenance.json # copy of provenance.lock relevant slice
  *   ├── sbom.spdx.json  # dependency SBOM
  *   ├── capsule.json    # capsule manifest
- *   └── SHA256SUMS      # sha256 of every file above
+ *   └── SHA256SUMS      # typed path/mode/content tree manifest
  *
  * The Harbor adapter verifies SHA256SUMS before unpack and again after. The
  * runtime user has read-only access to runtime/ and candidate/.
@@ -32,6 +32,7 @@ import {
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import type { BuildReceipt } from './builder-sandbox.js'
+import { CAPSULE_TREE_FORMAT, writeCapsuleTreeManifest } from './capsule-tree.js'
 
 export interface RuntimeClosureInput {
   /** Trees containing pinned DSH/vendor package roots. */
@@ -72,53 +73,6 @@ export interface CapsuleOutput {
   capsuleManifestPath: string
   sha256sumsPath: string
   capsuleHash: string
-}
-
-/** Recursively hash every regular file under root, writing `relpath  hash`. */
-async function writeSha256sums(
-  root: string,
-  sumsPath: string,
-): Promise<{ entries: Map<string, string>; hash: string }> {
-  const entries: string[] = []
-  const map = new Map<string, string>()
-  async function walk(dir: string): Promise<void> {
-    const names = await readdir(dir, { withFileTypes: true })
-    for (const e of names) {
-      const abs = join(dir, e.name)
-      if (e.isDirectory()) await walk(abs)
-      else if (e.isFile()) {
-        const content = await readFile(abs)
-        const rel = relative(root, abs)
-        // Avoid the impossible self-reference/cycle:
-        // SHA256SUMS cannot hash itself, and capsule.json contains the hash of
-        // SHA256SUMS. The capsule identity below hashes both files together.
-        if (rel === 'SHA256SUMS' || rel === 'capsule.json') continue
-        const h = createHash('sha256').update(content).digest('hex')
-        entries.push(`${h}  ${rel}`)
-        map.set(rel, h)
-      } else if (e.isSymbolicLink()) {
-        // Commit to symlink identity, not just file contents: changing a link
-        // target must invalidate the manifest even though no regular file's
-        // bytes changed (issue #42).
-        const rel = relative(root, abs)
-        if (rel === 'SHA256SUMS' || rel === 'capsule.json') {
-          throw new Error(`capsule sums: control path must not be a symlink: ${rel}`)
-        }
-        const target = await readlink(abs)
-        const h = createHash('sha256').update(target, 'utf8').digest('hex')
-        entries.push(`${h}  symlink:${rel}`)
-        map.set(`symlink:${rel}`, h)
-      } else {
-        throw new Error(`capsule sums: unsupported entry type at ${relative(root, abs)}`)
-      }
-    }
-  }
-  await walk(root)
-  entries.sort()
-  const body = entries.join('\n') + '\n'
-  await writeFile(sumsPath, body)
-  const hash = createHash('sha256').update(body).digest('hex')
-  return { entries: map, hash }
 }
 
 /** Materialize the immutable source + compiled bytes frozen in BuildReceipt. */
@@ -595,7 +549,7 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
 
     // SHA256SUMS (written last, covers everything except itself).
     const sumsPath = join(buildDir, 'SHA256SUMS')
-    const { hash } = await writeSha256sums(buildDir, sumsPath)
+    const { hash } = await writeCapsuleTreeManifest(buildDir, sumsPath)
 
     // capsule.json is written after SHA256SUMS because it records the sums-file
     // hash. The two are bound by capsuleHash = H(manifest || sums), avoiding a
@@ -603,7 +557,7 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
     const candidateId = canonicalCandidateId ?? receipt.candidateId
     if (candidateId.length === 0) throw new Error('capsule: canonical candidate identity is empty')
     const capsuleManifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       candidateId,
       runtime: {
         kind: 'pinned-closure',
@@ -626,7 +580,7 @@ export async function packCapsule(input: CapsuleInput): Promise<CapsuleOutput> {
         ref: 'sbom.spdx.json',
         hash: createHash('sha256').update(generatedSbom).digest('hex'),
       },
-      sha256sums: { ref: 'SHA256SUMS', hash },
+      sha256sums: { ref: 'SHA256SUMS', hash, format: CAPSULE_TREE_FORMAT },
     }
     const manifestPath = join(buildDir, 'capsule.json')
     const manifestBytes = JSON.stringify(capsuleManifest, null, 2) + '\n'
