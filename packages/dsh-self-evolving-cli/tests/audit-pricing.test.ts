@@ -1,13 +1,14 @@
 /**
  * Stable-audit pricing controls (issue #223): the audit's unpriced-usage
  * rejection has both a negative and a positive control through the real
- * auditStableRun path, and the real evaluator provider preserves the
- * summary's priced/pricingReason state into the structured observation.
+ * auditStableRun path. The real evaluator additionally rejects every summary
+ * that lacks replayed broker-v2 terminal/raw authority.
  */
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { append, type Journal } from '@dsh-self-evolving/core'
 import {
@@ -16,8 +17,10 @@ import {
   createStableDemoConfig,
   type StableDemoConfig,
 } from '../src/index.js'
+import { GATE5_BROKER_PROTOCOL } from '../src/gate5-security.js'
 
 const roots: string[] = []
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -67,7 +70,7 @@ function config(root: string): StableDemoConfig {
   return createStableDemoConfig({
     runId: 'audit-pricing',
     stateDir: root,
-    repoRoot: '/root/dsh-self-evolving',
+    repoRoot,
     codeCommit: 'a'.repeat(40),
   })
 }
@@ -109,7 +112,8 @@ describe('stable audit unpriced-usage controls (issue #223)', () => {
   })
 })
 
-describe('real evaluator provider pricing mapping (issue #223)', () => {
+describe('real evaluator broker-v2 authority', () => {
+  const evaluatorCandidateId = `sha256:${'d'.repeat(64)}`
   const specBase = {
     actionId: 'eval:baseline:task-1:0',
     idempotencyKey: 'audit-pricing/baseline/task-1/0',
@@ -132,18 +136,19 @@ describe('real evaluator provider pricing mapping (issue #223)', () => {
     }
   }
 
-  const runId = `stable-${createHash('sha256').update(specBase.idempotencyKey).digest('hex').slice(0, 24)}`
+  const runId = `stable-g5v2-${createHash('sha256')
+    .update(`${GATE5_BROKER_PROTOCOL}\0${specBase.idempotencyKey}`)
+    .digest('hex')
+    .slice(0, 24)}`
 
   async function providerWithSummary(
     row: Record<string, unknown>,
-  ): Promise<ReturnType<typeof createRealEvaluationProvider>> {
+  ): Promise<{ provider: ReturnType<typeof createRealEvaluationProvider>; dir: string }> {
     const root = await mkdtemp(join(tmpdir(), 'dsh-provider-pricing-'))
     roots.push(root)
     const cfg = config(root)
-    const provider = createRealEvaluationProvider(cfg, spec('baseline'))
-    // inspect().launch() would run the real calibration script; instead write
-    // the terminal summary the collect path reads and call collect directly
-    // with the provider's own run id.
+    const provider = createRealEvaluationProvider(cfg, spec(evaluatorCandidateId))
+    // A retired summary with matching caller identities is still not broker-v2 authority.
     const dir = join(cfg.stateDir, 'external-evaluator', runId)
     await mkdir(dir, { recursive: true })
     await writeFile(
@@ -152,68 +157,45 @@ describe('real evaluator provider pricing mapping (issue #223)', () => {
         schemaVersion: 1,
         runId,
         capabilityMode: 'real-official-responses-harbor-acp',
-        candidateId: 'baseline',
-        normalized: [{ candidateId: 'baseline', taskId: 'task-1', ...row }],
+        candidateId: evaluatorCandidateId,
+        normalized: [{ candidateId: evaluatorCandidateId, taskId: 'task-1', ...row }],
       })}\n`,
     )
-    return provider
+    return { provider, dir }
   }
 
-  it('marks an unpriced row unknown with the writer-recorded failure mode', async () => {
-    const provider = await providerWithSummary({
-      status: 'pass',
-      reward: 1,
-      costUsd: 0,
-      priced: false,
-      pricingReason: 'expected one DSH session log; got 2',
-    })
-    const observation = await provider.collect(runId)
-    expect(observation.pricing).toEqual({
-      state: 'unknown',
-      reason: 'expected one DSH session log; got 2',
-    })
-  })
-
-  it('falls back to the generic reason when the writer recorded none', async () => {
-    const provider = await providerWithSummary({
-      status: 'fail',
-      reward: 0,
-      costUsd: 0,
-      priced: false,
-    })
-    const observation = await provider.collect(runId)
-    expect(observation.pricing).toMatchObject({ state: 'unknown' })
-    if (observation.pricing.state === 'unknown') {
-      expect(observation.pricing.reason).toBe(
-        'DSH usage evidence missing, unreadable, or without usage events',
-      )
-    }
-  })
-
-  it('marks a priced row priced', async () => {
-    const provider = await providerWithSummary({
+  it('rejects a retired schema-1 summary before it can become score authority', async () => {
+    const { provider } = await providerWithSummary({
       status: 'pass',
       reward: 1,
       costUsd: 0.01,
       priced: true,
     })
-    const observation = await provider.collect(runId)
-    expect(observation.pricing).toEqual({ state: 'priced' })
+    await expect(provider.inspect()).rejects.toThrow(/ambiguous incomplete prior external job/)
+    await expect(provider.collect(runId)).rejects.toThrow(/no terminal authority/)
+  })
+
+  it('rejects a forged terminal marker instead of trusting an existing summary', async () => {
+    const { provider, dir } = await providerWithSummary({
+      status: 'pass',
+      reward: 1,
+      costUsd: 0.01,
+      priced: true,
+    })
+    await writeFile(join(dir, 'execution-terminal.json'), '{}\n')
+    await expect(provider.collect(runId)).rejects.toThrow()
   })
 
   it('recognizes only the broker protocol terminal marker for crash recovery', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-provider-terminal-'))
     roots.push(root)
     const cfg = config(root)
-    const provider = createRealEvaluationProvider(cfg, spec('baseline'))
+    const provider = createRealEvaluationProvider(cfg, spec(evaluatorCandidateId))
     const dir = join(cfg.stateDir, 'external-evaluator', runId)
     await mkdir(join(dir, 'jobs', runId), { recursive: true })
     await writeFile(join(dir, 'jobs', runId, 'result.json'), '{}\n')
     await expect(provider.inspect()).rejects.toThrow(/ambiguous incomplete prior external job/)
     await writeFile(join(dir, 'execution-terminal.json'), '{}\n')
-    await expect(provider.inspect()).resolves.toEqual({
-      status: 'terminal',
-      externalJobId: runId,
-    })
+    await expect(provider.inspect()).rejects.toThrow()
   })
 })

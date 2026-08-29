@@ -1,17 +1,21 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { ProposalGatewayAdapter, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
+import { brokerPolicyForReservation } from '../../../scripts/run-gate5-real-calibration.js'
 import {
   GATE5_MODEL_SOCKET_TARGET,
   assertCompleteGate5BrokerEvidence,
+  assertExactGate5ReconstructedSummary,
   assertGate5TaskOverlay,
   createGate5BrokerSigningAuthority,
+  gate5WorstCaseUsdMicrosPerRequest,
   prepareGate5TaskOverlay,
   sanitizeGate5HarborEnvironment,
   startGate5CredentialBroker,
+  writeGate5ExecutionTerminal,
   type Gate5BrokerPolicy,
   type Gate5TrialIdentity,
 } from '../src/gate5-security.js'
@@ -49,6 +53,12 @@ const policy: Gate5BrokerPolicy = {
   socketTarget: GATE5_MODEL_SOCKET_TARGET,
   maxTransportRetries: 0,
   reasoningContinuationMaxTurns: 0,
+  trialReservationUsdMicros: 1_000_000,
+  pricingUnitTokens: 1_000_000,
+  cacheHitInputUsdMicrosPerUnit: 2_800,
+  cacheMissInputUsdMicrosPerUnit: 140_000,
+  outputUsdMicrosPerUnit: 280_000,
+  maxInputTokensPerRequest: 1_048_576,
   maxRequests: 4,
   maxRequestBytes: 1024 * 1024,
   maxPayloadBytesTotal: 4 * 1024 * 1024,
@@ -108,6 +118,37 @@ async function writeTask(path: string, agentPolicy = ''): Promise<void> {
 }
 
 describe('Gate 5 credential isolation contracts', () => {
+  it('caps the default stable trial at two worst-case calls within 333333 micro-USD', () => {
+    const production = brokerPolicyForReservation(333_333)
+    const perRequest = gate5WorstCaseUsdMicrosPerRequest(production)
+    expect(perRequest).toBe(155_976)
+    expect(production.maxRequests).toBe(2)
+    expect(production.maxRequests * perRequest).toBeLessThanOrEqual(
+      production.trialReservationUsdMicros,
+    )
+    expect(production.maxReservedOutputTokens).toBe(2 * 32_768)
+  })
+
+  it('rejects status, reward, or cost changes against reconstructed raw evidence', () => {
+    const reconstructed = {
+      schemaVersion: 2,
+      normalized: [{ status: 'pass', reward: 1, costUsd: 0.01 }],
+    }
+    expect(() => assertExactGate5ReconstructedSummary(reconstructed, reconstructed)).not.toThrow()
+    for (const row of [
+      { status: 'fail', reward: 1, costUsd: 0.01 },
+      { status: 'pass', reward: 0, costUsd: 0.01 },
+      { status: 'pass', reward: 1, costUsd: 0 },
+    ]) {
+      expect(() =>
+        assertExactGate5ReconstructedSummary(
+          { schemaVersion: 2, normalized: [row] },
+          reconstructed,
+        ),
+      ).toThrow(/reconstructed raw evidence/i)
+    }
+  })
+
   it('copies and hashes a task overlay while forcing only the agent phase offline', async () => {
     const source = join(root, 'source')
     const overlay = join(root, 'overlay')
@@ -198,6 +239,40 @@ describe('Gate 5 credential isolation contracts', () => {
       reasoningTokens: 2,
       events: 1,
     })
+    const terminalPath = join(root, 'usage-mismatch-terminal.json')
+    await expect(
+      writeGate5ExecutionTerminal({
+        path: terminalPath,
+        value: { schemaVersion: 1 },
+        trials: [
+          {
+            evidence,
+            identity,
+            policy,
+            publicKeySpki: authority.publicKeySpki,
+            sessionUsage: { ...evidence.usage, outputTokens: evidence.usage.outputTokens + 1 },
+          },
+        ],
+      }),
+    ).rejects.toThrow(/broker\/session usage mismatch/i)
+    expect(await stat(terminalPath).catch(() => null)).toBeNull()
+    const missingUsageTerminalPath = join(root, 'missing-usage-terminal.json')
+    await expect(
+      writeGate5ExecutionTerminal({
+        path: missingUsageTerminalPath,
+        value: { schemaVersion: 1 },
+        trials: [
+          {
+            evidence,
+            identity,
+            policy,
+            publicKeySpki: authority.publicKeySpki,
+            sessionUsage: undefined,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/usage is invalid/i)
+    expect(await stat(missingUsageTerminalPath).catch(() => null)).toBeNull()
     expect(() =>
       assertCompleteGate5BrokerEvidence(
         { ...evidence, identity: { ...evidence.identity, taskId: 'tampered' } },
@@ -220,6 +295,24 @@ describe('Gate 5 credential isolation contracts', () => {
         authority: createGate5BrokerSigningAuthority(),
       }),
     ).rejects.toThrow(/socket parent must be a private real directory/i)
+  })
+
+  it('rejects a policy whose worst-case provider spend exceeds the durable trial reservation', async () => {
+    const perRequest = gate5WorstCaseUsdMicrosPerRequest(policy)
+    const oversold = {
+      ...policy,
+      trialReservationUsdMicros: perRequest * policy.maxRequests - 1,
+    }
+    await expect(
+      startGate5CredentialBroker({
+        socketPath: join(root, 'oversold.sock'),
+        stateDir: join(root, 'oversold-state'),
+        identity,
+        policy: oversold,
+        adapter: new RecordedAdapter(),
+        authority: createGate5BrokerSigningAuthority(),
+      }),
+    ).rejects.toThrow(/exceeds the durable USD reservation/i)
   })
 
   it('records a policy violation when the candidate exceeds its output reservation', async () => {
@@ -259,5 +352,22 @@ describe('Gate 5 credential isolation contracts', () => {
         publicKeySpki: authority.publicKeySpki,
       }),
     ).toThrow(/not complete/i)
+    const terminalPath = join(root, 'policy-violation-terminal.json')
+    await expect(
+      writeGate5ExecutionTerminal({
+        path: terminalPath,
+        value: { schemaVersion: 1 },
+        trials: [
+          {
+            evidence,
+            identity,
+            policy: oneRequest,
+            publicKeySpki: authority.publicKeySpki,
+            sessionUsage: evidence.usage,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/not complete/i)
+    expect(await stat(terminalPath).catch(() => null)).toBeNull()
   })
 })

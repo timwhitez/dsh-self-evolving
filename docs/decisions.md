@@ -409,7 +409,9 @@ socket. Each broker locks the official Responses provider, endpoint, model, reas
 connection/request/byte/deadline bounds, and rejects candidate-supplied transport fields. Its capability socket lives
 under a short, host-private `0700` temporary directory; the `0666` socket inode is never placed directly in a
 host-traversable `/run` or `/tmp` directory. Transport retry and reasoning continuation are frozen in policy and every
-allowed provider attempt is included in the worst-case output reservation.
+allowed provider attempt is included in the worst-case output reservation. The evaluator's durable per-trial
+reservation is converted to integer micro-USD and frozen with conservative context-sized input plus output pricing;
+the broker derives its request ceiling from that amount and reserves worst-case USD before each provider dispatch.
 
 The controller copies each development task to a content-addressed overlay, records both tree hashes and forces every
 agent phase to `no-network`; a conflicting explicit agent policy rejects before launch. Task setup may still build the
@@ -426,6 +428,11 @@ Existing summaries are revalidated against intent, marker, raw trial config/resu
 usage before replay. Original and overlay digests plus `no-network` semantics are revalidated both before launch and
 after all jobs. The artifact server's TLS private key remains only in the temporary runtime directory and is deleted;
 it is never part of persisted run evidence.
+
+Terminal publication itself consumes the signed evidence and exact DSH session usage, so policy-violation,
+incomplete, missing-usage or mismatched-usage trials fail before any marker bytes are created. Collection always
+re-executes broker-v2 validation and the raw normalizer, then canonical-compares the complete reconstructed schema-2
+summary. A summary file alone, a schema-1 predecessor, or a forged marker can never become external score authority.
 
 **Why:** the retired runner mounted `provider.secret`, exported it as `DEEPSEEK_API_KEY`, and loaded evolving candidate
 JavaScript in the same process and network namespace. Read-only file mode and static scanning cannot isolate a secret

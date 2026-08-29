@@ -140,6 +140,8 @@
   call the fixed Unix broker, and produces signature-valid receipts whose usage equals the DSH session;
 - the host socket parent is private, the artifact TLS private key is absent from run evidence, the task overlay is
   revalidated after execution, and the frozen provider-attempt policy cannot exceed its output reservation;
+- schema-1/tampered summaries and forged terminal markers reject; terminal publication precedes no broker-signature/
+  session-usage check; signed worst-case and settled micro-USD stay within the durable saga reservation before spend;
 - an intent without `execution-terminal.json` never redispatches ambiguous paid calls. Credential-colocation evidence
   from the retired schema 1 protocol cannot satisfy this gate and requires a fresh broker-v2 revalidation run.
 

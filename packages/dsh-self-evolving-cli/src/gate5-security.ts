@@ -3,11 +3,23 @@ import {
   createHash,
   createPublicKey,
   generateKeyPairSync,
+  randomUUID,
   sign,
   verify,
   type KeyObject,
 } from 'node:crypto'
-import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { LlmAdapter, StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
@@ -48,6 +60,14 @@ export interface Gate5BrokerPolicy {
   maxTransportRetries: number
   /** Additional Responses reasoning continuations. Gate 5 v2 forbids them for exact accounting. */
   reasoningContinuationMaxTurns: 0
+  /** Durable evaluation-saga reservation, in integer micro-USD. */
+  trialReservationUsdMicros: number
+  pricingUnitTokens: 1_000_000
+  cacheHitInputUsdMicrosPerUnit: number
+  cacheMissInputUsdMicrosPerUnit: number
+  outputUsdMicrosPerUnit: number
+  /** Conservative provider input ceiling used before dispatch. */
+  maxInputTokensPerRequest: number
   maxRequests: number
   maxRequestBytes: number
   /** Aggregate candidate-authored payload bytes admitted before provider dispatch. */
@@ -87,6 +107,8 @@ export interface Gate5BrokerEvidence {
   dispatchedRequests: number
   payloadBytes: number
   reservedOutputTokens: number
+  reservedWorstCaseUsdMicros: number
+  settledUsageUsdMicros: number
   receipts: ProposalGatewayReceipt[]
   usage: Gate5UsageTotal
   signature: {
@@ -155,6 +177,14 @@ function assertPolicy(value: Gate5BrokerPolicy): void {
     value.maxTransportRetries > 12 ||
     value.reasoningContinuationMaxTurns !== 0 ||
     !Number.isSafeInteger(reservedPerRequest) ||
+    !positiveSafeInteger(value.trialReservationUsdMicros) ||
+    value.pricingUnitTokens !== 1_000_000 ||
+    !nonNegativeSafeInteger(value.cacheHitInputUsdMicrosPerUnit) ||
+    !positiveSafeInteger(value.cacheMissInputUsdMicrosPerUnit) ||
+    !positiveSafeInteger(value.outputUsdMicrosPerUnit) ||
+    value.cacheHitInputUsdMicrosPerUnit > value.cacheMissInputUsdMicrosPerUnit ||
+    !positiveSafeInteger(value.maxInputTokensPerRequest) ||
+    value.maxInputTokensPerRequest > value.contextWindow ||
     !positiveSafeInteger(value.contextWindow) ||
     !positiveSafeInteger(value.maxRequests) ||
     value.maxRequests > 256 ||
@@ -176,6 +206,14 @@ function assertPolicy(value: Gate5BrokerPolicy): void {
   ) {
     throw new Error('gate5 broker: invalid broker policy')
   }
+  const worstCaseUsdMicros = gate5WorstCaseUsdMicrosPerRequest(value)
+  if (
+    !positiveSafeInteger(worstCaseUsdMicros) ||
+    !Number.isSafeInteger(value.maxRequests * worstCaseUsdMicros) ||
+    value.maxRequests * worstCaseUsdMicros > value.trialReservationUsdMicros
+  ) {
+    throw new Error('gate5 broker: policy exceeds the durable USD reservation')
+  }
 }
 
 function reservedOutputTokensPerRequest(policy: Gate5BrokerPolicy): number {
@@ -184,6 +222,47 @@ function reservedOutputTokensPerRequest(policy: Gate5BrokerPolicy): number {
     (policy.maxTransportRetries + 1) *
     (policy.reasoningContinuationMaxTurns + 1)
   )
+}
+
+function providerAttemptsPerRequest(policy: Gate5BrokerPolicy): number {
+  return (policy.maxTransportRetries + 1) * (policy.reasoningContinuationMaxTurns + 1)
+}
+
+function pricedMicros(numerator: bigint, unitTokens: number): number {
+  const unit = BigInt(unitTokens)
+  const roundedUp = (numerator + unit - 1n) / unit
+  const value = Number(roundedUp)
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error('gate5 broker: USD accounting overflow')
+  }
+  return value
+}
+
+export function gate5WorstCaseUsdMicrosPerRequest(policy: Gate5BrokerPolicy): number {
+  const outputTokens = reservedOutputTokensPerRequest(policy)
+  return pricedMicros(
+    BigInt(policy.maxInputTokensPerRequest) *
+      BigInt(providerAttemptsPerRequest(policy)) *
+      BigInt(policy.cacheMissInputUsdMicrosPerUnit) +
+      BigInt(outputTokens) * BigInt(policy.outputUsdMicrosPerUnit),
+    policy.pricingUnitTokens,
+  )
+}
+
+export function gate5UsageUsdMicros(policy: Gate5BrokerPolicy, usage: Gate5UsageTotal): number {
+  return pricedMicros(
+    (BigInt(usage.inputTokens) + BigInt(usage.cacheWriteTokens)) *
+      BigInt(policy.cacheMissInputUsdMicrosPerUnit) +
+      BigInt(usage.cacheReadTokens) * BigInt(policy.cacheHitInputUsdMicrosPerUnit) +
+      BigInt(usage.outputTokens) * BigInt(policy.outputUsdMicrosPerUnit),
+    policy.pricingUnitTokens,
+  )
+}
+
+export function assertExactGate5ReconstructedSummary(value: unknown, reconstructed: unknown): void {
+  if (stableJson(value) !== stableJson(reconstructed)) {
+    throw new Error('gate5 runner: existing summary differs from reconstructed raw evidence')
+  }
 }
 
 function emptyUsage(): Gate5UsageTotal {
@@ -471,6 +550,8 @@ export async function startGate5CredentialBroker(input: {
   let dispatchedRequests = 0
   let payloadBytes = 0
   let reservedOutputTokens = 0
+  let reservedWorstCaseUsdMicros = 0
+  let settledUsageUsdMicros = 0
   const handler = createProposalGatewayLlmHandler(input.adapter, input.policy.route)
   const gateway: ProposalGatewayHandle = await startProposalGateway({
     socketPath: input.socketPath,
@@ -495,8 +576,14 @@ export async function startGate5CredentialBroker(input: {
         violations.push('reserved-output-tokens-exceeded')
         throw new Error('gate5 broker: aggregate output reservation exceeded')
       }
+      const usdReservation = gate5WorstCaseUsdMicrosPerRequest(input.policy)
+      if (reservedWorstCaseUsdMicros + usdReservation > input.policy.trialReservationUsdMicros) {
+        violations.push('worst-case-usd-reservation-exceeded')
+        throw new Error('gate5 broker: durable USD reservation exceeded')
+      }
       payloadBytes += requestPayloadBytes
       reservedOutputTokens += outputReservation
+      reservedWorstCaseUsdMicros += usdReservation
       dispatchedRequests += 1
       const result = await handler(payload, context)
       const responseBytes = Buffer.byteLength(JSON.stringify(result))
@@ -509,6 +596,10 @@ export async function startGate5CredentialBroker(input: {
       }
       try {
         addUsage(usage, result.chunks)
+        settledUsageUsdMicros = gate5UsageUsdMicros(input.policy, usage)
+        if (settledUsageUsdMicros > reservedWorstCaseUsdMicros) {
+          throw new Error('gate5 broker: provider usage exceeded its worst-case reservation')
+        }
       } catch (error) {
         violations.push('invalid-provider-usage')
         throw new ProposalGatewayHandlerFailure(
@@ -565,6 +656,8 @@ export async function startGate5CredentialBroker(input: {
         dispatchedRequests,
         payloadBytes,
         reservedOutputTokens,
+        reservedWorstCaseUsdMicros,
+        settledUsageUsdMicros,
         receipts,
         usage: { ...usage },
       })
@@ -653,6 +746,11 @@ export function assertCompleteGate5BrokerEvidence(
     evidence.reservedOutputTokens !==
       evidence.dispatchedRequests * reservedOutputTokensPerRequest(expected.policy) ||
     evidence.reservedOutputTokens > expected.policy.maxReservedOutputTokens ||
+    evidence.reservedWorstCaseUsdMicros !==
+      evidence.dispatchedRequests * gate5WorstCaseUsdMicrosPerRequest(expected.policy) ||
+    evidence.reservedWorstCaseUsdMicros > expected.policy.trialReservationUsdMicros ||
+    !nonNegativeSafeInteger(evidence.settledUsageUsdMicros) ||
+    evidence.settledUsageUsdMicros > evidence.reservedWorstCaseUsdMicros ||
     !Array.isArray(evidence.receipts) ||
     evidence.receipts.length !== evidence.dispatchedRequests ||
     evidence.receipts.some((receipt) => receipt.error !== undefined)
@@ -665,11 +763,82 @@ export function assertCompleteGate5BrokerEvidence(
     'gate5 broker evidence',
   )
   assertUsage(evidence.usage)
+  const accountedInputTokens =
+    BigInt(evidence.usage.inputTokens) +
+    BigInt(evidence.usage.cacheReadTokens) +
+    BigInt(evidence.usage.cacheWriteTokens)
+  const maximumInputTokens =
+    BigInt(evidence.dispatchedRequests) *
+    BigInt(expected.policy.maxInputTokensPerRequest) *
+    BigInt(providerAttemptsPerRequest(expected.policy))
   if (
     evidence.usage.events !== evidence.dispatchedRequests ||
-    evidence.usage.outputTokens > evidence.reservedOutputTokens
+    accountedInputTokens > maximumInputTokens ||
+    evidence.usage.outputTokens > evidence.reservedOutputTokens ||
+    evidence.settledUsageUsdMicros !== gate5UsageUsdMicros(expected.policy, evidence.usage)
   ) {
     throw new Error('gate5 broker evidence: usage accounting mismatch')
   }
   return evidence
+}
+
+export function assertGate5BrokerSessionAccounting(
+  evidence: unknown,
+  expected: {
+    identity: Gate5TrialIdentity
+    policy: Gate5BrokerPolicy
+    publicKeySpki: string
+    sessionUsage: unknown
+  },
+): Gate5BrokerEvidence {
+  const broker = assertCompleteGate5BrokerEvidence(evidence, expected)
+  assertUsage(expected.sessionUsage)
+  if (stableJson(expected.sessionUsage) !== stableJson(broker.usage)) {
+    throw new Error('gate5 broker evidence: broker/session usage mismatch')
+  }
+  return broker
+}
+
+export async function writeGate5ExecutionTerminal(input: {
+  path: string
+  value: unknown
+  trials: Array<{
+    evidence: unknown
+    identity: Gate5TrialIdentity
+    policy: Gate5BrokerPolicy
+    publicKeySpki: string
+    sessionUsage: unknown
+  }>
+}): Promise<string> {
+  if (!isAbsolute(input.path) || input.trials.length === 0) {
+    throw new Error('gate5 terminal: invalid publication request')
+  }
+  for (const trial of input.trials) {
+    assertGate5BrokerSessionAccounting(trial.evidence, trial)
+  }
+  const bytes = JSON.stringify(input.value, null, 2) + '\n'
+  const temporary = `${input.path}.tmp-${process.pid}-${randomUUID()}`
+  const handle = await open(temporary, 'wx', 0o600)
+  try {
+    await handle.writeFile(bytes)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  try {
+    if ((await lstat(input.path).catch(() => null)) !== null) {
+      throw new Error('gate5 terminal: authority already exists')
+    }
+    await rename(temporary, input.path)
+    const directory = await open(dirname(input.path), 'r')
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
+    return bytes
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined)
+    throw error
+  }
 }

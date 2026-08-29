@@ -47,7 +47,10 @@ sanitizes the Harbor subprocess environment, forces the copied task's agent phas
 the original and overlay digests. The socket source is protected by a host-private temporary directory; provider
 retry/continuation counts are frozen and output-reserved; the artifact TLS private key is temporary. Signed broker
 evidence must match the DSH session usage before normalization, and the task hashes/network policy are revalidated
-after execution.
+after execution. The stable evaluator passes its durable per-trial reservation as integer micro-USD; at the default
+`$5 / 15` allocation, conservative context-sized input plus maximum output permits two broker calls (`$0.311952`
+worst case) within the `$0.333333` reservation. Dispatch three is impossible before provider contact. Actual
+conservative settlement is signed and charged at micro-USD precision.
 
 Runs created by the retired credential-launcher protocol are historical evidence only. They are not upgraded in
 place and cannot support a current credential-isolation or official benchmark claim; use a fresh run ID for broker-v2.

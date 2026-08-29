@@ -36,11 +36,15 @@ import {
   GATE5_BROKER_PROTOCOL,
   GATE5_MODEL_SOCKET_TARGET,
   assertCompleteGate5BrokerEvidence,
+  assertExactGate5ReconstructedSummary,
   assertGate5TaskOverlay,
   createGate5BrokerSigningAuthority,
+  gate5UsageUsdMicros,
+  gate5WorstCaseUsdMicrosPerRequest,
   prepareGate5TaskOverlay,
   sanitizeGate5HarborEnvironment,
   startGate5CredentialBroker,
+  writeGate5ExecutionTerminal,
   type Gate5BrokerEvidence,
   type Gate5BrokerPolicy,
   type Gate5TaskOverlayReceipt,
@@ -78,22 +82,6 @@ const route: ProposalGatewayRoute = {
   reasoningEffort: 'high',
   maxTokens,
 }
-const brokerPolicy: Gate5BrokerPolicy = {
-  schemaVersion: 1,
-  route,
-  contextWindow,
-  socketTarget: GATE5_MODEL_SOCKET_TARGET,
-  maxTransportRetries: 0,
-  reasoningContinuationMaxTurns: 0,
-  maxRequests: 64,
-  maxRequestBytes: 4 * 1024 * 1024,
-  maxPayloadBytesTotal: 64 * 1024 * 1024,
-  maxReservedOutputTokens: 64 * maxTokens,
-  maxResponseBytes: 32 * 1024 * 1024,
-  maxConnections: 8,
-  idleTimeoutMs: 60_000,
-  requestTimeoutMs: 25 * 60_000,
-}
 const officialPricing = {
   currency: 'USD' as const,
   unitTokens: 1_000_000,
@@ -102,6 +90,42 @@ const officialPricing = {
   outputUsd: 0.28,
   source: 'https://api-docs.deepseek.com/quick_start/pricing/',
   model: effectiveModel,
+}
+
+export function brokerPolicyForReservation(trialReservationUsdMicros: number): Gate5BrokerPolicy {
+  const seed: Gate5BrokerPolicy = {
+    schemaVersion: 1,
+    route,
+    contextWindow,
+    socketTarget: GATE5_MODEL_SOCKET_TARGET,
+    maxTransportRetries: 0,
+    reasoningContinuationMaxTurns: 0,
+    trialReservationUsdMicros,
+    pricingUnitTokens: officialPricing.unitTokens,
+    cacheHitInputUsdMicrosPerUnit: Math.round(officialPricing.cacheHitInputUsd * 1_000_000),
+    cacheMissInputUsdMicrosPerUnit: Math.round(officialPricing.cacheMissInputUsd * 1_000_000),
+    outputUsdMicrosPerUnit: Math.round(officialPricing.outputUsd * 1_000_000),
+    maxInputTokensPerRequest: contextWindow,
+    maxRequests: 1,
+    maxRequestBytes: 4 * 1024 * 1024,
+    maxPayloadBytesTotal: 4 * 1024 * 1024,
+    maxReservedOutputTokens: maxTokens,
+    maxResponseBytes: 32 * 1024 * 1024,
+    maxConnections: 8,
+    idleTimeoutMs: 60_000,
+    requestTimeoutMs: 25 * 60_000,
+  }
+  const worstCasePerRequest = gate5WorstCaseUsdMicrosPerRequest(seed)
+  const maxRequests = Math.min(64, Math.floor(trialReservationUsdMicros / worstCasePerRequest))
+  if (maxRequests < 1) {
+    throw new Error('gate5 runner: trial reservation cannot fund one worst-case provider request')
+  }
+  return {
+    ...seed,
+    maxRequests,
+    maxPayloadBytesTotal: maxRequests * seed.maxRequestBytes,
+    maxReservedOutputTokens: maxRequests * maxTokens,
+  }
 }
 const sourceFiles = [
   'src/index.ts',
@@ -248,13 +272,8 @@ async function readDshUsage(trialDir: string): Promise<DshUsageTotal> {
   return total
 }
 
-function priceUsage(usage: DshUsageTotal): number {
-  return (
-    (usage.inputTokens * officialPricing.cacheMissInputUsd +
-      usage.cacheReadTokens * officialPricing.cacheHitInputUsd +
-      usage.outputTokens * officialPricing.outputUsd) /
-    officialPricing.unitTokens
-  )
+function priceUsage(usage: DshUsageTotal, policy: Gate5BrokerPolicy): number {
+  return gate5UsageUsdMicros(policy, usage) / 1_000_000
 }
 
 async function loadProviderCredential(): Promise<string> {
@@ -390,7 +409,7 @@ function brokeredRunnerOverlay(candidateId: string): string {
   ].join('\n')
 }
 
-async function buildBaselineRuntime(workDir: string) {
+async function buildBaselineRuntime(workDir: string, expectedCandidateId: string) {
   if (prebuiltCapsuleRoot !== undefined) {
     const [manifestInfo, sumsInfo, acpInfo, forbiddenLauncher] = await Promise.all([
       stat(join(prebuiltCapsuleRoot, 'capsule.json')).catch(() => null),
@@ -414,22 +433,27 @@ async function buildBaselineRuntime(workDir: string) {
     ) as { candidateId?: unknown }
     if (
       typeof manifest.candidateId !== 'string' ||
-      !candidateIdPattern.test(manifest.candidateId)
+      !candidateIdPattern.test(manifest.candidateId) ||
+      manifest.candidateId !== expectedCandidateId
     ) {
-      throw new Error('gate5 runner: prebuilt capsule candidate identity missing')
+      throw new Error('gate5 runner: prebuilt capsule candidate identity mismatch')
     }
     const packed = await packAcpBinaryArchive(
       join(prebuiltCapsuleRoot, 'runtime'),
       join(workDir, 'dsh-self-evolving-acp.tar.gz'),
     )
-    return { receipt: { candidateId: manifest.candidateId }, packed }
+    return { receipt: { candidateId: expectedCandidateId }, packed }
   }
   const receipt = await buildCandidate({ sourceRoot: candidateRoot, sourceFiles, tscBin })
+  if (expectedCandidateId !== `sha256:${receipt.sourceHash}`) {
+    throw new Error('gate5 runner: source candidate identity differs from the evaluation plan')
+  }
   const capsuleDir = join(workDir, 'capsule')
   await packCapsule({
     outDir: capsuleDir,
     receipt,
-    runnerOverlay: brokeredRunnerOverlay(receipt.candidateId),
+    canonicalCandidateId: expectedCandidateId,
+    runnerOverlay: brokeredRunnerOverlay(expectedCandidateId),
     provenanceJson: JSON.stringify({
       protocol: GATE5_BROKER_PROTOCOL,
       dshCommit: '47f943859bef60e4160492346772ded9b24f765a',
@@ -463,7 +487,7 @@ async function buildBaselineRuntime(workDir: string) {
     join(capsuleDir, 'runtime'),
     join(workDir, 'dsh-self-evolving-acp.tar.gz'),
   )
-  return { receipt, packed }
+  return { receipt: { candidateId: expectedCandidateId }, packed }
 }
 
 function trialId(runId: string, taskId: string, attemptIndex: number, index: number): string {
@@ -514,6 +538,7 @@ async function readRunIntent(
   expectedRunId: string,
   taskIds: string[],
   attempts: number,
+  expectedBrokerPolicy: Gate5BrokerPolicy,
 ): Promise<RunIntent> {
   const parsed = JSON.parse(await readFile(join(runDir, 'run-intent.json'), 'utf8')) as RunIntent
   if (
@@ -527,7 +552,7 @@ async function readRunIntent(
     !Array.isArray(parsed.trials) ||
     parsed.trials.length !== parsed.plannedTrials ||
     parsed.broker?.policy?.socketTarget !== GATE5_MODEL_SOCKET_TARGET ||
-    stableJson(parsed.broker.policy) !== stableJson(brokerPolicy) ||
+    stableJson(parsed.broker.policy) !== stableJson(expectedBrokerPolicy) ||
     typeof parsed.broker.publicKeySpki !== 'string' ||
     !/^sha256:[0-9a-f]{64}$/.test(parsed.broker.keyId) ||
     sha256(Buffer.from(parsed.broker.publicKeySpki, 'base64')) !== parsed.broker.keyId
@@ -611,7 +636,6 @@ async function collectRun(input: {
   runDir: string
   intent: RunIntent
   terminal: ExecutionTerminal
-  reconciledFromTerminalRaw: boolean
 }) {
   const normalized = []
   for (const [index, trial] of input.intent.trials.entries()) {
@@ -672,13 +696,15 @@ async function collectRun(input: {
     normalized.push({
       ...record,
       usage,
-      costUsd: priceUsage(usage),
+      costUsd: priceUsage(usage, input.intent.broker.policy),
       priced: true,
       brokerEvidence: {
         protocol: GATE5_BROKER_PROTOCOL,
         digest: input.terminal.trials[index]!.brokerEvidenceSha256,
         keyId: input.intent.broker.keyId,
         requests: broker.dispatchedRequests,
+        reservedWorstCaseUsdMicros: broker.reservedWorstCaseUsdMicros,
+        settledUsageUsdMicros: broker.settledUsageUsdMicros,
       },
     })
   }
@@ -704,7 +730,7 @@ async function collectRun(input: {
     plannedTrials: input.intent.plannedTrials,
     collectedTrials: normalized.length,
     wallSec: input.terminal.wallSec,
-    reconciledFromTerminalRaw: input.reconciledFromTerminalRaw,
+    reconciledFromTerminalRaw: true,
     normalized,
   }
   const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
@@ -741,6 +767,7 @@ async function validateExistingSummary(
     collectedTrials?: unknown
     brokerKeyId?: unknown
     wallSec?: unknown
+    reconciledFromTerminalRaw?: unknown
     normalized?: Array<Record<string, unknown>>
   }
   if (
@@ -753,11 +780,13 @@ async function validateExistingSummary(
     summary.collectedTrials !== intent.plannedTrials ||
     summary.brokerKeyId !== intent.broker.keyId ||
     summary.wallSec !== terminal.wallSec ||
+    summary.reconciledFromTerminalRaw !== true ||
     !Array.isArray(summary.normalized) ||
     summary.normalized.length !== intent.plannedTrials
   ) {
     throw new Error('gate5 runner: existing summary does not bind the broker run intent')
   }
+  const expectedRows: Array<Record<string, unknown>> = []
   for (const [index, trial] of intent.trials.entries()) {
     const row = summary.normalized[index]!
     const trialDir = await trialDirectory(runDir, trial)
@@ -789,25 +818,61 @@ async function validateExistingSummary(
       publicKeySpki: intent.broker.publicKeySpki,
     })
     const usage = await readDshUsage(trialDir)
-    const brokerReference = row['brokerEvidence']
-    if (
-      row['candidateId'] !== trial.candidateId ||
-      row['taskId'] !== trial.taskId ||
-      row['attemptIndex'] !== trial.attemptIndex ||
-      row['priced'] !== true ||
-      row['costUsd'] !== priceUsage(usage) ||
-      stableJson(row['usage']) !== stableJson(usage) ||
-      stableJson(usage) !== stableJson(broker.usage) ||
-      brokerReference === null ||
-      typeof brokerReference !== 'object' ||
-      (brokerReference as Record<string, unknown>)['digest'] !==
-        terminal.trials[index]?.brokerEvidenceSha256 ||
-      (brokerReference as Record<string, unknown>)['keyId'] !== intent.broker.keyId ||
-      (brokerReference as Record<string, unknown>)['requests'] !== broker.dispatchedRequests
-    ) {
+    if (stableJson(usage) !== stableJson(broker.usage)) {
       throw new Error(`gate5 runner: existing summary trial binding is invalid: ${trial.trialId}`)
     }
+    const record = await normalizeTrial({
+      trialDir,
+      expectedCandidateId: trial.candidateId,
+      taskId: trial.taskId,
+      expectedAttemptIndex: trial.attemptIndex,
+      requireAcpEvidence: true,
+    })
+    const expectedRow = {
+      ...record,
+      usage,
+      costUsd: priceUsage(usage, intent.broker.policy),
+      priced: true,
+      brokerEvidence: {
+        protocol: GATE5_BROKER_PROTOCOL,
+        digest: terminal.trials[index]!.brokerEvidenceSha256,
+        keyId: intent.broker.keyId,
+        requests: broker.dispatchedRequests,
+        reservedWorstCaseUsdMicros: broker.reservedWorstCaseUsdMicros,
+        settledUsageUsdMicros: broker.settledUsageUsdMicros,
+      },
+    }
+    if (stableJson(row) !== stableJson(expectedRow)) {
+      throw new Error(`gate5 runner: existing summary trial binding is invalid: ${trial.trialId}`)
+    }
+    expectedRows.push(expectedRow)
   }
+  const expectedSummary = {
+    schemaVersion: 2,
+    protocol: GATE5_BROKER_PROTOCOL,
+    runId: intent.runId,
+    capabilityMode: 'real-official-responses-harbor-acp-host-broker',
+    candidateId: intent.candidateId,
+    capsuleSha256: intent.capsuleSha256,
+    route: {
+      requestedModel: targetModel,
+      effectiveModel,
+      reasoningEffort: 'high',
+      contextWindow,
+      maxTokens,
+      wireApi: 'responses',
+      brokerSocketTarget: GATE5_MODEL_SOCKET_TARGET,
+    },
+    brokerPolicy: intent.broker.policy,
+    brokerKeyId: intent.broker.keyId,
+    officialPricing,
+    plannedTrials: intent.plannedTrials,
+    collectedTrials: expectedRows.length,
+    wallSec: terminal.wallSec,
+    reconciledFromTerminalRaw: true,
+    normalized: expectedRows,
+  }
+  assertExactGate5ReconstructedSummary(summary, expectedSummary)
 }
 
 async function scanFileForSecret(path: string, secret: Buffer): Promise<boolean> {
@@ -853,6 +918,7 @@ async function runTrial(input: {
   archiveSha256: string
   caBundlePath: string
   socketRoot: string
+  brokerPolicy: Gate5BrokerPolicy
   authority: ReturnType<typeof createGate5BrokerSigningAuthority>
 }): Promise<{ trialId: string; evidenceBytes: string }> {
   const socketPath = join(
@@ -867,8 +933,8 @@ async function runTrial(input: {
     expectedResponseModel: effectiveModel,
     apiKeyEnv: 'DEEPSEEK_API_KEY',
     contextWindow,
-    requestMaxRetries: brokerPolicy.maxTransportRetries,
-    reasoningContinuationMaxTurns: brokerPolicy.reasoningContinuationMaxTurns,
+    requestMaxRetries: input.brokerPolicy.maxTransportRetries,
+    reasoningContinuationMaxTurns: input.brokerPolicy.reasoningContinuationMaxTurns,
   })
   const broker = await startGate5CredentialBroker({
     socketPath,
@@ -880,7 +946,7 @@ async function runTrial(input: {
       taskId: input.trial.taskId,
       attemptIndex: input.trial.attemptIndex,
     },
-    policy: brokerPolicy,
+    policy: input.brokerPolicy,
     adapter,
     authority: input.authority,
   })
@@ -945,6 +1011,17 @@ async function runTrial(input: {
   const evidencePath = join(input.runDir, 'broker-evidence', `${input.trial.trialId}.json`)
   const evidenceBytes = await writeAtomicJson(evidencePath, evidence)
   if (jobError !== undefined) throw jobError
+  assertCompleteGate5BrokerEvidence(evidence, {
+    identity: {
+      runId: input.trial.runId,
+      candidateId: input.trial.candidateId,
+      trialId: input.trial.trialId,
+      taskId: input.trial.taskId,
+      attemptIndex: input.trial.attemptIndex,
+    },
+    policy: input.brokerPolicy,
+    publicKeySpki: input.authority.publicKeySpki,
+  })
   return { trialId: input.trial.trialId, evidenceBytes }
 }
 
@@ -988,12 +1065,21 @@ async function main(): Promise<void> {
   }
   const attempts = Number(process.env['GATE5_ATTEMPTS'] ?? '1')
   const concurrency = Number(process.env['GATE5_CONCURRENCY'] ?? '1')
+  const trialReservationUsdMicros = Number(process.env['GATE5_TRIAL_RESERVE_USD_MICROS'] ?? '')
+  const expectedCandidateId = process.env['GATE5_EXPECTED_CANDIDATE_ID'] ?? ''
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 10) {
     throw new Error('attempts must be 1 through 10')
   }
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) {
     throw new Error('concurrency must be 1 through 16')
   }
+  if (!Number.isSafeInteger(trialReservationUsdMicros) || trialReservationUsdMicros < 1) {
+    throw new Error('gate5 runner: GATE5_TRIAL_RESERVE_USD_MICROS must be a positive integer')
+  }
+  if (!candidateIdPattern.test(expectedCandidateId)) {
+    throw new Error('gate5 runner: GATE5_EXPECTED_CANDIDATE_ID is invalid')
+  }
+  const brokerPolicy = brokerPolicyForReservation(trialReservationUsdMicros)
   const split = JSON.parse(
     await readFile(join(repoRoot, 'evidence', 'gate5', 'split-commitment.json'), 'utf8'),
   ) as { observedTaskIds: string[] }
@@ -1026,7 +1112,7 @@ async function main(): Promise<void> {
     if (!existingRunDir.isDirectory() || existingRunDir.isSymbolicLink()) {
       throw new Error('gate5 runner: existing run path is not a real directory')
     }
-    const intent = await readRunIntent(runDir, runId, taskIds, attempts)
+    const intent = await readRunIntent(runDir, runId, taskIds, attempts, brokerPolicy)
     const terminal = await readTerminal(runDir, intent).catch(() => null)
     const existing = await readFile(join(runDir, 'summary.json'), 'utf8').catch(() => null)
     if (existing !== null) {
@@ -1038,7 +1124,7 @@ async function main(): Promise<void> {
     if (terminal === null) {
       throw new Error('gate5 runner: ambiguous incomplete broker run; paid calls will not replay')
     }
-    await collectRun({ runDir, intent, terminal, reconciledFromTerminalRaw: true })
+    await collectRun({ runDir, intent, terminal })
     return
   }
 
@@ -1051,7 +1137,7 @@ async function main(): Promise<void> {
   try {
     socketRoot = await mkdtemp(join(tmpdir(), 'dsh-g5-sockets-'))
     await chmod(socketRoot, 0o700)
-    const { receipt, packed } = await buildBaselineRuntime(workDir)
+    const { receipt, packed } = await buildBaselineRuntime(workDir, expectedCandidateId)
     const authority = createGate5BrokerSigningAuthority()
     const stagingRunDir = `${runDir}.staging-${process.pid}-${randomUUID()}`
     await mkdir(stagingRunDir, { recursive: false, mode: 0o700 })
@@ -1092,7 +1178,7 @@ async function main(): Promise<void> {
       await rm(stagingRunDir, { recursive: true, force: true })
       throw error
     }
-    const intent = await readRunIntent(runDir, runId, taskIds, attempts)
+    const intent = await readRunIntent(runDir, runId, taskIds, attempts, brokerPolicy)
     artifact = await startArtifactServer(packed.archivePath, workDir)
     process.env['DEEPSEEK_API_KEY'] = providerCredential
     const startedAt = Date.now()
@@ -1110,11 +1196,12 @@ async function main(): Promise<void> {
         archiveSha256: packed.sha256,
         caBundlePath: artifact!.caBundlePath,
         socketRoot: socketRoot!,
+        brokerPolicy,
         authority,
       })
     })
     delete process.env['DEEPSEEK_API_KEY']
-    const finalIntent = await readRunIntent(runDir, runId, taskIds, attempts)
+    const finalIntent = await readRunIntent(runDir, runId, taskIds, attempts, brokerPolicy)
     if (stableJson(finalIntent) !== stableJson(intent)) {
       throw new Error('gate5 runner: run intent changed during execution')
     }
@@ -1129,8 +1216,33 @@ async function main(): Promise<void> {
         brokerEvidenceSha256: sha256(result.evidenceBytes),
       })),
     }
-    await writeAtomicJson(join(runDir, 'execution-terminal.json'), terminal)
-    await collectRun({ runDir, intent, terminal, reconciledFromTerminalRaw: false })
+    const terminalTrials = await Promise.all(
+      results.map(async (result, index) => {
+        const trial = intent.trials[index]
+        if (trial === undefined || result.trialId !== trial.trialId) {
+          throw new Error('gate5 runner: terminal result order differs from run intent')
+        }
+        return {
+          evidence: JSON.parse(result.evidenceBytes) as unknown,
+          identity: {
+            runId: trial.runId,
+            candidateId: trial.candidateId,
+            trialId: trial.trialId,
+            taskId: trial.taskId,
+            attemptIndex: trial.attemptIndex,
+          },
+          policy: brokerPolicy,
+          publicKeySpki: intent.broker.publicKeySpki,
+          sessionUsage: await readDshUsage(await trialDirectory(runDir, trial)),
+        }
+      }),
+    )
+    await writeGate5ExecutionTerminal({
+      path: join(runDir, 'execution-terminal.json'),
+      value: terminal,
+      trials: terminalTrials,
+    })
+    await collectRun({ runDir, intent, terminal })
   } finally {
     delete process.env['DEEPSEEK_API_KEY']
     if (originalCredential !== undefined) process.env['DEEPSEEK_API_KEY'] = originalCredential
@@ -1140,4 +1252,6 @@ async function main(): Promise<void> {
   }
 }
 
-await main()
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main()
+}

@@ -14,19 +14,28 @@
   locked official route, durable idempotency store, connection/request/byte/deadline limits and Ed25519-signed
   identity/receipt/usage evidence. The socket source is contained by a host-private temporary directory; provider
   retry/continuation parameters are frozen into exact worst-case output reservations; temporary artifact TLS private
-  keys never enter run evidence.
+  keys never enter run evidence. The durable saga trial reservation, conservative input/output pricing, pre-dispatch
+  worst-case micro-USD and actual settlement are signed; the default `$0.333333` trial permits two worst-case calls
+  (`$0.311952`), not the retired unbounded 64-call ceiling.
 - Run intent schema 2 freezes candidate/capsule, ordered trials, original/overlay task hashes, broker policy and public
   signing key before launch. Development task overlays force every agent phase to `no-network`; conflicting policies
   reject and are revalidated after all jobs. Only a complete signed broker matrix, exact DSH usage reconciliation,
   overlay revalidation and credential-byte scan can publish `execution-terminal.json`. Intent without that marker is
-  ambiguous and never redispatched.
+  ambiguous and never redispatched. Marker publication now performs those checks before creating marker bytes.
+  Evaluator inspect/collect always replays broker-v2 and raw normalization; schema-1 summaries, forged markers, or
+  status/reward/cost drift reject rather than enter the journal.
 - A real Harbor/Docker adversarial E2E proves candidate initialization sees neither the env key nor retired secret
   file, cannot complete direct external HTTPS, and successfully calls the fake trusted Responses adapter through the
   mounted Unix socket. The signed usage receipt verifies and matches the model call. Current local gates pass format,
-  docs, lint, typecheck, provenance, upstream-clean and byte-equality checks; unit is 120 files / 920 passed + 1
+  docs, lint, typecheck, provenance, upstream-clean and byte-equality checks; unit is 120 files / 922 passed + 1
   platform skip; no-key E2E is 18 files passed + 2 credential-gated files skipped, 45 passed + 4 skipped. The
   provider-configurable continuation E2E also passed against the user-authorized Responses endpoint. Hosted CI,
   independent exact-head review and merge are still required.
+- Independent review of predecessor head `c6ade11` correctly blocked merge because schema-1 summaries could bypass
+  raw replay, the terminal marker preceded broker/session validation, and the 64-call worst case exceeded the durable
+  trial reservation. Current code rejects old/tampered summaries and forged markers, validates before marker creation,
+  derives broker calls from the signed micro-USD reservation, and uses the standard SHA-256 baseline identity. These
+  changes still require fresh exact-head CI and independent approval.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
 

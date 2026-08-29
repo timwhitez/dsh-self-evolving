@@ -127,6 +127,10 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
   connection/request-bytes/response-bytes/deadline 上限，冻结 transport retry 与 reasoning continuation，并按
   所有允许的 provider attempt 预留 worst-case output；candidate 不能提供 endpoint、header、billing tag 或
   credential；
+- 每个 broker policy 必须绑定 evaluation saga 已 durable 的整数 micro-USD trial reservation、冻结的 cache-hit/
+  cache-miss/output 价格与 conservative input-token ceiling。`maxRequests × worstCasePerRequest` 不得超过该
+  reservation；每次 dispatch 必须在 provider contact 前原子预留 worst-case input/output/USD，实际 usage 的
+  micro-USD settlement 进入签名 evidence；
 - development Gate 5 task overlay 必须绑定 original/overlay digest，并将所有 agent phase 固定为
   `no-network`；controller 必须在 launch 前和所有 job 结束后重新验证 digest 与 network 语义。artifact HTTPS
   server 的临时 TLS private key 不得写入 run evidence。真实 Harbor 对抗测试必须同时证明环境 key 不存在、
