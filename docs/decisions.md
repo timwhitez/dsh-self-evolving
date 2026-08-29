@@ -460,6 +460,13 @@ Terminal publication itself consumes the signed evidence and exact DSH session u
 incomplete, missing-usage or mismatched-usage trials fail before any marker bytes are created. Collection always
 re-executes broker-v2 validation and the raw normalizer, then canonical-compares the complete reconstructed schema-2
 summary. A summary file alone, a schema-1 predecessor, or a forged marker can never become external score authority.
+The derived summary is published from a same-directory exclusive `0600` staging inode only after the complete write
+and file fsync. A no-clobber hard link is the commit point; the run directory is fsynced before staging is removed.
+Resume first revalidates the terminal and raw evidence. It reuses exact canonical summary bytes, finishes cleanup of
+a linked staging inode, or retains an exact-prefix torn final as content-addressed crash residue before deterministic
+reconstruction. Any non-prefix malformed bytes or semantically/bytewise different valid JSON fail closed as evidence
+tampering. This recovery path never loads the provider credential or redispatches a paid trial. Terminal-derived
+attribution creation uses the same staged, fsynced atomic-write discipline.
 
 **Why:** the retired runner mounted `provider.secret`, exported it as `DEEPSEEK_API_KEY`, and loaded evolving candidate
 JavaScript in the same process and network namespace. Read-only file mode and static scanning cannot isolate a secret

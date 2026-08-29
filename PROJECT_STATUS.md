@@ -50,6 +50,17 @@
   directories and evaluated modes. Issue #42 was reopened and closed through PR #248; current Gate 5 prebuilt
   authority now rejects schema-1 and digest-self-consistent invalid schema-2 capsules and consumes only the merged
   tree-v2 verifier. The integrated head still requires commit, exact-head hosted CI and fresh independent approval.
+- Integrated head `620bac7` passed exact-head hosted CI run `33240164516`, but fresh independent review correctly
+  blocked merge after reproducing a two-byte torn final `summary.json` that stranded an otherwise terminal run on
+  every resume. The repair publishes derived summaries only from a same-directory `0600` staging inode after full
+  write and file fsync, uses a no-clobber hard-link commit point plus parent-directory fsync, and cleans a linked
+  staging inode on replay. After revalidating terminal/raw evidence, only an exact byte prefix of the deterministic
+  reconstruction is retained as content-addressed crash residue and rebuilt; every other malformed or valid-JSON
+  mismatch remains an integrity failure. Terminal-derived attribution creation now also uses the existing atomic
+  fsync/rename protocol. Process-level SIGKILL fault injection covers partial/full write, file-fsync, final-link and
+  directory-fsync boundaries, exact-prefix recovery, repeated resume, linked-staging cleanup, tamper rejection and
+  concurrent no-clobber publication. Focused Gate 5 coverage is 19/19 and full unit is 121 files / 945 passed + 1
+  platform skip. This repair still requires a commit, exact-head hosted CI and a new independent approval before merge.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
 

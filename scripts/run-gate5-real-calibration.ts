@@ -55,6 +55,7 @@ import {
   assertGate5PrebuiltCapsule,
   snapshotGate5PrebuiltCapsule,
 } from '../packages/dsh-self-evolving-cli/src/gate5-capsule.js'
+import { reconcileGate5Summary } from '../packages/dsh-self-evolving-cli/src/gate5-summary.js'
 import { combinePemTrustBundle } from './artifact-trust.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -687,9 +688,14 @@ async function collectRun(input: {
       task_id: trial.taskId,
       attempt_index: trial.attemptIndex,
     }
-    const existingAttribution = await readFile(attributionPath, 'utf8').catch(() => null)
+    const existingAttribution = await readFile(attributionPath, 'utf8').catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      },
+    )
     if (existingAttribution === null) {
-      await writeFile(attributionPath, JSON.stringify(expectedAttribution) + '\n', { flag: 'wx' })
+      await writeAtomicJson(attributionPath, expectedAttribution)
     } else if (stableJson(JSON.parse(existingAttribution)) !== stableJson(expectedAttribution)) {
       throw new Error(`reconcile: attribution conflicts with plan: ${trial.trialId}`)
     }
@@ -742,7 +748,10 @@ async function collectRun(input: {
     normalized,
   }
   const summaryBytes = JSON.stringify(summary, null, 2) + '\n'
-  await writeFile(join(input.runDir, 'summary.json'), summaryBytes, { mode: 0o600, flag: 'wx' })
+  await reconcileGate5Summary({
+    path: join(input.runDir, 'summary.json'),
+    bytes: summaryBytes,
+  })
   process.stdout.write(
     JSON.stringify({
       runId: input.intent.runId,
@@ -765,7 +774,7 @@ async function validateExistingSummary(
   intent: RunIntent,
   terminal: ExecutionTerminal,
   bytes: string,
-): Promise<void> {
+): Promise<string> {
   const summary = JSON.parse(bytes) as {
     schemaVersion?: unknown
     protocol?: unknown
@@ -885,6 +894,7 @@ async function validateExistingSummary(
     normalized: expectedRows,
   }
   assertExactGate5ReconstructedSummary(summary, expectedSummary)
+  return JSON.stringify(expectedSummary, null, 2) + '\n'
 }
 
 async function scanFileForSecret(path: string, secret: Buffer): Promise<boolean> {
@@ -1138,11 +1148,24 @@ async function main(): Promise<void> {
       brokerPolicy,
     )
     const terminal = await readTerminal(runDir, intent).catch(() => null)
-    const existing = await readFile(join(runDir, 'summary.json'), 'utf8').catch(() => null)
+    const summaryPath = join(runDir, 'summary.json')
+    const existing = await readFile(summaryPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
     if (existing !== null) {
       if (terminal === null) throw new Error('gate5 runner: summary has no terminal authority')
-      await validateExistingSummary(runDir, intent, terminal, existing)
-      process.stdout.write(existing)
+      const existingText = existing.toString('utf8')
+      try {
+        JSON.parse(existingText)
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await collectRun({ runDir, intent, terminal })
+        return
+      }
+      const reconstructed = await validateExistingSummary(runDir, intent, terminal, existingText)
+      await reconcileGate5Summary({ path: summaryPath, bytes: reconstructed })
+      process.stdout.write(reconstructed)
       return
     }
     if (terminal === null) {
