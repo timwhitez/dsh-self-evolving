@@ -637,6 +637,30 @@ function summaryPath(config: StableDemoConfig, runId: string): string {
   return join(config.stateDir, 'external-evaluator', runId, 'summary.json')
 }
 
+export function buildGate5EvaluatorEnvironment(
+  config: StableDemoConfig,
+  spec: StableEvaluationSpec,
+  runId: string,
+  reserveUsdMicros: number,
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GATE5_RUN_ID: runId,
+    GATE5_TASK_IDS: spec.taskId,
+    GATE5_ATTEMPTS: '1',
+    GATE5_CONCURRENCY: '1',
+    GATE5_TRIAL_RESERVE_USD_MICROS: String(reserveUsdMicros),
+    GATE5_EXPECTED_CANDIDATE_ID: spec.candidate.candidateId,
+    GATE5_EXPECTED_CAPSULE_DIGEST: spec.candidate.capsuleDigest,
+    DSH_SELF_EVOLVING_CANDIDATE_ROOT: spec.candidate.sourceRoot,
+    ...(spec.candidate.capsuleRoot === undefined
+      ? {}
+      : { DSH_SELF_EVOLVING_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
+    DSH_SELF_EVOLVING_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
+    TB21_DIR: config.terminalBenchRoot,
+  }
+}
+
 export function mapNormalizedStatus(status: unknown): 'pass' | 'fail' | 'invalid' {
   if (status === 'pass' || status === 'fail' || status === 'invalid') return status
   throw new Error(`real evaluator: unknown normalized status ${JSON.stringify(status)}`)
@@ -714,21 +738,7 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
       [join(config.repoRoot, 'scripts', 'run-gate5-real-calibration.ts')],
       {
         cwd: config.repoRoot,
-        env: {
-          ...process.env,
-          GATE5_RUN_ID: runId,
-          GATE5_TASK_IDS: spec.taskId,
-          GATE5_ATTEMPTS: '1',
-          GATE5_CONCURRENCY: '1',
-          GATE5_TRIAL_RESERVE_USD_MICROS: String(reserveUsdMicros),
-          GATE5_EXPECTED_CANDIDATE_ID: spec.candidate.candidateId,
-          DSH_SELF_EVOLVING_CANDIDATE_ROOT: spec.candidate.sourceRoot,
-          ...(spec.candidate.capsuleRoot === undefined
-            ? {}
-            : { DSH_SELF_EVOLVING_CAPSULE_ROOT: spec.candidate.capsuleRoot }),
-          DSH_SELF_EVOLVING_EVALUATOR_ROOT: join(config.stateDir, 'external-evaluator'),
-          TB21_DIR: config.terminalBenchRoot,
-        },
+        env: buildGate5EvaluatorEnvironment(config, spec, runId, reserveUsdMicros),
       },
     )
   return {
@@ -768,6 +778,7 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
         protocol?: unknown
         runId?: unknown
         candidateId?: unknown
+        candidateCapsuleDigest?: unknown
         normalized: Array<{
           candidateId?: unknown
           taskId?: unknown
@@ -790,6 +801,7 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
         summary.protocol !== GATE5_BROKER_PROTOCOL ||
         summary.runId !== runId ||
         summary.candidateId !== spec.candidate.candidateId ||
+        summary.candidateCapsuleDigest !== spec.candidate.capsuleDigest ||
         row.candidateId !== spec.candidate.candidateId ||
         row.taskId !== spec.taskId ||
         row.priced !== true ||

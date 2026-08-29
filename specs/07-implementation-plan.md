@@ -142,6 +142,9 @@
   revalidated after execution, and the frozen provider-attempt policy cannot exceed its output reservation;
 - schema-1/tampered summaries and forged terminal markers reject; terminal publication precedes no broker-signature/
   session-usage check; signed worst-case and settled micro-USD stay within the durable saga reservation before spend;
+- the evaluator passes the planned candidate capsule digest into the runner; source builds reproduce that digest, while
+  prebuilt capsules must pass complete `SHA256SUMS`/manifest/digest verification before and after a host-private
+  snapshot is packed, so mutable admission paths cannot execute drifted bytes under a frozen candidate identity;
 - an intent without `execution-terminal.json` never redispatches ambiguous paid calls. Credential-colocation evidence
   from the retired schema 1 protocol cannot satisfy this gate and requires a fresh broker-v2 revalidation run.
 

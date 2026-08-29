@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { ProposalGatewayAdapter, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
 import { brokerPolicyForReservation } from '../../../scripts/run-gate5-real-calibration.js'
+import { snapshotGate5PrebuiltCapsule } from '../src/gate5-capsule.js'
 import {
   GATE5_MODEL_SOCKET_TARGET,
   assertCompleteGate5BrokerEvidence,
@@ -44,6 +46,49 @@ const identity: Gate5TrialIdentity = {
   trialId: 'trial-0000',
   taskId: 'fixture-task',
   attemptIndex: 0,
+}
+
+async function writePrebuiltCapsuleFixture(capsuleRoot: string): Promise<{
+  candidateId: `sha256:${string}`
+  capsuleDigest: `sha256:${string}`
+}> {
+  const candidateId = `sha256:${'4'.repeat(64)}` as const
+  const launcherBytes = '#!/bin/sh\nexit 0\n'
+  const configBytes = 'plugins: []\n'
+  await mkdir(join(capsuleRoot, 'runtime'), { recursive: true })
+  await writeFile(join(capsuleRoot, 'runtime', 'dsh-self-evolving-acp'), launcherBytes, {
+    mode: 0o755,
+  })
+  await writeFile(join(capsuleRoot, 'runtime', 'cordis.yml'), configBytes)
+  const sumsBytes =
+    [
+      `${createHash('sha256').update(configBytes).digest('hex')}  runtime/cordis.yml`,
+      `${createHash('sha256').update(launcherBytes).digest('hex')}  runtime/dsh-self-evolving-acp`,
+    ]
+      .sort()
+      .join('\n') + '\n'
+  await writeFile(join(capsuleRoot, 'SHA256SUMS'), sumsBytes)
+  const manifestBytes =
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        candidateId,
+        sha256sums: {
+          ref: 'SHA256SUMS',
+          hash: createHash('sha256').update(sumsBytes).digest('hex'),
+        },
+      },
+      null,
+      2,
+    ) + '\n'
+  await writeFile(join(capsuleRoot, 'capsule.json'), manifestBytes)
+  return {
+    candidateId,
+    capsuleDigest: `sha256:${createHash('sha256')
+      .update(manifestBytes)
+      .update(sumsBytes)
+      .digest('hex')}`,
+  }
 }
 
 const policy: Gate5BrokerPolicy = {
@@ -118,6 +163,52 @@ async function writeTask(path: string, agentPolicy = ''): Promise<void> {
 }
 
 describe('Gate 5 credential isolation contracts', () => {
+  it('snapshots only the complete prebuilt capsule bound to the planned digest', async () => {
+    const source = join(root, 'prebuilt-capsule')
+    const snapshot = join(root, 'private-snapshot')
+    const expected = await writePrebuiltCapsuleFixture(source)
+
+    await expect(
+      snapshotGate5PrebuiltCapsule({
+        sourceRoot: source,
+        snapshotRoot: snapshot,
+        expectedCandidateId: expected.candidateId,
+        expectedCapsuleDigest: expected.capsuleDigest,
+      }),
+    ).resolves.toEqual({
+      snapshotRoot: snapshot,
+      candidateId: expected.candidateId,
+      capsuleDigest: expected.capsuleDigest,
+    })
+    expect(await readFile(join(snapshot, 'runtime', 'cordis.yml'), 'utf8')).toBe('plugins: []\n')
+  })
+
+  it('rejects prebuilt runtime drift and a capsule digest outside the evaluation plan', async () => {
+    const drifted = join(root, 'drifted-capsule')
+    const expected = await writePrebuiltCapsuleFixture(drifted)
+    await writeFile(join(drifted, 'runtime', 'cordis.yml'), 'plugins: [tampered]\n')
+
+    await expect(
+      snapshotGate5PrebuiltCapsule({
+        sourceRoot: drifted,
+        snapshotRoot: join(root, 'drifted-snapshot'),
+        expectedCandidateId: expected.candidateId,
+        expectedCapsuleDigest: expected.capsuleDigest,
+      }),
+    ).rejects.toThrow(/checksum mismatch/i)
+
+    const intact = join(root, 'intact-capsule')
+    const intactExpected = await writePrebuiltCapsuleFixture(intact)
+    await expect(
+      snapshotGate5PrebuiltCapsule({
+        sourceRoot: intact,
+        snapshotRoot: join(root, 'wrong-plan-snapshot'),
+        expectedCandidateId: intactExpected.candidateId,
+        expectedCapsuleDigest: `sha256:${'f'.repeat(64)}`,
+      }),
+    ).rejects.toThrow(/capsule digest differs from the evaluation plan/i)
+  })
+
   it('caps the default stable trial at two worst-case calls within 333333 micro-USD', () => {
     const production = brokerPolicyForReservation(333_333)
     const perRequest = gate5WorstCaseUsdMicrosPerRequest(production)

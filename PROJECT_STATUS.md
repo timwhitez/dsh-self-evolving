@@ -24,18 +24,28 @@
   ambiguous and never redispatched. Marker publication now performs those checks before creating marker bytes.
   Evaluator inspect/collect always replays broker-v2 and raw normalization; schema-1 summaries, forged markers, or
   status/reward/cost drift reject rather than enter the journal.
+- The stable evaluator now passes the plan's exact candidate capsule digest to the runner. Source builds must
+  reproduce it; prebuilt capsules must match their complete live `SHA256SUMS`, manifest and planned digest, are copied
+  into a host-private one-shot snapshot, and are checked again before and after packaging. Intent and reconstructed
+  summary bind that candidate capsule digest separately from the generated ACP archive SHA-256, preventing mutable
+  capsule paths from executing changed bytes under an admitted candidate identity.
 - A real Harbor/Docker adversarial E2E proves candidate initialization sees neither the env key nor retired secret
   file, cannot complete direct external HTTPS, and successfully calls the fake trusted Responses adapter through the
-  mounted Unix socket. The signed usage receipt verifies and matches the model call. Current local gates pass format,
-  docs, lint, typecheck, provenance, upstream-clean and byte-equality checks; unit is 120 files / 922 passed + 1
-  platform skip; no-key E2E is 18 files passed + 2 credential-gated files skipped, 45 passed + 4 skipped. The
-  provider-configurable continuation E2E also passed against the user-authorized Responses endpoint. Hosted CI,
-  independent exact-head review and merge are still required.
+  mounted Unix socket. The signed usage receipt verifies and matches the model call. After the capsule-snapshot
+  repair, format, docs, lint, typecheck, provenance, upstream-clean, byte-equality and release-readiness pass; unit is
+  120 files / 925 passed + 1 platform skip. No-key E2E is 18 files passed + 2 credential-gated files skipped, 45
+  passed + 4 skipped, including the real Harbor adversarial test. The previous head's provider-configurable
+  continuation E2E passed against the user-authorized Responses endpoint. The changed head still requires a commit,
+  hosted CI, independent exact-head review and merge.
 - Independent review of predecessor head `c6ade11` correctly blocked merge because schema-1 summaries could bypass
   raw replay, the terminal marker preceded broker/session validation, and the 64-call worst case exceeded the durable
   trial reservation. Current code rejects old/tampered summaries and forged markers, validates before marker creation,
   derives broker calls from the signed micro-USD reservation, and uses the standard SHA-256 baseline identity. These
   changes still require fresh exact-head CI and independent approval.
+- Independent review of successor head `3aff63c` confirmed those three repairs, then correctly blocked merge after a
+  bounded repro changed prebuilt `runtime/cordis.yml` without changing its stale checksums: the generated archive
+  changed while attribution retained the planned candidate ID. The current private-snapshot/capsule-digest repair and
+  all local gates pass, but it still requires a new commit, exact-head hosted CI and a fresh independent approval.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
 

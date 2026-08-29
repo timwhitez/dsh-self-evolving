@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { append, type Journal } from '@dsh-self-evolving/core'
 import {
   auditStableRun,
+  buildGate5EvaluatorEnvironment,
   createRealEvaluationProvider,
   createStableDemoConfig,
   type StableDemoConfig,
@@ -140,6 +141,15 @@ describe('real evaluator broker-v2 authority', () => {
     .update(`${GATE5_BROKER_PROTOCOL}\0${specBase.idempotencyKey}`)
     .digest('hex')
     .slice(0, 24)}`
+
+  it('passes both planned candidate identities into the external evaluator', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-provider-identity-env-'))
+    roots.push(root)
+    const planned = spec(evaluatorCandidateId)
+    const environment = buildGate5EvaluatorEnvironment(config(root), planned, runId, 333_333)
+    expect(environment['GATE5_EXPECTED_CANDIDATE_ID']).toBe(planned.candidate.candidateId)
+    expect(environment['GATE5_EXPECTED_CAPSULE_DIGEST']).toBe(planned.candidate.capsuleDigest)
+  })
 
   async function providerWithSummary(
     row: Record<string, unknown>,

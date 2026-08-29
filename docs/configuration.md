@@ -52,6 +52,11 @@ after execution. The stable evaluator passes its durable per-trial reservation a
 worst case) within the `$0.333333` reservation. Dispatch three is impossible before provider contact. Actual
 conservative settlement is signed and charged at micro-USD precision.
 
+The evaluator also passes the candidate's planned `capsuleDigest` as a required runner identity. Source evaluation
+must reproduce the corresponding build digest. Prebuilt evaluation verifies the complete capsule tree and manifest,
+copies it into a private one-shot snapshot, verifies the source and snapshot again, and packages only the snapshot.
+The run intent and reconstructed summary bind that planned digest separately from the packaged ACP archive SHA-256.
+
 Runs created by the retired credential-launcher protocol are historical evidence only. They are not upgraded in
 place and cannot support a current credential-isolation or official benchmark claim; use a fresh run ID for broker-v2.
 

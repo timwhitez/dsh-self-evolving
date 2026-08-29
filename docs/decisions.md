@@ -429,6 +429,13 @@ usage before replay. Original and overlay digests plus `no-network` semantics ar
 after all jobs. The artifact server's TLS private key remains only in the temporary runtime directory and is deleted;
 it is never part of persisted run evidence.
 
+The evaluation plan's candidate capsule digest is also an execution authority, not descriptive metadata. A source
+candidate must reproduce its planned build capsule digest. A prebuilt V0.1.1 capsule is checked against its complete
+live `SHA256SUMS`, manifest identity and planned capsule digest, copied into a host-private one-shot snapshot, checked
+again on both sides, and packed only from that snapshot. The snapshot is rechecked after packing. Run intent and the
+reconstructed summary bind both the planned capsule digest and the resulting Harbor artifact SHA-256; drift at the
+admission path therefore fails closed instead of inheriting the candidate's score identity.
+
 Terminal publication itself consumes the signed evidence and exact DSH session usage, so policy-violation,
 incomplete, missing-usage or mismatched-usage trials fail before any marker bytes are created. Collection always
 re-executes broker-v2 validation and the raw normalizer, then canonical-compares the complete reconstructed schema-2
