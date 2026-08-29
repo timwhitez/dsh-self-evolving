@@ -300,8 +300,21 @@ capsule/
 ├── runner/                  # stable ACP application + final overlay
 ├── provenance.json
 ├── sbom.spdx.json
+├── capsule.json             # schema v2; binds the checksum format and sums bytes
 └── SHA256SUMS
 ```
+
+当前 capsule 必须使用 `dsh-capsule-tree-v2` typed tree manifest。每行由 hash 和一个 canonical descriptor
+组成：目录固定为 `directory:0755:<path>`；regular file 按 Harbor tar 的可观察规范化 mode 记录为
+`file:0644:<path>` 或 `file:0755:<path>` 并 hash 文件字节；symlink 记录为
+`symlink:0755:<path>` 并 hash literal target bytes。所有名称和 checksum control text 必须是严格 UTF-8，
+路径不得含控制字符或 Unicode line/paragraph separator，所有 file 与 symlink inode 都必须是 single-link。
+条目集必须与 live tree 完全相等，因此空目录、执行位、类型、路径、
+文件字节或 symlink target 的任何漂移都拒绝；setuid/setgid/sticky 等特殊 mode 不允许。`capsule.json` 与 `SHA256SUMS` 字节继续通过
+`capsuleHash = H(capsule.json || SHA256SUMS)` 联合绑定。
+
+schema-v1 file/symlink checksum 可继续只读验证为历史 predecessor evidence，但不得被静默解释为 v2
+complete-tree authority，也不能支持新的 admission/evaluation claim。
 
 Harbor adapter 在 task environment 上传 capsule；解包前验证 hash/paths，解包后再次验证。运行用户对
 runtime 和 candidate code 只读，对 task workspace 可按 benchmark policy 写。每个 trial 创建全新
@@ -310,7 +323,9 @@ session/persistence root；跨 trial cache 只能是只读、candidate-independe
 同一协议内只能有一个用于 controller、runner overlay、capsule manifest 与 evaluator attribution 的
 canonical candidate identity。v0.1.1 使用 admission 的 `sha256:<source digest>`；Candidate SDK 构建产生的
 `c_<base32>` identity 必须作为 `candidate.buildCandidateId` 写入 capsule，并在 admission receipt 中显式
-交叉绑定。resume/audit 遇到缺失或互相矛盾的 identity 必须 fail closed，不得把旧 alias 静默迁移为新 ID。
+交叉绑定。resume/audit 必须重验 live tree-v2、`offlineCapsule` sums digest 与
+`capsuleHash = H(capsule.json || SHA256SUMS)`；遇到缺失、漂移或互相矛盾的 identity 必须 fail closed，
+不得把旧 alias 静默迁移为新 ID。
 
 ## 13. Runtime limits
 

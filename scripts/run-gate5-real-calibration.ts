@@ -351,7 +351,6 @@ async function buildBaselineRuntime(workDir: string) {
       entryBin: 'lib/bin.js',
     },
   })
-  await chmod(join(capsuleDir, 'runtime', 'credential-launcher.sh'), 0o755)
   const packed = await packAcpBinaryArchive(
     join(capsuleDir, 'runtime'),
     join(workDir, 'dsh-self-evolving-acp.tar.gz'),

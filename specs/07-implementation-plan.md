@@ -59,6 +59,9 @@
 ### Accept
 
 - golden candidate 两次 clean build 的 source/bundle/capsule hash 相同；
+- capsule schema v2 以 typed manifest 精确绑定目录、规范化 executable mode、file bytes 与 symlink target；
+  非 UTF-8/control-character 路径、hardlink、额外空目录及 mode/type/path/content/target 漂移都 fail closed；
+  fresh admission 与 stable-build resume 仅接受重验通过的 v2，schema v1 只保留为 predecessor evidence；
 - traversal/symlink/install-script/dynamic-import/task-literal/default-export/leaked-effect fixtures 全拒；
 - packed capsule 在无 source checkout/无 network 的 fresh container 启动 DSH ACP initialize/session；
 - builder 不执行 candidate lifecycle script，不访问 model/verifier。
