@@ -470,9 +470,11 @@ attribution creation uses the same staged, fsynced atomic-write discipline. The 
 absent before open from one that disappeared after its inode was opened and validated. The latter may retry only when
 the expected content-addressed residue has the same inode and bytes with no extra hard link; no residue, a forged
 same-byte residue, an unknown hard link or a different-inode replacement fails closed. Reconciliation holds and
-rechecks the original parent-directory inode across quarantine and republish. A permanent empty single-link `0600`
-lock inode is protected by kernel `flock` so multiple processes cannot turn a legitimate successor publication into
-an indistinguishable replacement race; process death releases the lock without a stale-owner takeover protocol.
+rechecks the original parent-directory inode across quarantine and republish. Kernel `flock` is held directly on that
+already-open directory inode rather than on a replaceable named lock file. Summary, staging and residue paths resolve
+through the pinned directory file descriptor, and the named directory is checked against the held dev/inode before
+and after every authority mutation and before success. A sibling filename therefore cannot split the lock domain, a
+directory hard link is kernel-forbidden, and process death releases ownership without a stale-owner takeover protocol.
 
 **Why:** the retired runner mounted `provider.secret`, exported it as `DEEPSEEK_API_KEY`, and loaded evolving candidate
 JavaScript in the same process and network namespace. Read-only file mode and static scanning cannot isolate a secret

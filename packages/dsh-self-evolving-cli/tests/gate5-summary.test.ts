@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import {
   link,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rename,
@@ -37,6 +39,19 @@ const summaryBytes =
       schemaVersion: 2,
       protocol: 'gate5-host-credential-broker-v2',
       runId: 'gate5-summary-fixture',
+      collectedTrials: 1,
+      reconciledFromTerminalRaw: true,
+    },
+    null,
+    2,
+  ) + '\n'
+
+const conflictingSummaryBytes =
+  JSON.stringify(
+    {
+      schemaVersion: 2,
+      protocol: 'gate5-host-credential-broker-v2',
+      runId: 'gate5-summary-conflicting-fixture',
       collectedTrials: 1,
       reconciledFromTerminalRaw: true,
     },
@@ -88,14 +103,14 @@ async function crashPublication(
   expect(result).toEqual({ code: null, signal: 'SIGKILL' })
 }
 
-async function reconcileInChild(path: string): Promise<string> {
+async function reconcileInChild(path: string, bytes = summaryBytes): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(process.execPath, [worker], {
       env: {
         ...process.env,
         DSH_GATE5_SUMMARY_MODE: 'reconcile',
         DSH_GATE5_SUMMARY_PATH: path,
-        DSH_GATE5_SUMMARY_BYTES: summaryBytes,
+        DSH_GATE5_SUMMARY_BYTES: bytes,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -122,6 +137,39 @@ async function reconcileInChild(path: string): Promise<string> {
       resolve(stdout.trim())
     })
   })
+}
+
+async function canAcquireDirectoryLock(path: string): Promise<boolean> {
+  const directory = await open(
+    path,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  )
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      let stderr = ''
+      const child = spawn('/usr/bin/flock', ['--exclusive', '--nonblock', '3'], {
+        stdio: ['ignore', 'ignore', 'pipe', directory.fd],
+      })
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk
+      })
+      child.once('error', reject)
+      child.once('close', (code, signal) => {
+        if (signal !== null || (code !== 0 && code !== 1)) {
+          reject(
+            new Error(
+              `directory lock probe failed: code=${String(code)} signal=${String(signal)} ${stderr}`,
+            ),
+          )
+          return
+        }
+        resolve(code === 0)
+      })
+    })
+  } finally {
+    await directory.close()
+  }
 }
 
 async function crashReconciliationLock(path: string): Promise<void> {
@@ -202,14 +250,18 @@ describe('Gate 5 summary crash/replay publication', () => {
 
     const lockDirectory = join(root!, 'reconciliation-lock-crash')
     const lockSummary = join(lockDirectory, 'summary.json')
-    const lockPath = join(lockDirectory, '.summary.json.reconcile.lock')
     await mkdir(lockDirectory, { mode: 0o700 })
+    const directoryBefore = await lstat(lockDirectory)
     await crashReconciliationLock(lockSummary)
     await expect(reconcileGate5Summary({ path: lockSummary, bytes: summaryBytes })).resolves.toBe(
       'published',
     )
-    expect((await lstat(lockPath)).nlink).toBe(1)
-    expect((await stat(lockPath)).mode & 0o777).toBe(0o600)
+    const directoryAfter = await lstat(lockDirectory)
+    expect([directoryAfter.dev, directoryAfter.ino]).toEqual([
+      directoryBefore.dev,
+      directoryBefore.ino,
+    ])
+    expect(await readdir(lockDirectory)).toEqual(['summary.json'])
   })
 
   it('recovers exact-prefix torn final summaries and converges on repeated resume', async () => {
@@ -381,21 +433,43 @@ describe('Gate 5 summary crash/replay publication', () => {
         name.startsWith('.summary.json.crash-residue-sha256-'),
       ),
     ).toBe(true)
+  })
 
-    for (const kind of ['nonempty', 'hardlinked'] as const) {
-      const lockDirectory = join(root!, `invalid-lock-${kind}`)
-      const lockSummary = join(lockDirectory, 'summary.json')
-      const lockPath = join(lockDirectory, '.summary.json.reconcile.lock')
-      await mkdir(lockDirectory, { mode: 0o700 })
-      await writeFile(lockPath, kind === 'nonempty' ? 'forged\n' : '', {
-        mode: 0o600,
-        flag: 'wx',
-      })
-      if (kind === 'hardlinked') await link(lockPath, join(lockDirectory, 'unknown-lock-link'))
+  it('keeps cross-process reconciliation on the pinned authority-directory lock inode', async () => {
+    for (const attack of ['replace-obsolete-lock', 'hardlink-directory'] as const) {
+      const directory = join(root!, `directory-lock-${attack}`)
+      const path = join(directory, 'summary.json')
+      const obsoleteLock = join(directory, '.summary.json.reconcile.lock')
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(obsoleteLock, '', { mode: 0o600, flag: 'wx' })
+      const obsoleteBefore = await lstat(obsoleteLock)
+
+      let child: Promise<string> | undefined
       await expect(
-        reconcileGate5Summary({ path: lockSummary, bytes: summaryBytes }),
-      ).rejects.toThrow(/reconciliation lock identity changed/)
-      expect(await stat(lockSummary).catch(() => null)).toBeNull()
+        reconcileGate5Summary({
+          path,
+          bytes: summaryBytes,
+          async afterLockAcquired() {
+            if (attack === 'replace-obsolete-lock') {
+              await link(obsoleteLock, join(directory, '.obsolete-lock-retained'))
+              await unlink(obsoleteLock)
+              await writeFile(obsoleteLock, '', { mode: 0o600, flag: 'wx' })
+              expect((await lstat(obsoleteLock)).ino).not.toBe(obsoleteBefore.ino)
+            } else {
+              await expect(
+                link(directory, join(root!, 'forbidden-directory-hardlink')),
+              ).rejects.toMatchObject({ code: 'EPERM' })
+            }
+            await expect(canAcquireDirectoryLock(directory)).resolves.toBe(false)
+            child = reconcileInChild(path, conflictingSummaryBytes)
+          },
+        }),
+      ).resolves.toBe('published')
+
+      expect(child).toBeDefined()
+      await expect(child!).rejects.toThrow(/existing final does not match/)
+      expect(await readFile(path, 'utf8')).toBe(summaryBytes)
+      expect((await lstat(path)).nlink).toBe(1)
     }
   })
 

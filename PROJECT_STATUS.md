@@ -80,6 +80,17 @@
   uncontrolled read-after-open disappearance, legitimate residue-backed recovery, process-level lock contention,
   lock-owner SIGKILL, forged locks and parent-directory replacement. A new commit, exact-head CI and fresh independent
   approval remain required.
+- Head `f65b063` passed exact-head hosted CI run `33246662491`, but fresh independent review correctly blocked merge:
+  after the named lock inode was flocked, replacing its pathname split a second reconciler onto a different lock inode;
+  adding a hard link also invalidated the promised single-link authority without being detected before success. The
+  corrected design flocks the already-open original authority-directory inode itself, which has no replaceable lock
+  pathname and cannot be hard-linked. Every summary, staging and residue access resolves through that pinned directory
+  file descriptor, while the named directory is revalidated against the held dev/inode before and after mutations and
+  before success. A replacement of the obsolete lock filename therefore cannot split the kernel lock domain, and a
+  conflicting real child process remains blocked until it observes and rejects the first publication. Directory-lock
+  owner SIGKILL still releases ownership. Four parallel focused Gate 5 runs pass at 20/20 each; full unit is 121 files,
+  946 passed + 1 platform skip; full no-key E2E is 18 files passed + 2 credential-gated skipped and 45 passed + 4
+  skipped. A new commit, exact-head CI and another fresh independent approval remain mandatory.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
 
