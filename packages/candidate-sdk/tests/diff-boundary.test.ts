@@ -1,7 +1,7 @@
 /**
  * Diff boundary + capsule packing tests (spec 02 §11 step 3, §12).
  */
-import { lstat, mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -76,6 +76,7 @@ describe('capsule packing', () => {
       JSON.stringify({ name: '@dsh-self-evolving/fake-acp', version: '1.0.0', type: 'module' }),
     )
     await writeFile(join(runtimePackage, 'lib', 'bin.js'), 'export const ready = true\n')
+    await symlink('bin.js', join(runtimePackage, 'lib', 'bin-link.js'))
     const runtimeClosure = {
       catalogRoots: [runtimeCatalog],
       seedPackages: ['@dsh-self-evolving/fake-acp'],
@@ -108,6 +109,7 @@ describe('capsule packing', () => {
     const sums = sumsBytes.toString('utf8').trim().split('\n')
     expect(sums.some((line) => line.endsWith('  SHA256SUMS'))).toBe(false)
     expect(sums.some((line) => line.endsWith('  capsule.json'))).toBe(false)
+    let sawSymlink = false
     for (const line of sums) {
       const match = /^([0-9a-f]{64}) {2}(directory|file|symlink):(0[0-7]{3}):(.+)$/.exec(line)
       expect(match).not.toBeNull()
@@ -119,8 +121,10 @@ describe('capsule packing', () => {
         continue
       }
       if (kind === 'symlink') {
-        // Symlink entries commit to the literal target string.
-        expect(mode).toBe('0777')
+        sawSymlink = true
+        // Symlink entries commit to literal target bytes and the Harbor tar
+        // normalization used by the evaluated runtime archive.
+        expect(mode).toBe('0755')
         const actual = createHash('sha256')
           .update(await readlink(join(capsuleDir, path!)))
           .digest('hex')
@@ -134,6 +138,7 @@ describe('capsule packing', () => {
         .digest('hex')
       expect(actual).toBe(expectedHash)
     }
+    expect(sawSymlink).toBe(true)
     const manifestBytes = await readFile(out.capsuleManifestPath)
     const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
       schemaVersion?: unknown
