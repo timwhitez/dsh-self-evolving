@@ -31,10 +31,17 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
-function containsControlCharacter(value: string): boolean {
+function containsForbiddenPathCharacter(value: string): boolean {
   for (const character of value) {
     const codePoint = character.codePointAt(0)!
-    if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) return true
+    if (
+      codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029
+    ) {
+      return true
+    }
   }
   return false
 }
@@ -44,7 +51,7 @@ function assertRelativePath(path: string): void {
     path.length === 0 ||
     path.startsWith('/') ||
     path.includes('\\') ||
-    containsControlCharacter(path) ||
+    containsForbiddenPathCharacter(path) ||
     path.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
   ) {
     throw new Error(`capsule tree: unsafe entry path ${JSON.stringify(path)}`)

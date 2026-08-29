@@ -11,15 +11,16 @@
   state without changing the planned capsule digest.
 - Capsule manifest schema 2 now freezes checksum format `dsh-capsule-tree-v2`. Its exact typed entry set records every
   directory as normalized `0755`, every regular file as evaluated `0644` or `0755` plus content hash, and every
-  symlink as archive-normalized `0755` plus literal-target hash. Non-UTF-8/control-character names, missing, extra,
+  symlink as archive-normalized `0755` plus literal-target hash. Non-UTF-8/control/Unicode-line-separator names, missing, extra,
   mode/type/path/content/target drift, replacement-decoded checksum/target aliases, duplicates, hard-linked
-  files/symlinks and special entries fail closed. Control-file modes are fixed outside the checksum cycle.
+  files/symlinks and special entries fail closed. Control files must be single-link, non-executable regular files;
+  their ordinary host permission variants normalize to evaluated `0644`, matching other non-executable files.
   Shebang runner files receive their executable mode before checksumming; no post-admission chmod mutates the tree.
   `capsuleHash` still jointly binds manifest and sums bytes.
 - Schema-1 manifests remain readable only as explicitly labelled `dsh-capsule-files-v1` predecessor evidence; they
   are never upgraded to current complete-tree authority. Fresh admission and stable-build resume require v2; resume
   rechecks the live tree, offline-sums receipt and capsule hash. New identities require a fresh admission/evaluation lineage.
-- Focused capsule-integrity + stable-identity coverage passes 22/22, including added-empty-directory,
+- Focused capsule/manifest/stable-identity coverage passes 5 files / 36 tests, including added-empty-directory,
   executable/special/control-mode, hard-linked symlink, invalid UTF-8 path/checksum, literal symlink-target,
   schema-v1 predecessor and resume negative controls. Unit is 119 files / 925 passed + 1 platform skip. No-key E2E
   is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped, including real Harbor ACP, extract-elf

@@ -308,7 +308,8 @@ capsule/
 组成：目录固定为 `directory:0755:<path>`；regular file 按 Harbor tar 的可观察规范化 mode 记录为
 `file:0644:<path>` 或 `file:0755:<path>` 并 hash 文件字节；symlink 记录为
 `symlink:0755:<path>` 并 hash literal target bytes。所有名称和 checksum control text 必须是严格 UTF-8，
-路径不得含控制字符，所有 file 与 symlink inode 都必须是 single-link。条目集必须与 live tree 完全相等，因此空目录、执行位、类型、路径、
+路径不得含控制字符或 Unicode line/paragraph separator，所有 file 与 symlink inode 都必须是 single-link。
+条目集必须与 live tree 完全相等，因此空目录、执行位、类型、路径、
 文件字节或 symlink target 的任何漂移都拒绝；setuid/setgid/sticky 等特殊 mode 不允许。`capsule.json` 与 `SHA256SUMS` 字节继续通过
 `capsuleHash = H(capsule.json || SHA256SUMS)` 联合绑定。
 

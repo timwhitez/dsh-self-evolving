@@ -214,10 +214,12 @@ describe('capsule integrity manifest (#42)', () => {
     await expect(verifyV011Sums(outDir)).rejects.toThrow(/hard-linked capsule entry/i)
   }, 120_000)
 
-  it('rejects control characters and non-UTF-8 bytes before writing checksum text', async () => {
+  it('rejects line/control characters and non-UTF-8 bytes before writing checksum text', async () => {
     for (const [label, name] of [
       ['carriage-return', 'bad\rname'],
       ['tab', 'bad\tname'],
+      ['unicode-line-separator', 'bad\u2028name'],
+      ['unicode-paragraph-separator', 'bad\u2029name'],
     ] as const) {
       const root = join(scratch!, `unsafe-path-${label}`)
       await mkdir(join(root, 'runtime'), { recursive: true })
@@ -316,11 +318,15 @@ describe('capsule integrity manifest (#42)', () => {
     await expect(verifyV011Sums(outDir)).rejects.toThrow(/special file mode.*cordis\.yml/i)
   }, 120_000)
 
-  it('rejects executable control files whose mode is outside the checksum cycle', async () => {
+  it('normalizes non-executable control modes and rejects executable drift', async () => {
     const catalog = await fixtureCatalog()
     const outDir = join(scratch!, 'control-mode-drift-capsule')
     await buildOnce(catalog, outDir)
     const manifestPath = join(outDir, 'capsule.json')
+    await chmod(manifestPath, 0o600)
+    await expect(verifyV011Sums(outDir)).resolves.toMatch(/^sha256:/)
+    await chmod(manifestPath, 0o666)
+    await expect(verifyV011Sums(outDir)).resolves.toMatch(/^sha256:/)
     await chmod(manifestPath, 0o755)
     await expect(verifyV011Sums(outDir)).rejects.toThrow(/control path.*0644.*capsule\.json/i)
     await chmod(manifestPath, 0o644)

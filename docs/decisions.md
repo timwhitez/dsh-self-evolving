@@ -404,7 +404,7 @@ remain the authority for benchmark trials and are not changed by this ADR.
 contains every directory, regular file and symlink. Directory and symlink modes are their evaluated canonical values
 (`0755` and `0755`); regular files record `0644` or `0755` according to whether any executable bit is present, matching
 the deterministic Harbor tar normalization. File entries hash bytes, symlink entries hash literal target bytes, and
-directory entries hash their typed path. Non-UTF-8 checksum text, non-UTF-8/control-character names,
+directory entries hash their typed path. Non-UTF-8 checksum text, non-UTF-8/control/Unicode-line-separator names,
 hard-linked files/symlinks and special
 permission bits reject. The exact entry set is checked against the live tree. Fresh admission and stable-build resume
 also require v2, bind the verified sums digest, and recompute `H(capsule.json || SHA256SUMS)`.
