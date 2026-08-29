@@ -24,7 +24,9 @@
     "@dsh-self-evolving/candidate-sdk": "workspace:*",
     "@dsh-self-evolving/core": "workspace:*",
     "@dsh-self-evolving/proposer": "workspace:*",
-    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis"
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-llm": "link:../../deepseek-harness/packages/llm/llm",
+    "smol-toml": "^1.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

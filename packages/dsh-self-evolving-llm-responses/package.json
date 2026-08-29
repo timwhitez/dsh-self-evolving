@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Locked DeepSeek official Responses API Cordis adapter for dsh-self-evolving runtimes.",
+  "description": "Locked Unix-socket model gateway client for untrusted dsh-self-evolving runtimes.",
   "license": "Apache-2.0",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",

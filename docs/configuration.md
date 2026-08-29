@@ -21,7 +21,7 @@ Changing an identity, profile or limit requires a new state directory and run ID
 | output ceiling             | 32,768 tokens                           |
 | endpoint                   | `https://api.deepseek.com/v1`           |
 | wire API                   | official Responses                      |
-| credential                 | trusted-host `DEEPSEEK_API_KEY` env     |
+| credential                 | trusted-host broker `DEEPSEEK_API_KEY`  |
 | response storage           | disabled (`store=false`)                |
 | candidate feedback         | frozen `DEV_OBSERVED` baseline failures |
 | sealed access              | forbidden; required count is 0          |
@@ -39,6 +39,18 @@ as soon as the first eligible non-pass is committed, with a hard ceiling of 12 b
 The bearer is read only from `DEEPSEEK_API_KEY` in the trusted host process. Codex `auth.json`, Codex `config.toml`
 and CPA are not part of the default route. `doctor` probes the official `/models` endpoint and fails before a paid
 request if the credential, exact route, model, Docker, Harbor, task material, state permissions or budget is unavailable.
+
+Evaluation uses `gate5-credential-broker-v2`: each `(task, attempt)` receives a distinct host broker and only the
+fixed `/run/dsh-self-evolving/model.sock` Unix socket. The candidate-facing Responses bundle is a gateway client;
+`DEEPSEEK_API_KEY`, `provider.secret`, arbitrary URLs and authorization headers never enter its process. The controller
+sanitizes the Harbor subprocess environment, forces the copied task's agent phase to `no-network`, and records both
+the original and overlay digests. The socket source is protected by a host-private temporary directory; provider
+retry/continuation counts are frozen and output-reserved; the artifact TLS private key is temporary. Signed broker
+evidence must match the DSH session usage before normalization, and the task hashes/network policy are revalidated
+after execution.
+
+Runs created by the retired credential-launcher protocol are historical evidence only. They are not upgraded in
+place and cannot support a current credential-isolation or official benchmark claim; use a fresh run ID for broker-v2.
 
 For the low-consumption effectiveness gate, set a fresh run ID and no-replace receipt path, then run:
 

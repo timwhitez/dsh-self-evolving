@@ -215,13 +215,27 @@ runner 下载、校验、解包并启动 capsule 中的 `dsh-self-evolving-acp`�
 Harbor BaseAgent lifecycle
   -> resolve inline ACP binary distribution
   -> download and verify capsule SHA-256
-  -> launch DSH ACP server with candidate patch
+  -> enter the task agent no-network phase
+  -> launch DSH ACP server with candidate patch and one mounted Unix socket
   -> ACP session/new(cwd)
-  -> ACP prompt(task instruction)
+  -> ACP prompt(task instruction) -> per-trial trusted host model broker
   -> collect ATIF + DSH session evidence
   -> terminate DSH control process
   -> Harbor verifier
 ```
+
+Gate 5 使用 `gate5-credential-broker-v2` lineage。controller 为每个 `(task, attempt)` 启动独立 Harbor
+job 与独立 host-side broker；只有 broker 读取 provider credential。candidate capsule 的
+`@dsh-self-evolving/llm-responses` 是固定 Unix-socket client，不包含 provider transport、credential env
+或 secret-file launcher。broker 固定 provider/endpoint/model/reasoning/max-token，限制连接、请求、请求/响应
+bytes 与 deadline，并把 run/candidate/task/attempt、route、usage 和 gateway receipts 写入 Ed25519 签名证据。
+run-local public key 在 launch 前冻结；它证明 controller 与 candidate 之间的 evidence authority，不替代
+formal run 所需的 out-of-band signer registry。
+
+每个 development task 先复制为内容寻址 overlay，保留原 task digest，并把 top-level/step agent phase
+固定为 `no-network`；冲突的显式 agent network policy 直接拒绝。公开 baseline network 只用于构建环境和
+下载已校验 capsule，candidate 启动后不能直接访问 provider/Internet。这个 overlay 是新的 engineering
+protocol identity，不得把结果冒充未修改 task contract 的 official benchmark score。
 
 项目不实现 Python `BaseAgent`，也不复制 ACP client。若某个本地开发环境不能提供 HTTPS artifact，
 MAY 在独立 spike 中增加一个只上传 capsule 的薄 adapter；在真实需求和 contract test 出现前不创建。

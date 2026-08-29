@@ -12,6 +12,7 @@ import type { ProposalGatewayRoute } from './gateway.js'
 
 interface WorkerRequest {
   route: ProposalGatewayRoute
+  contextWindow: number
   parentDigest: string
   candidateId: string
   width: number
@@ -24,6 +25,8 @@ if (
   request === null ||
   typeof request.parentDigest !== 'string' ||
   typeof request.candidateId !== 'string' ||
+  !Number.isSafeInteger(request.contextWindow) ||
+  request.contextWindow <= 0 ||
   !Number.isSafeInteger(request.width) ||
   request.width <= 0
 ) {
@@ -50,6 +53,7 @@ try {
     new ProposalGatewayAdapter({
       socketPath: '/run/proposer-gateway.sock',
       route: request.route,
+      contextWindow: request.contextWindow,
       ...(request.llmDeadlineMs === undefined ? {} : { defaultDeadlineMs: request.llmDeadlineMs }),
     }),
   )

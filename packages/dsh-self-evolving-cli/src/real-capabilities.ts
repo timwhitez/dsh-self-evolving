@@ -383,6 +383,7 @@ async function realProposal(
       join(mounts.contracts, 'request.json'),
       JSON.stringify({
         route: lockedRoute,
+        contextWindow: config.model.contextWindow,
         llmDeadlineMs: Math.max(60_000, sandboxTimeoutMs - 120_000),
         parentDigest: input.parent.sourceDigest,
         candidateId: input.parent.candidateId,
@@ -710,7 +711,7 @@ export function createRealEvaluationProvider(config: StableDemoConfig, spec: Sta
       )
       if (directory !== null) {
         const rawTerminal = await stat(
-          join(config.stateDir, 'external-evaluator', runId, 'jobs', runId, 'result.json'),
+          join(config.stateDir, 'external-evaluator', runId, 'execution-terminal.json'),
         ).catch(() => null)
         if (rawTerminal?.isFile() === true) {
           return { status: 'terminal' as const, externalJobId: runId }

@@ -195,6 +195,7 @@ async function topology(selectedRoute: ProposalGatewayRoute = route): Promise<{
   const exportManifestDigest = digestV011(canonicalV011(exportManifest))
   const request = {
     route: selectedRoute,
+    contextWindow: 1_048_576,
     proposalId,
     parentDigest,
     parentEntryDigest,

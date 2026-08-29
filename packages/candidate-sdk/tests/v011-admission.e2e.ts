@@ -133,10 +133,11 @@ describe('v0.1.1 generated-plugin admission', () => {
           '- id: deepseek-responses',
           "  name: '@dsh-self-evolving/llm-responses'",
           '  config:',
-          '    apiKeyEnv: SHOULD_NOT_EXIST_IN_PACKED_OVERLAY_PROBE',
+          '    gatewaySocketPath: /run/dsh-self-evolving/model.sock',
           '    reasoningEffort: high',
           '    maxTokens: 1024',
-          '    defaultContextWindow: 1048576',
+          '    contextWindow: 1048576',
+          '    requestDeadlineMs: 1500000',
           '- id: sandbox',
           "  name: '@deepseek-ai/dsh-sandbox-local'",
           '- id: sandbox-policy',
@@ -198,6 +199,9 @@ describe('v0.1.1 generated-plugin admission', () => {
       // The launcher boots runtime/cordis.yml; pin BOTH copies to the
       // admitted identity.
       const bootedOverlay = await readFile(join(outputRoot, 'runtime', 'cordis.yml'), 'utf8')
+      await expect(
+        stat(join(outputRoot, 'runtime', 'credential-launcher.sh')),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       expect(packedOverlay).not.toContain('__DSH_SELF_EVOLVING_RUNTIME_PACKAGE__')
       expect(packedOverlay).not.toContain('__DSH_SELF_EVOLVING_CANDIDATE_ID__')
       expect(packedOverlay).not.toContain('v011-runtime-candidate')

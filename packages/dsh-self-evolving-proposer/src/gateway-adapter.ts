@@ -1,6 +1,11 @@
 /** DSH LLM adapter that delegates only through the proposal Unix gateway. */
 import { createHash } from 'node:crypto'
-import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  LlmAdapter,
+  type GenerateOptions,
+  type LlmResolvedModelInfo,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import {
   ProposalGatewayHandlerFailure,
   requestProposalGateway,
@@ -12,6 +17,8 @@ import type { AdapterFetchAttempt, TrustedAdapterAttemptSource } from './fetch-a
 export interface ProposalGatewayAdapterConfig {
   socketPath: string
   route: ProposalGatewayRoute
+  /** Frozen model context metadata exposed through the DSH model registry. */
+  contextWindow: number
   /**
    * Default per-request wire budget sent as the envelope deadline so the
    * trusted host aborts its provider fetch even if this sandbox client dies
@@ -39,6 +46,24 @@ function wirePayload(options: GenerateOptions): Record<string, unknown> {
 export class ProposalGatewayAdapter extends LlmAdapter {
   constructor(private readonly config: ProposalGatewayAdapterConfig) {
     super()
+    if (!Number.isSafeInteger(config.contextWindow) || config.contextWindow <= 0) {
+      throw new Error('proposal gateway adapter: context window must be a positive integer')
+    }
+  }
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    if (provider !== this.config.route.provider || model !== this.config.route.model) {
+      return Promise.reject(
+        new Error('proposal gateway adapter: model lookup does not match locked route'),
+      )
+    }
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      context: { contextWindow: this.config.contextWindow },
+      defaultMaxTokens: this.config.route.maxTokens,
+    })
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

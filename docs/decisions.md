@@ -397,3 +397,44 @@ provide attributable peak/event evidence.
 because the resource-policy digest is newly bound. Existing run config `codeCommit` freezes the policy implementation;
 changing a policy produces a different digest and requires a new execution lineage. Harbor/TB task-container limits
 remain the authority for benchmark trials and are not changed by this ADR.
+
+## ADR-026 — Isolate evaluation credentials behind one host broker per trial
+
+**Decision:** `gate5-credential-broker-v2` replaces the Gate 5 secret-file launcher. The candidate-facing
+`@dsh-self-evolving/llm-responses` bundle is now only a `ProposalGatewayAdapter` for the fixed
+`/run/dsh-self-evolving/model.sock` path. Candidate capsules contain no credential launcher; the Harbor registry runs
+`dsh-self-evolving-acp` directly. The controller removes credential-shaped variables from the Harbor subprocess,
+creates one Harbor job and one durable host broker for every `(task, attempt)`, and mounts only that broker's Unix
+socket. Each broker locks the official Responses provider, endpoint, model, reasoning and maximum output, applies
+connection/request/byte/deadline bounds, and rejects candidate-supplied transport fields. Its capability socket lives
+under a short, host-private `0700` temporary directory; the `0666` socket inode is never placed directly in a
+host-traversable `/run` or `/tmp` directory. Transport retry and reasoning continuation are frozen in policy and every
+allowed provider attempt is included in the worst-case output reservation.
+
+The controller copies each development task to a content-addressed overlay, records both tree hashes and forces every
+agent phase to `no-network`; a conflicting explicit agent policy rejects before launch. Task setup may still build the
+image and download the hash-pinned capsule. A real Harbor adversarial E2E proves that candidate initialization cannot
+see `DEEPSEEK_API_KEY` or the retired secret path, cannot complete direct external HTTPS, and can complete the DSH
+model call through the mounted Unix socket.
+
+Before launch, run intent schema 2 freezes the ordered per-trial plan, overlay hashes, broker policy and an ephemeral
+Ed25519 public key. After each job the host signs trial identity, policy, gateway receipts and usage. Collection
+requires the signed broker usage to equal the DSH session usage. Only after every job and broker has terminated, all
+signed evidence is durable and an exact credential-byte scan passes may the controller publish
+`execution-terminal.json`. An intent without that marker is an ambiguous paid outcome and is never redispatched.
+Existing summaries are revalidated against intent, marker, raw trial config/result, broker signature and session
+usage before replay. Original and overlay digests plus `no-network` semantics are revalidated both before launch and
+after all jobs. The artifact server's TLS private key remains only in the temporary runtime directory and is deleted;
+it is never part of persisted run evidence.
+
+**Why:** the retired runner mounted `provider.secret`, exported it as `DEEPSEEK_API_KEY`, and loaded evolving candidate
+JavaScript in the same process and network namespace. Read-only file mode and static scanning cannot isolate a secret
+from code running as the same user. A host broker removes the reusable credential and unrestricted provider transport
+from the untrusted process while retaining real DSH Loader/ACP execution and attributable accounting.
+
+**Trust and compatibility:** the run-local signing key establishes controller-over-candidate evidence authority; it
+does not replace the out-of-band signer registry required for formal releases. Historical credential-launcher runs
+remain immutable but are security-invalid for this property and cannot be reinterpreted or migrated. They may not
+support a current Gate 5 credential-isolation, sealed, official-score or release claim. Revalidation requires a fresh
+broker-v2 run ID; the task overlay makes this an engineering protocol unless the official benchmark accepts the same
+network semantics.

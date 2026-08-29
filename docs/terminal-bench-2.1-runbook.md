@@ -107,8 +107,9 @@ datasets:
 Exact task selection must use Harbor's supported dataset/task selectors at the pinned version. Gate 2 must dump
 the resolved trial inventory before launch and compare it to the action intent.
 
-Never interpolate a secret into persisted config. Use Harbor env templating/provider secret injection; archive a
-redacted config plus a non-sensitive equality/fingerprint receipt.
+Never interpolate or inject a provider secret through Harbor. The task agent receives only the fixed Unix socket for
+its per-trial host broker; the Harbor subprocess environment, job YAML, capsule and mounts contain no key or secret
+file. Archive the broker-v2 run intent, task original/overlay hashes, signed broker receipt and redacted job config.
 
 ## 5. Bring-up ladder
 

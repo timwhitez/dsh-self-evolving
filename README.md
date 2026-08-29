@@ -61,7 +61,8 @@ flowchart LR
 ```
 
 - The controller is the only durable writer.
-- Provider credentials stay in the trusted host and never enter the proposal sandbox or candidate.
+- Provider credentials stay in a per-trial trusted host broker and never enter Harbor, the proposal sandbox or a
+  candidate; evaluation candidates receive only a fixed Unix socket while direct HTTPS is disabled.
 - Candidates may change only their declared package; evaluator, scorer, split, route, and safety policy are fixed.
 - Every external action is journaled before launch and reconciled exactly once after restart.
 

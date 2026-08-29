@@ -120,6 +120,17 @@ Cordis Fiber/`node:vm` 只属于 candidate process 内 lifecycle domain，不跨
 - 不挂载 evidence/archive/sealed/controller；
 - process tree/cgroup/network namespace 独立，无 sibling discovery；
 - credential broker 只允许固定 model route，并拒绝任意 URL/model/headers。
+- `gate5-credential-broker-v2` 中 provider key 不得进入 Harbor subprocess env、job YAML、agent env、capsule
+  或 mount；旧 `provider.secret` mount 和 credential launcher 均为禁止项；
+- 每个 `(run, candidate, task, attempt)` 只能连接一个独占 Unix socket；host socket 父目录必须为真实 `0700`
+  目录，不能把 `0666` capability socket 直接放在 `/run`、`/tmp` 等可遍历目录。broker 强制 request/
+  connection/request-bytes/response-bytes/deadline 上限，冻结 transport retry 与 reasoning continuation，并按
+  所有允许的 provider attempt 预留 worst-case output；candidate 不能提供 endpoint、header、billing tag 或
+  credential；
+- development Gate 5 task overlay 必须绑定 original/overlay digest，并将所有 agent phase 固定为
+  `no-network`；controller 必须在 launch 前和所有 job 结束后重新验证 digest 与 network 语义。artifact HTTPS
+  server 的临时 TLS private key 不得写入 run evidence。真实 Harbor 对抗测试必须同时证明环境 key 不存在、
+  旧 secret path 不存在、直接 HTTPS 失败而固定 Unix socket 成功；任一缺失都 fail closed。
 
 Harbor/TB task 的官方 environment resource policy 仍由冻结 benchmark manifest 管理；controller 内的
 proposal、candidate test/build/Loader/packed-overlay 配额不能替代或改写正式 task 配额。
@@ -156,6 +167,12 @@ artifacts，再在 fresh verifier env 注入 tests。
 DNS/IP rebinding、redirect、IPv6、Unix sockets、cloud metadata 和 private ranges 必须由 sandbox provider
 policy 处理。Candidate 不持有通用 provider API key；gateway 按 run/candidate/trial 绑定请求。
 
+Gate 5 development broker protocol 在 task setup 与 agent execution 之间显式切换：setup 可访问内容寻址
+HTTPS capsule；agent phase 为 `no-network`，仅保留 bind-mounted Unix socket。Harbor 的本机控制面流量
+不等同 provider egress；验收以 agent 内完成真实外部 HTTPS response 失败为准，不能只把透明代理接受
+TCP connection 误判为外网可达。正式 benchmark 若不能在不改变官方语义的前提下提供同等隔离，必须记录
+协议差异并停止 official claim。
+
 ## 7. Model and budget firewall
 
 Trusted gateway MUST：
@@ -166,6 +183,8 @@ Trusted gateway MUST：
 - 达到 soft threshold 发 warning，hard threshold 原子拒绝新 request；
 - 记录 effective request metadata 和 usage receipt，redact content/secrets；
 - 禁止 candidate 调用其他 model、embedding、web proxy 或 credential endpoint。
+- 每 trial 用预启动 intent 中冻结的 Ed25519 key 签名 identity/policy/route/receipt/usage；collector 必须
+  重验签名、route receipt 终态、request 数和 DSH session usage。run-local key 不是 formal 外部授权。
 
 辅助调用（compaction、subagent、title）同样经过 gateway 并计入 harness cost。
 

@@ -25,7 +25,16 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Group from '@deepseek-ai/cordis-plugin-group'
-import { runProposalTurn, parseAndValidate, parentDigestOf, type ModelRoute } from '../src/index.js'
+import {
+  TrustedResponsesAdapter,
+  createProposalGatewayLlmHandler,
+  parentDigestOf,
+  parseAndValidate,
+  runProposalTurn,
+  startProposalGateway,
+  type ModelRoute,
+  type ProposalGatewayRoute,
+} from '../src/index.js'
 import { declareFiles } from '@dsh-self-evolving/candidate-sdk'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -39,6 +48,13 @@ const ROUTE: ModelRoute = {
   maxTokens: 32_768,
 }
 const API_KEY = process.env['DEEPSEEK_API_KEY'] ?? ''
+const GATEWAY_ROUTE: ProposalGatewayRoute = {
+  provider: ROUTE.provider,
+  endpoint: 'https://api.deepseek.com/v1',
+  model: ROUTE.model,
+  reasoningEffort: 'high',
+  maxTokens: ROUTE.maxTokens,
+}
 
 let scratch: string | undefined
 
@@ -119,10 +135,11 @@ async function bootModelComposition(): Promise<Context> {
       '- id: llm-responses',
       "  name: '@dsh-self-evolving/llm-responses'",
       '  config:',
-      '    apiKeyEnv: DEEPSEEK_API_KEY',
+      '    gatewaySocketPath: /run/dsh-self-evolving/model.sock',
       '    reasoningEffort: high',
       '    contextWindow: 1048576',
       '    maxTokens: 32768',
+      '    requestDeadlineMs: 1500000',
       '- id: agent-default-model',
       "  name: '@deepseek-ai/dsh-agent-default-model'",
       '  config:',
@@ -173,8 +190,23 @@ describe.skipIf(!API_KEY)('Gate 4 — real-model proposal (deepseek-v4-flash)', 
     'generates >=1 nontrivial admitted child from the baseline parent + synthetic evidence',
     MODEL_TIMEOUT,
     async () => {
-      const ctx = await bootModelComposition()
+      const trusted = new TrustedResponsesAdapter({
+        route: GATEWAY_ROUTE,
+        expectedResponseModel: GATEWAY_ROUTE.model,
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        contextWindow: 1_048_576,
+        requestMaxRetries: 12,
+        reasoningContinuationMaxTurns: 1,
+      })
+      const gateway = await startProposalGateway({
+        socketPath: '/run/dsh-self-evolving/model.sock',
+        route: GATEWAY_ROUTE,
+        stateDir: join(scratch!, 'gateway-state'),
+        handle: createProposalGatewayLlmHandler(trusted, GATEWAY_ROUTE),
+      })
+      let ctx: Context | undefined
       try {
+        ctx = await bootModelComposition()
         // Parent = the baseline candidate source. Compute its canonical digest.
         const parentDigest = await parentDigestOf(
           declareFiles(baselineRoot, ['src/index.ts', 'package.json', 'candidate.json']),
@@ -228,7 +260,8 @@ export function apply(ctx, config) {
         expect(child.mechanismTests.length).toBeGreaterThan(0)
         expect(child.preservationTests.length).toBeGreaterThan(0)
       } finally {
-        await ctx.fiber.dispose()
+        if (ctx !== undefined) await ctx.fiber.dispose()
+        await gateway.close()
       }
     },
   )

@@ -1,7 +1,34 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_ACCEPTED`; `GATE_2_ACCEPTED`; `GATE_3_ACCEPTED`; `GATE_4_ACCEPTED`; `GATE_5_ACCEPTED`; `GATE_6_ACCEPTED`; `GATE_7_ACCEPTED`; `V011_A_ACCEPTED`–`V011_E_ACCEPTED`; `V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
-**更新时间：2026-08-28（Asia/Tokyo）**
+**当前权威状态：`GATE_0_ACCEPTED`–`GATE_4_ACCEPTED`; `GATE_5_V1_SECURITY_INVALID`; `GATE_5_BROKER_V2_IMPLEMENTED_OFFICIAL_REVALIDATION_PENDING`; `GATE_6`/`GATE_7`/`V011_A`–`V011_E` 为历史 predecessor evidence；`V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`（不证明 Gate 5 task credential isolation）; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**更新时间：2026-08-29（Asia/Tokyo）**
+
+## 2026-08-29 Gate 5 per-trial credential broker successor
+
+- Issue #116 is confirmed: the retired Gate 5 runner mounted `provider.secret`, exported `DEEPSEEK_API_KEY`, and
+  loaded evolving candidate JavaScript in that same process. File permissions and static scanning did not form a
+  secret boundary. All evidence from that credential-launcher lineage remains immutable but is security-invalid for
+  a current Gate 5, official-score, sealed or release claim.
+- `gate5-credential-broker-v2` removes the launcher, secret mount and agent credential env. The candidate Responses
+  bundle is now a fixed Unix-socket client. Each `(task, attempt)` gets one Harbor job and one host broker with a
+  locked official route, durable idempotency store, connection/request/byte/deadline limits and Ed25519-signed
+  identity/receipt/usage evidence. The socket source is contained by a host-private temporary directory; provider
+  retry/continuation parameters are frozen into exact worst-case output reservations; temporary artifact TLS private
+  keys never enter run evidence.
+- Run intent schema 2 freezes candidate/capsule, ordered trials, original/overlay task hashes, broker policy and public
+  signing key before launch. Development task overlays force every agent phase to `no-network`; conflicting policies
+  reject and are revalidated after all jobs. Only a complete signed broker matrix, exact DSH usage reconciliation,
+  overlay revalidation and credential-byte scan can publish `execution-terminal.json`. Intent without that marker is
+  ambiguous and never redispatched.
+- A real Harbor/Docker adversarial E2E proves candidate initialization sees neither the env key nor retired secret
+  file, cannot complete direct external HTTPS, and successfully calls the fake trusted Responses adapter through the
+  mounted Unix socket. The signed usage receipt verifies and matches the model call. Current local gates pass format,
+  docs, lint, typecheck, provenance, upstream-clean and byte-equality checks; unit is 120 files / 920 passed + 1
+  platform skip; no-key E2E is 18 files passed + 2 credential-gated files skipped, 45 passed + 4 skipped. The
+  provider-configurable continuation E2E also passed against the user-authorized Responses endpoint. Hosted CI,
+  independent exact-head review and merge are still required.
+- No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
+  improvement, promotion, sealed or release claim is made.
 
 ## 2026-08-28 current-main gate repair
 

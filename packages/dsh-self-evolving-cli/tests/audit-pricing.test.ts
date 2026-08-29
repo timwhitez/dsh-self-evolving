@@ -200,4 +200,20 @@ describe('real evaluator provider pricing mapping (issue #223)', () => {
     const observation = await provider.collect(runId)
     expect(observation.pricing).toEqual({ state: 'priced' })
   })
+
+  it('recognizes only the broker protocol terminal marker for crash recovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-provider-terminal-'))
+    roots.push(root)
+    const cfg = config(root)
+    const provider = createRealEvaluationProvider(cfg, spec('baseline'))
+    const dir = join(cfg.stateDir, 'external-evaluator', runId)
+    await mkdir(join(dir, 'jobs', runId), { recursive: true })
+    await writeFile(join(dir, 'jobs', runId, 'result.json'), '{}\n')
+    await expect(provider.inspect()).rejects.toThrow(/ambiguous incomplete prior external job/)
+    await writeFile(join(dir, 'execution-terminal.json'), '{}\n')
+    await expect(provider.inspect()).resolves.toEqual({
+      status: 'terminal',
+      externalJobId: runId,
+    })
+  })
 })
