@@ -1,10 +1,14 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   assertV011AdmissionResourceReceipt,
+  CAPSULE_TREE_FORMAT,
   digestV011,
   isValidCandidateId,
+  validateManifest,
   validateV011,
+  verifyCapsuleTreeManifest,
 } from '@dsh-self-evolving/candidate-sdk'
 import type { BuiltCandidate } from './engine.js'
 
@@ -41,24 +45,27 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
   if (recordBytes === null) return null
 
   const built = JSON.parse(recordBytes) as Partial<BuiltCandidate>
-  const [admissionBytes, manifestBytes, resourceBytes] = await Promise.all([
+  const [admissionBytes, manifestBytes, resourceBytes, sumsBytes] = await Promise.all([
     readFile(join(root, 'admission-receipt.json'), 'utf8'),
-    readFile(join(root, 'capsule', 'capsule.json'), 'utf8'),
+    readFile(join(root, 'capsule', 'capsule.json')),
     readFile(join(root, 'resource-receipt.json'), 'utf8'),
+    readFile(join(root, 'capsule', 'SHA256SUMS')),
   ])
   const admission = JSON.parse(admissionBytes) as {
     candidateDigest?: unknown
     buildCandidateId?: unknown
     capsuleDigest?: unknown
     resourceReceiptDigest?: unknown
+    stageReceipts?: { offlineCapsule?: unknown }
     admitted?: unknown
   }
   const resource = JSON.parse(resourceBytes) as { candidateDigest?: unknown }
-  const manifest = JSON.parse(manifestBytes) as {
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
     candidateId?: unknown
     candidate?: { buildCandidateId?: unknown }
   }
   const admissionValidation = await validateV011('admission-receipt', admission)
+  const capsuleSchema = await validateManifest('capsule', manifest)
   let resourceValid = false
   if (typeof built.candidateId === 'string' && DIGEST.test(built.candidateId)) {
     try {
@@ -71,11 +78,17 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
 
   const expectedSourceRoot = resolve(root, 'tree')
   const expectedCapsuleRoot = resolve(root, 'capsule')
+  const liveTree = await verifyCapsuleTreeManifest(expectedCapsuleRoot).catch(() => null)
+  const liveCapsuleDigest = `sha256:${createHash('sha256')
+    .update(manifestBytes)
+    .update(sumsBytes)
+    .digest('hex')}`
   const matches =
     typeof built.candidateId === 'string' &&
     DIGEST.test(built.candidateId) &&
     resourceValid &&
     admissionValidation.valid &&
+    capsuleSchema.valid &&
     typeof admission.resourceReceiptDigest === 'string' &&
     admission.resourceReceiptDigest === digestV011(resource) &&
     resource.candidateDigest === built.candidateId &&
@@ -86,6 +99,9 @@ export async function readV011StableBuild(root: string): Promise<BuiltCandidate 
     isValidCandidateId(admission.buildCandidateId) &&
     manifest.candidateId === built.candidateId &&
     manifest.candidate?.buildCandidateId === admission.buildCandidateId &&
+    liveTree?.format === CAPSULE_TREE_FORMAT &&
+    admission.stageReceipts?.offlineCapsule === liveTree.digest &&
+    admission.capsuleDigest === liveCapsuleDigest &&
     built.capsuleDigest === admission.capsuleDigest &&
     built.buildManifestDigest === digestV011(admission) &&
     typeof built.sourceRoot === 'string' &&

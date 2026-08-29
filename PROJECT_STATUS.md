@@ -1,6 +1,6 @@
 # Project status
 
-**当前权威状态：`GATE_0_ACCEPTED`–`GATE_4_ACCEPTED`; `GATE_5_V1_SECURITY_INVALID`; `GATE_5_BROKER_V2_IMPLEMENTED_OFFICIAL_REVALIDATION_PENDING`; `GATE_6`/`GATE_7`/`V011_A`–`V011_E` 为历史 predecessor evidence；`V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`（不证明 Gate 5 task credential isolation）; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
+**当前权威状态：`GATE_0_ACCEPTED`; `GATE_1_V1_CAPSULE_INTEGRITY_INVALID`; `GATE_1_TREE_V2_ACCEPTED`; `GATE_2`–`GATE_4` 为 predecessor evidence；`GATE_5_V1_SECURITY_INVALID`; `GATE_5_BROKER_V2_IMPLEMENTED_OFFICIAL_REVALIDATION_PENDING`; `GATE_6`/`GATE_7`/`V011_A`–`V011_E` 为 predecessor evidence；`V020_PROVIDER_ACCEPTED`; `V020_EFFECTIVENESS_ACCEPTED`; `V020_RELEASE_ACCEPTED`（不证明 tree-v2 lineage 或 Gate 5 task credential isolation）; `GATE_8_BENCHMARK_PROFILES_OPTIONAL_NOT_RUN`**
 **更新时间：2026-08-29（Asia/Tokyo）**
 
 ## 2026-08-29 Gate 5 per-trial credential broker successor
@@ -25,15 +25,15 @@
   Evaluator inspect/collect always replays broker-v2 and raw normalization; schema-1 summaries, forged markers, or
   status/reward/cost drift reject rather than enter the journal.
 - The stable evaluator now passes the plan's exact candidate capsule digest to the runner. Source builds must
-  reproduce it; prebuilt capsules must match their complete live `SHA256SUMS`, manifest and planned digest, are copied
-  into a host-private one-shot snapshot, and are checked again before and after packaging. Intent and reconstructed
-  summary bind that candidate capsule digest separately from the generated ACP archive SHA-256, preventing mutable
-  capsule paths from executing changed bytes under an admitted candidate identity.
+  reproduce it; prebuilt capsules must match their complete live `dsh-capsule-tree-v2`, full schema-2 manifest and
+  planned digest, are copied into a host-private one-shot snapshot, and are checked again before and after packaging.
+  Intent and reconstructed summary bind that candidate capsule digest separately from the generated ACP archive
+  SHA-256, preventing mutable capsule paths from executing changed bytes under an admitted candidate identity.
 - A real Harbor/Docker adversarial E2E proves candidate initialization sees neither the env key nor retired secret
   file, cannot complete direct external HTTPS, and successfully calls the fake trusted Responses adapter through the
   mounted Unix socket. The signed usage receipt verifies and matches the model call. After the capsule-snapshot
   repair, format, docs, lint, typecheck, provenance, upstream-clean, byte-equality and release-readiness pass; unit is
-  120 files / 925 passed + 1 platform skip. No-key E2E is 18 files passed + 2 credential-gated files skipped, 45
+  120 files / 940 passed + 1 platform skip. No-key E2E is 18 files passed + 2 credential-gated files skipped, 45
   passed + 4 skipped, including the real Harbor adversarial test. The previous head's provider-configurable
   continuation E2E passed against the user-authorized Responses endpoint. The changed head still requires a commit,
   hosted CI, independent exact-head review and merge.
@@ -46,8 +46,37 @@
   bounded repro changed prebuilt `runtime/cordis.yml` without changing its stale checksums: the generated archive
   changed while attribution retained the planned candidate ID. The current private-snapshot/capsule-digest repair and
   all local gates pass, but it still requires a new commit, exact-head hosted CI and a fresh independent approval.
+- Independent review of head `9473bd2` confirmed the snapshot repair but proved predecessor checksums omitted empty
+  directories and evaluated modes. Issue #42 was reopened and closed through PR #248; current Gate 5 prebuilt
+  authority now rejects schema-1 and digest-self-consistent invalid schema-2 capsules and consumes only the merged
+  tree-v2 verifier. The integrated head still requires commit, exact-head hosted CI and fresh independent approval.
 - No fresh official DeepSeek broker-v2 run has been performed, so `GATE_5_ACCEPTED` is not restored and no benchmark,
   improvement, promotion, sealed or release claim is made.
+
+## 2026-08-29 Issue #42 complete-tree successor
+
+- Issue #42 was correctly reopened after independent PR #247 review showed that its original path/type/mode contract
+  was only partially closed. The schema-1 checksum set bound file bytes and symlink targets but omitted empty
+  directories and regular-file executable mode. Either changed the deterministic Harbor archive and Loader-visible
+  state without changing the planned capsule digest.
+- Capsule manifest schema 2 now freezes checksum format `dsh-capsule-tree-v2`. Its exact typed entry set records every
+  directory as normalized `0755`, every regular file as evaluated `0644` or `0755` plus content hash, and every
+  symlink as archive-normalized `0755` plus literal-target hash. Non-UTF-8/control/Unicode-line-separator names,
+  missing, extra, mode/type/path/content/target drift, replacement-decoded checksum/target aliases, duplicates, hard-linked
+  files/symlinks and special entries fail closed. Control files must be single-link, non-executable regular files;
+  their ordinary host permission variants normalize to evaluated `0644`, matching other non-executable files.
+  Shebang runner files receive their executable mode before checksumming; no post-admission chmod mutates the tree.
+  `capsuleHash` still jointly binds manifest and sums bytes.
+- Schema-1 manifests remain readable only as explicitly labelled `dsh-capsule-files-v1` predecessor evidence; they
+  are never upgraded to current complete-tree authority. Fresh admission and stable-build resume require v2; resume
+  rechecks the live tree, offline-sums receipt and capsule hash. New identities require a fresh admission/evaluation lineage.
+- Focused capsule/manifest/stable-identity coverage passes 5 files / 36 tests, including added-empty-directory,
+  executable/special/control-mode, hard-linked symlink, invalid UTF-8 path/checksum, literal symlink-target,
+  schema-v1 predecessor and resume negative controls. Unit is 119 files / 925 passed + 1 platform skip. No-key E2E
+  is 17 files passed + 2 credential-gated skipped, 44 passed + 4 skipped, including real Harbor ACP, extract-elf
+  smoke, offline Loader, V011 admission and crash recovery. Format, docs, lint, typecheck, provenance,
+  upstream-clean, byte-equality and release-readiness passed. Exact head `4966bc4` passed hosted CI run
+  `33237607164`, received independent PR/Issue approval, and merged via PR #248 as `e886d1e`; Issue #42 is closed.
 
 ## 2026-08-28 current-main gate repair
 
@@ -736,8 +765,10 @@ main 且带回归测试的修复（各 PR 见对应 squash commit）；未列出
   builder 锁原子发布并可安全回收空锁。
 - #40 / #119：quiescence 门从构造器名成员比较改为每类型计数 delta，可检同型泄漏；
   afterEach 不再吞 dispose 失败。
-- #41 / #42：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed；
-  SHA256SUMS 覆盖 symlink 目标并要求条目集严格相等（缺失/多余/硬链接/特殊文件全拒）。
+- #41：capsule 于私有 staging 建成后原子 rename 发布，输出目录已存在即 fail-closed。
+- #42（2026-08-29 重开后关闭）：predecessor SHA256SUMS 遗漏 empty directory 与 executable mode；后续独立
+  审查又发现非 UTF-8 path alias、hard-linked symlink、symlink tar-mode、Unicode line separator 与 resume
+  authority 缺口。tree-v2 successor 经 exact-head CI 与独立批准后由 PR #248 合并为 `e886d1e`。
 - #54：changed-line 预算改用 LCS 顺序感知编辑距离，重排不再零成本；超界文件 fail closed。
 - #55：proposal+gateway-receipts 以 manifest 提交点原子成束发布；resume 仅经 manifest 加载，
   未提交目录视为未完成 publication；每次加载重新校验 sha256 绑定。（#45 的崩溃窗口部分

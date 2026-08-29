@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { cp, lstat, readFile, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { verifyV011CapsuleSums } from '@dsh-self-evolving/candidate-sdk'
+import {
+  CAPSULE_TREE_FORMAT,
+  validateManifest,
+  verifyCapsuleTreeManifest,
+} from '@dsh-self-evolving/candidate-sdk'
 
 const CANDIDATE_ID = /^(?:c_[a-z2-7]{26}|sha256:[0-9a-f]{64})$/
 const DIGEST = /^sha256:[0-9a-f]{64}$/
@@ -21,9 +25,9 @@ async function requiredRegularFile(path: string, label: string) {
 
 /**
  * Revalidate a complete prebuilt capsule against the immutable identity in the
- * controller's evaluation plan. The SHA256SUMS verifier compares the exact
- * live entry set, binds symlink targets, and rejects hard links plus
- * special/unlisted entries.
+ * controller's evaluation plan. The current schema-2/tree-v2 verifier compares
+ * the exact live entry set, binds evaluated modes and symlink-target bytes,
+ * and rejects predecessor schemas, hard links plus special/unlisted entries.
  */
 export async function assertGate5PrebuiltCapsule(input: {
   capsuleRoot: string
@@ -56,28 +60,35 @@ export async function assertGate5PrebuiltCapsule(input: {
     throw new Error('gate5 capsule: credential-launcher capsules belong to the retired protocol')
   }
 
-  const [manifestBytes, sumsBytes, verifiedSumsDigest] = await Promise.all([
+  const [manifestBytes, sumsBytes, verifiedTree] = await Promise.all([
     readFile(manifestPath),
     readFile(sumsPath),
-    verifyV011CapsuleSums(input.capsuleRoot),
+    verifyCapsuleTreeManifest(input.capsuleRoot),
   ])
   let manifest: {
     schemaVersion?: unknown
     candidateId?: unknown
-    sha256sums?: { ref?: unknown; hash?: unknown }
+    sha256sums?: { ref?: unknown; hash?: unknown; format?: unknown }
   }
   try {
     manifest = JSON.parse(manifestBytes.toString('utf8')) as typeof manifest
   } catch (error) {
     throw new Error('gate5 capsule: capsule manifest is invalid JSON', { cause: error })
   }
+  if (verifiedTree.format !== CAPSULE_TREE_FORMAT) {
+    throw new Error(`gate5 capsule: current evaluation requires ${CAPSULE_TREE_FORMAT}`)
+  }
+  if (!(await validateManifest('capsule', manifest)).valid) {
+    throw new Error('gate5 capsule: current capsule manifest schema is invalid')
+  }
   const sumsHash = createHash('sha256').update(sumsBytes).digest('hex')
   if (
-    manifest.schemaVersion !== 1 ||
+    manifest.schemaVersion !== 2 ||
     manifest.candidateId !== input.expectedCandidateId ||
     manifest.sha256sums?.ref !== 'SHA256SUMS' ||
     manifest.sha256sums.hash !== sumsHash ||
-    verifiedSumsDigest !== `sha256:${sumsHash}`
+    manifest.sha256sums.format !== CAPSULE_TREE_FORMAT ||
+    verifiedTree.digest !== `sha256:${sumsHash}`
   ) {
     throw new Error('gate5 capsule: manifest, sums or candidate identity is inconsistent')
   }

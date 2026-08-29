@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +10,7 @@ import {
   CANDIDATE_TEST_RESOURCE_POLICY_V1,
   digestV011,
   resourcePolicyDigest,
+  writeCapsuleTreeManifest,
   type ResourceDomainReceipt,
   type ResourcePolicyV1,
 } from '@dsh-self-evolving/candidate-sdk'
@@ -112,14 +114,54 @@ async function stableFixture(
     manifestCandidateId?: string
     omitBuildCandidateId?: boolean
     omitPackedOverlayBoot?: boolean
+    legacyCapsule?: boolean
+    invalidCapsuleSchema?: boolean
   } = {},
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-v011-identity-'))
   roots.push(root)
   await mkdir(join(root, 'capsule'), { recursive: true })
+  await mkdir(join(root, 'capsule', 'runtime'), { recursive: true })
   await mkdir(join(root, 'tree'), { recursive: true })
   const candidateId = overrides.builtCandidateId ?? PARENT
   const resource = validResourceReceipt()
+  const runtimeBytes = 'stable runtime\n'
+  await writeFile(join(root, 'capsule', 'runtime', 'fixture.txt'), runtimeBytes)
+  let sumsHash: string
+  if (overrides.legacyCapsule === true) {
+    const sums = `${createHash('sha256').update(runtimeBytes).digest('hex')}  runtime/fixture.txt\n`
+    sumsHash = createHash('sha256').update(sums).digest('hex')
+    await writeFile(join(root, 'capsule', 'SHA256SUMS'), sums)
+  } else {
+    sumsHash = (
+      await writeCapsuleTreeManifest(join(root, 'capsule'), join(root, 'capsule', 'SHA256SUMS'))
+    ).hash
+  }
+  const manifestBytes =
+    JSON.stringify({
+      schemaVersion: overrides.legacyCapsule === true ? 1 : 2,
+      candidateId: overrides.manifestCandidateId ?? PARENT,
+      runtime: { kind: 'pinned-closure', ref: 'runtime/package-closure.json' },
+      candidate: {
+        bundleHash: 'a'.repeat(64),
+        ...(overrides.omitBuildCandidateId ? {} : { buildCandidateId: BUILD_ID }),
+      },
+      runner: { overlay: 'runner/cordis.patch.yml' },
+      provenance: { ref: 'provenance.json' },
+      sbom: { ref: 'sbom.spdx.json' },
+      sha256sums: {
+        ref: 'SHA256SUMS',
+        hash: sumsHash,
+        ...(overrides.legacyCapsule === true ? {} : { format: 'dsh-capsule-tree-v2' }),
+      },
+      ...(overrides.invalidCapsuleSchema === true ? { unexpected: true } : {}),
+    }) + '\n'
+  await writeFile(join(root, 'capsule', 'capsule.json'), manifestBytes)
+  const sumsBytes = await readFile(join(root, 'capsule', 'SHA256SUMS'))
+  const capsuleDigest = `sha256:${createHash('sha256')
+    .update(manifestBytes)
+    .update(sumsBytes)
+    .digest('hex')}`
   const admission = {
     schemaVersion: 1,
     protocol: 'dsh-self-evolving-candidate-tree-v2',
@@ -138,20 +180,13 @@ async function stableFixture(
       loaderPropose: `sha256:${'d'.repeat(64)}`,
       ...(overrides.omitPackedOverlayBoot ? {} : { packedOverlayBoot: `sha256:${'e'.repeat(64)}` }),
       fixedReplay: `sha256:${'f'.repeat(64)}`,
-      offlineCapsule: `sha256:${'0'.repeat(64)}`,
+      offlineCapsule: `sha256:${sumsHash}`,
     },
-    capsuleDigest: `sha256:${'3'.repeat(64)}`,
+    capsuleDigest,
     admitted: true,
   }
   await writeFile(join(root, 'admission-receipt.json'), JSON.stringify(admission) + '\n')
   await writeFile(join(root, 'resource-receipt.json'), JSON.stringify(resource) + '\n')
-  await writeFile(
-    join(root, 'capsule', 'capsule.json'),
-    JSON.stringify({
-      candidateId: overrides.manifestCandidateId ?? PARENT,
-      candidate: overrides.omitBuildCandidateId ? {} : { buildCandidateId: BUILD_ID },
-    }) + '\n',
-  )
   await writeFile(
     join(root, 'stable-build.json'),
     JSON.stringify({
@@ -181,6 +216,18 @@ describe('v0.1.1 canonical candidate identity (issue #198)', () => {
       candidateId: PARENT,
       sourceDigest: PARENT,
     })
+  })
+
+  it('rejects live capsule drift and a self-consistent legacy capsule on resume', async () => {
+    const drifted = await stableFixture()
+    await writeFile(join(drifted, 'capsule', 'runtime', 'fixture.txt'), 'tampered runtime\n')
+    await expect(readV011StableBuild(drifted)).rejects.toThrow(/identity chain mismatch/)
+
+    const legacy = await stableFixture({ legacyCapsule: true })
+    await expect(readV011StableBuild(legacy)).rejects.toThrow(/identity chain mismatch/)
+
+    const invalidSchema = await stableFixture({ invalidCapsuleSchema: true })
+    await expect(readV011StableBuild(invalidSchema)).rejects.toThrow(/identity chain mismatch/)
   })
 
   it('rejects both a mismatched capsule and a legacy baseline identity', async () => {

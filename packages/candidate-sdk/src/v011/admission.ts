@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { lstat, readFile, readdir, readlink, realpath } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { readFile, realpath } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { Readable, Transform, Writable, type TransformCallback } from 'node:stream'
 import {
   ClientSideConnection,
@@ -19,6 +19,7 @@ import {
   type BuildReceipt,
 } from '../builder-sandbox.js'
 import { packCapsule, type CapsuleOutput, type RuntimeClosureInput } from '../capsule.js'
+import { CAPSULE_TREE_FORMAT, verifyCapsuleTreeManifest } from '../capsule-tree.js'
 import {
   assertCompletedResourceDomainReceipt,
   CANDIDATE_BUILD_RESOURCE_POLICY_V1,
@@ -572,74 +573,18 @@ async function runCandidateTests(
 /**
  * Verify the capsule integrity manifest against the complete live tree.
  *
- * Every entry must be listed exactly once and every listed entry must exist:
- * regular files by content hash, symlinks by their literal target string,
- * and any missing, extra, duplicated, hard-linked or special entry fails
- * closed (issue #42). `SHA256SUMS` and `capsule.json` are covered by the
- * capsuleHash binding and excluded from the listing.
+ * Current schema-v2 capsules bind each normalized directory, file mode/file
+ * content and symlink target. Schema-v1 byte/symlink manifests remain
+ * verifiable as historical evidence but are never upgraded to v2 authority.
+ * Any missing, extra, duplicated, hard-linked or special entry fails closed.
+ * `SHA256SUMS` and `capsule.json` are jointly covered by capsuleHash.
  */
 async function verifySums(capsuleRoot: string): Promise<`sha256:${string}`> {
-  const sums = await readFile(join(capsuleRoot, 'SHA256SUMS'), 'utf8')
-  const listed = new Map<string, string>()
-  for (const line of sums.trim().split('\n')) {
-    const match = /^([0-9a-f]{64}) {2}(symlink:)?(.+)$/.exec(line)
-    if (match === null) throw new Error('v0.1.1 admission: malformed capsule sums')
-    const key = `${match[2] ?? ''}${match[3]!}`
-    if (listed.has(key)) throw new Error(`v0.1.1 admission: duplicate capsule entry ${key}`)
-    listed.set(key, match[1]!)
+  const verified = await verifyCapsuleTreeManifest(capsuleRoot)
+  if (verified.format !== CAPSULE_TREE_FORMAT) {
+    throw new Error(`v0.1.1 admission: current admission requires ${CAPSULE_TREE_FORMAT}`)
   }
-
-  const walked = new Map<string, string>()
-  async function walk(dir: string): Promise<void> {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const abs = join(dir, entry.name)
-      const rel = relative(capsuleRoot, abs)
-      if (rel === 'SHA256SUMS' || rel === 'capsule.json') continue
-      if (entry.isDirectory()) {
-        await walk(abs)
-        continue
-      }
-      if (entry.isSymbolicLink()) {
-        walked.set(
-          `symlink:${rel}`,
-          createHash('sha256')
-            .update(await readlink(abs))
-            .digest('hex'),
-        )
-        continue
-      }
-      if (!entry.isFile()) {
-        throw new Error(`v0.1.1 admission: special capsule entry ${rel}`)
-      }
-      const info = await lstat(abs)
-      if (info.nlink > 1) {
-        throw new Error(`v0.1.1 admission: hard-linked capsule entry ${rel}`)
-      }
-      walked.set(
-        rel,
-        createHash('sha256')
-          .update(await readFile(abs))
-          .digest('hex'),
-      )
-    }
-  }
-  await walk(capsuleRoot)
-
-  for (const [key, hash] of walked) {
-    const expected = listed.get(key)
-    if (expected === undefined) {
-      throw new Error(`v0.1.1 admission: unlisted capsule entry ${key}`)
-    }
-    if (expected !== hash) {
-      throw new Error(`v0.1.1 admission: capsule checksum mismatch ${key}`)
-    }
-  }
-  for (const key of listed.keys()) {
-    if (!walked.has(key)) {
-      throw new Error(`v0.1.1 admission: capsule lists a missing entry ${key}`)
-    }
-  }
-  return digestV011(sums)
+  return verified.digest
 }
 
 export { verifySums as verifyV011CapsuleSums }

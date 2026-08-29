@@ -398,7 +398,26 @@ because the resource-policy digest is newly bound. Existing run config `codeComm
 changing a policy produces a different digest and requires a new execution lineage. Harbor/TB task-container limits
 remain the authority for benchmark trials and are not changed by this ADR.
 
-## ADR-026 — Isolate evaluation credentials behind one host broker per trial
+## ADR-026 — Version capsule integrity as a typed evaluated tree
+
+**Decision:** current capsules use manifest schema 2 and checksum format `dsh-capsule-tree-v2`. The checksum set
+contains every directory, regular file and symlink. Directory and symlink modes are their evaluated canonical values
+(`0755` and `0755`); regular files record `0644` or `0755` according to whether any executable bit is present, matching
+the deterministic Harbor tar normalization. File entries hash bytes, symlink entries hash literal target bytes, and
+directory entries hash their typed path. Non-UTF-8 checksum text, non-UTF-8/control/Unicode-line-separator names,
+hard-linked files/symlinks and special permission bits reject. The exact entry set is checked against the live tree.
+Fresh admission and stable-build resume also require v2, bind the verified sums digest, and recompute
+`H(capsule.json || SHA256SUMS)`.
+
+**Why:** the predecessor file/symlink list did not represent empty directories or executable mode. Both could change
+the evaluated archive and Loader-visible state without changing the planned capsule digest. A private snapshot can
+remove packing races but cannot repair an identity that never committed those dimensions.
+
+**Compatibility:** schema-1 manifests remain readable only as explicitly labelled predecessor evidence. They are not
+upgraded or accepted as current complete-tree authority. New identities intentionally change and require a fresh
+admission/evaluation lineage; historical bytes remain immutable.
+
+## ADR-027 — Isolate evaluation credentials behind one host broker per trial
 
 **Decision:** `gate5-credential-broker-v2` replaces the Gate 5 secret-file launcher. The candidate-facing
 `@dsh-self-evolving/llm-responses` bundle is now only a `ProposalGatewayAdapter` for the fixed
@@ -431,9 +450,10 @@ it is never part of persisted run evidence.
 
 The evaluation plan's candidate capsule digest is also an execution authority, not descriptive metadata. A source
 candidate must reproduce its planned build capsule digest. A prebuilt V0.1.1 capsule is checked against its complete
-live `SHA256SUMS`, manifest identity and planned capsule digest, copied into a host-private one-shot snapshot, checked
-again on both sides, and packed only from that snapshot. The snapshot is rechecked after packing. Run intent and the
-reconstructed summary bind both the planned capsule digest and the resulting Harbor artifact SHA-256; drift at the
+live `dsh-capsule-tree-v2`, full schema-2 manifest identity and planned capsule digest, copied into a host-private
+one-shot snapshot, checked again on both sides, and packed only from that snapshot. The snapshot is rechecked after
+packing. Run intent and the reconstructed summary bind both the planned capsule digest and the resulting Harbor
+artifact SHA-256; drift at the
 admission path therefore fails closed instead of inheriting the candidate's score identity.
 
 Terminal publication itself consumes the signed evidence and exact DSH session usage, so policy-violation,

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { writeCapsuleTreeManifest } from '@dsh-self-evolving/candidate-sdk'
 import { ProposalGatewayAdapter, type ProposalGatewayRoute } from '@dsh-self-evolving/proposer'
 import { brokerPolicyForReservation } from '../../../scripts/run-gate5-real-calibration.js'
 import { snapshotGate5PrebuiltCapsule } from '../src/gate5-capsule.js'
@@ -55,32 +56,89 @@ async function writePrebuiltCapsuleFixture(capsuleRoot: string): Promise<{
   const candidateId = `sha256:${'4'.repeat(64)}` as const
   const launcherBytes = '#!/bin/sh\nexit 0\n'
   const configBytes = 'plugins: []\n'
+  const closureBytes = '{"schemaVersion":1,"packages":[]}\n'
+  const runnerBytes = '- insert: []\n'
+  const provenanceBytes = '{}\n'
+  const sbomBytes = '{"spdxVersion":"SPDX-2.3"}\n'
   await mkdir(join(capsuleRoot, 'runtime'), { recursive: true })
+  await mkdir(join(capsuleRoot, 'runner'), { recursive: true })
   await writeFile(join(capsuleRoot, 'runtime', 'dsh-self-evolving-acp'), launcherBytes, {
     mode: 0o755,
   })
+  await chmod(join(capsuleRoot, 'runtime', 'dsh-self-evolving-acp'), 0o755)
   await writeFile(join(capsuleRoot, 'runtime', 'cordis.yml'), configBytes)
-  const sumsBytes =
-    [
-      `${createHash('sha256').update(configBytes).digest('hex')}  runtime/cordis.yml`,
-      `${createHash('sha256').update(launcherBytes).digest('hex')}  runtime/dsh-self-evolving-acp`,
-    ]
-      .sort()
-      .join('\n') + '\n'
-  await writeFile(join(capsuleRoot, 'SHA256SUMS'), sumsBytes)
+  await writeFile(join(capsuleRoot, 'runtime', 'package-closure.json'), closureBytes)
+  await writeFile(join(capsuleRoot, 'runner', 'cordis.patch.yml'), runnerBytes)
+  await writeFile(join(capsuleRoot, 'provenance.json'), provenanceBytes)
+  await writeFile(join(capsuleRoot, 'sbom.spdx.json'), sbomBytes)
+  const { hash: sumsHash } = await writeCapsuleTreeManifest(
+    capsuleRoot,
+    join(capsuleRoot, 'SHA256SUMS'),
+  )
+  const sumsBytes = await readFile(join(capsuleRoot, 'SHA256SUMS'))
   const manifestBytes =
     JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         candidateId,
+        runtime: {
+          kind: 'pinned-closure',
+          ref: 'runtime/package-closure.json',
+          hash: createHash('sha256').update(closureBytes).digest('hex'),
+        },
+        candidate: { bundleHash: 'a'.repeat(64) },
+        runner: {
+          overlay: 'runner/cordis.patch.yml',
+          hash: createHash('sha256').update(runnerBytes).digest('hex'),
+        },
+        provenance: {
+          ref: 'provenance.json',
+          hash: createHash('sha256').update(provenanceBytes).digest('hex'),
+        },
+        sbom: {
+          ref: 'sbom.spdx.json',
+          hash: createHash('sha256').update(sbomBytes).digest('hex'),
+        },
         sha256sums: {
           ref: 'SHA256SUMS',
-          hash: createHash('sha256').update(sumsBytes).digest('hex'),
+          hash: sumsHash,
+          format: 'dsh-capsule-tree-v2',
         },
       },
       null,
       2,
     ) + '\n'
+  await writeFile(join(capsuleRoot, 'capsule.json'), manifestBytes)
+  return {
+    candidateId,
+    capsuleDigest: `sha256:${createHash('sha256')
+      .update(manifestBytes)
+      .update(sumsBytes)
+      .digest('hex')}`,
+  }
+}
+
+async function writeLegacyPrebuiltCapsuleFixture(capsuleRoot: string): Promise<{
+  candidateId: `sha256:${string}`
+  capsuleDigest: `sha256:${string}`
+}> {
+  const candidateId = `sha256:${'5'.repeat(64)}` as const
+  const launcherBytes = '#!/bin/sh\nexit 0\n'
+  await mkdir(join(capsuleRoot, 'runtime'), { recursive: true })
+  await writeFile(join(capsuleRoot, 'runtime', 'dsh-self-evolving-acp'), launcherBytes, {
+    mode: 0o755,
+  })
+  await chmod(join(capsuleRoot, 'runtime', 'dsh-self-evolving-acp'), 0o755)
+  const sumsBytes = `${createHash('sha256').update(launcherBytes).digest('hex')}  runtime/dsh-self-evolving-acp\n`
+  await writeFile(join(capsuleRoot, 'SHA256SUMS'), sumsBytes)
+  const manifestBytes = `${JSON.stringify({
+    schemaVersion: 1,
+    candidateId,
+    sha256sums: {
+      ref: 'SHA256SUMS',
+      hash: createHash('sha256').update(sumsBytes).digest('hex'),
+    },
+  })}\n`
   await writeFile(join(capsuleRoot, 'capsule.json'), manifestBytes)
   return {
     candidateId,
@@ -207,6 +265,42 @@ describe('Gate 5 credential isolation contracts', () => {
         expectedCapsuleDigest: `sha256:${'f'.repeat(64)}`,
       }),
     ).rejects.toThrow(/capsule digest differs from the evaluation plan/i)
+  })
+
+  it('rejects a valid schema-1 predecessor capsule as current Gate 5 authority', async () => {
+    const source = join(root, 'legacy-prebuilt-capsule')
+    const expected = await writeLegacyPrebuiltCapsuleFixture(source)
+    await expect(
+      snapshotGate5PrebuiltCapsule({
+        sourceRoot: source,
+        snapshotRoot: join(root, 'legacy-private-snapshot'),
+        expectedCandidateId: expected.candidateId,
+        expectedCapsuleDigest: expected.capsuleDigest,
+      }),
+    ).rejects.toThrow(/current evaluation requires dsh-capsule-tree-v2/i)
+  })
+
+  it('rejects a digest-self-consistent tree-v2 capsule whose full manifest schema is invalid', async () => {
+    const source = join(root, 'invalid-schema-prebuilt-capsule')
+    const expected = await writePrebuiltCapsuleFixture(source)
+    const manifestPath = join(source, 'capsule.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>
+    manifest['unexpectedAuthority'] = true
+    const manifestBytes = `${JSON.stringify(manifest, null, 2)}\n`
+    await writeFile(manifestPath, manifestBytes)
+    const sumsBytes = await readFile(join(source, 'SHA256SUMS'))
+    const capsuleDigest = `sha256:${createHash('sha256')
+      .update(manifestBytes)
+      .update(sumsBytes)
+      .digest('hex')}`
+    await expect(
+      snapshotGate5PrebuiltCapsule({
+        sourceRoot: source,
+        snapshotRoot: join(root, 'invalid-schema-private-snapshot'),
+        expectedCandidateId: expected.candidateId,
+        expectedCapsuleDigest: capsuleDigest,
+      }),
+    ).rejects.toThrow(/current capsule manifest schema is invalid/i)
   })
 
   it('caps the default stable trial at two worst-case calls within 333333 micro-USD', () => {

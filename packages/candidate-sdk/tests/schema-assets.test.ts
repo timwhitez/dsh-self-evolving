@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -23,5 +23,15 @@ describe('candidate-sdk packaged schema assets', () => {
       const path = fileURLToPath(new URL(`../schemas/${file}`, import.meta.url))
       await expect(access(path)).resolves.toBeUndefined()
     }
+  })
+
+  it('keeps the capsule authority schema byte-equal to the repository schema', async () => {
+    const packaged = fileURLToPath(
+      new URL('../schemas/capsule.manifest.schema.json', import.meta.url),
+    )
+    const authoritative = fileURLToPath(
+      new URL('../../../schemas/capsule.manifest.schema.json', import.meta.url),
+    )
+    await expect(readFile(packaged)).resolves.toEqual(await readFile(authoritative))
   })
 })

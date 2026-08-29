@@ -1,7 +1,7 @@
 /**
  * Diff boundary + capsule packing tests (spec 02 §11 step 3, §12).
  */
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -76,6 +76,7 @@ describe('capsule packing', () => {
       JSON.stringify({ name: '@dsh-self-evolving/fake-acp', version: '1.0.0', type: 'module' }),
     )
     await writeFile(join(runtimePackage, 'lib', 'bin.js'), 'export const ready = true\n')
+    await symlink('bin.js', join(runtimePackage, 'lib', 'bin-link.js'))
     const runtimeClosure = {
       catalogRoots: [runtimeCatalog],
       seedPackages: ['@dsh-self-evolving/fake-acp'],
@@ -108,27 +109,43 @@ describe('capsule packing', () => {
     const sums = sumsBytes.toString('utf8').trim().split('\n')
     expect(sums.some((line) => line.endsWith('  SHA256SUMS'))).toBe(false)
     expect(sums.some((line) => line.endsWith('  capsule.json'))).toBe(false)
+    let sawSymlink = false
     for (const line of sums) {
-      const match = /^([0-9a-f]{64}) {2}(symlink:)?(.+)$/.exec(line)
+      const match = /^([0-9a-f]{64}) {2}(directory|file|symlink):(0[0-7]{3}):(.+)$/.exec(line)
       expect(match).not.toBeNull()
-      if (match![2] !== undefined) {
-        // Symlink entries commit to the literal target string.
-        const { readlink } = await import('node:fs/promises')
-        const actual = createHash('sha256')
-          .update(await readlink(join(capsuleDir, match![3]!)))
-          .digest('hex')
-        expect(actual).toBe(match![1])
+      const [, expectedHash, kind, mode, path] = match!
+      if (kind === 'directory') {
+        expect(mode).toBe('0755')
+        expect((await lstat(join(capsuleDir, path!))).isDirectory()).toBe(true)
+        expect(createHash('sha256').update(`directory\0${path}`).digest('hex')).toBe(expectedHash)
         continue
       }
+      if (kind === 'symlink') {
+        sawSymlink = true
+        // Symlink entries commit to literal target bytes and the Harbor tar
+        // normalization used by the evaluated runtime archive.
+        expect(mode).toBe('0755')
+        const actual = createHash('sha256')
+          .update(await readlink(join(capsuleDir, path!)))
+          .digest('hex')
+        expect(actual).toBe(expectedHash)
+        continue
+      }
+      const info = await lstat(join(capsuleDir, path!))
+      expect(mode).toBe((info.mode & 0o111) === 0 ? '0644' : '0755')
       const actual = createHash('sha256')
-        .update(await readFile(join(capsuleDir, match![3]!)))
+        .update(await readFile(join(capsuleDir, path!)))
         .digest('hex')
-      expect(actual).toBe(match![1])
+      expect(actual).toBe(expectedHash)
     }
+    expect(sawSymlink).toBe(true)
     const manifestBytes = await readFile(out.capsuleManifestPath)
     const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
-      sha256sums: { hash: string }
+      schemaVersion?: unknown
+      sha256sums: { hash: string; format?: unknown }
     }
+    expect(manifest.schemaVersion).toBe(2)
+    expect(manifest.sha256sums.format).toBe('dsh-capsule-tree-v2')
     expect(manifest.sha256sums.hash).toBe(createHash('sha256').update(sumsBytes).digest('hex'))
     expect(out.capsuleHash).toBe(
       createHash('sha256').update(manifestBytes).update(sumsBytes).digest('hex'),
